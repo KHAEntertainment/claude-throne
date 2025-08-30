@@ -1,6 +1,8 @@
-# anthropic-proxy
+# Claude Throne
 
-A proxy server that transforms Anthropic API requests to OpenAI format and sends it to openrouter.ai. This enables you to use Anthropic's API format while connecting to OpenAI-compatible endpoints.
+Claude Throne is a fork and evolution of the excellent anthropic-proxy. It keeps the Anthropic-style API surface while routing to OpenAI-compatible providers (OpenRouter by default), and focuses on improved auth, provider ergonomics, and developer experience.
+
+See the project goals and roadmap in docs/Claude-Throne-PRD.md.
 
 ## Usage
 
@@ -29,8 +31,12 @@ To use the proxy server as a backend for Claude Code, you have to set the `ANTHR
 ANTHROPIC_BASE_URL=http://0.0.0.0:3000 claude
 ```
 
+## Attribution
+- Upstream project: anthropic-proxy by Max Nowack (https://github.com/maxnowack/anthropic-proxy)
+- This fork: maintained by KHA Entertainment (https://github.com/KHAEntertainment/claude-throne)
+
 ## License
-Licensed under MIT license. Copyright (c) 2025 Max Nowack
+MIT. Original work © 2025 Max Nowack. Fork changes © their respective authors.
 
 ## Contributions
-Contributions are welcome. Please open issues and/or file Pull Requests.
+Contributions are welcome. Please open issues and/or Pull Requests. We’ll do a full docs pass once the MVP lands.
