@@ -10,6 +10,12 @@ See the project goals and roadmap in docs/Claude-Throne-PRD.md.
 - Targets seamless Claude Code setup with proper headers and streaming semantics
 For details, see docs/Claude-Throne-PRD.md.
 
+## Roadmap (Summary)
+- Week 1 — Proxy Enhancements: smart API key resolution + always-auth headers, provider-specific headers (OpenRouter), correct SSE event order, tool-call mapping, config validation, smoke tests.
+- Week 2 — Extension Foundation: scaffold VS Code extension (TS + React webview), Python FastAPI backend for secure keyring + proxy orchestration, start/stop controls and status.
+- Week 3 — UI Development: config form, model selector with presets, Hive theming, status and error surface.
+- Week 4 — Advanced & Polish: model intelligence and availability ping, basic cost/usage, Claude Code auto-config hints, documentation and examples.
+
 ## Usage
 
 With this command, you can start the proxy server with your OpenRouter API key on port 3000:
