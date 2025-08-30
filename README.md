@@ -4,6 +4,12 @@ Claude Throne is a fork and evolution of the excellent anthropic-proxy. It keeps
 
 See the project goals and roadmap in docs/Claude-Throne-PRD.md.
 
+## VS Code Extension (Planned)
+- GUI to configure provider, keys, models, and port
+- Secure credential storage (OS keychain) and proxy lifecycle controls
+- Targets seamless Claude Code setup with proper headers and streaming semantics
+For details, see docs/Claude-Throne-PRD.md.
+
 ## Usage
 
 With this command, you can start the proxy server with your OpenRouter API key on port 3000:
