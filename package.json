@@ -11,7 +11,8 @@
     "test": "vitest run --minWorkers=1 --maxWorkers=1",
     "ext:dev": "cd extensions/claude-throne && npm run watch",
     "webview:build": "cd extensions/claude-throne/webview && npm run build",
-    "secretsd": "cd backends/python/ct_secretsd && python -m ct_secretsd"
+    "secretsd": "cd backends/python/ct_secretsd && python -m ct_secretsd",
+    "ext:package": "bash scripts/package-vsix.sh"
   },
   "keywords": [
     "anthropic",
