@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import Fastify from 'fastify'
 import { TextDecoder } from 'util'
+import { detectProvider, resolveApiKey, providerSpecificHeaders } from './key-resolver.js'
 
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
-const requiresApiKey = !process.env.ANTHROPIC_PROXY_BASE_URL
-const key = requiresApiKey ? process.env.OPENROUTER_API_KEY : null
+const provider = detectProvider(baseUrl)
+const key = resolveApiKey(provider)
 const model = 'google/gemini-2.0-pro-exp-02-05:free'
 const models = {
   reasoning: process.env.REASONING_MODEL || model,
@@ -35,6 +36,7 @@ function mapStopReason(finishReason) {
     case 'tool_calls': return 'tool_use'
     case 'stop': return 'end_turn'
     case 'length': return 'max_tokens'
+    case 'content_filter': return 'content_filter'
     default: return 'end_turn'
   }
 }
@@ -49,7 +51,10 @@ fastify.post('/v1/messages', async (request, reply) => {
     const normalizeContent = (content) => {
       if (typeof content === 'string') return content
       if (Array.isArray(content)) {
-        return content.map(item => item.text).join(' ')
+        return content
+          .filter(item => item && item.type === 'text' && typeof item.text === 'string')
+          .map(item => item.text)
+          .join(' ')
       }
       return null
     }
@@ -71,29 +76,38 @@ fastify.post('/v1/messages', async (request, reply) => {
     // Then add user (or other) messages.
     if (payload.messages && Array.isArray(payload.messages)) {
       payload.messages.forEach(msg => {
-        const toolCalls = (Array.isArray(msg.content) ? msg.content : []).filter(item => item.type === 'tool_use').map(toolCall => ({
-          function: {
-            type: 'function',
-            id: toolCall.id,
-            function: {
-              name: toolCall.name,
-              parameters: toolCall.input,
-            },
-          }
-        }))
-        const newMsg = { role: msg.role }
-        const normalized = normalizeContent(msg.content)
-        if (normalized) newMsg.content = normalized
-        if (toolCalls.length > 0) newMsg.tool_calls = toolCalls
-        if (newMsg.content || newMsg.tool_calls) messages.push(newMsg)
+        const items = Array.isArray(msg.content) ? msg.content : []
+        const toolUseItems = items.filter(item => item.type === 'tool_use')
+        const toolResultItems = items.filter(item => item.type === 'tool_result')
 
-        if (Array.isArray(msg.content)) {
-          const toolResults = msg.content.filter(item => item.type === 'tool_result')
-          toolResults.forEach(toolResult => {
+        // Build the base message for this turn
+        const normalized = normalizeContent(msg.content)
+        const newMsg = { role: msg.role }
+        if (normalized) newMsg.content = normalized
+
+        // If the assistant message contained tool calls previously, include them
+        if (msg.role === 'assistant' && toolUseItems.length > 0) {
+          newMsg.tool_calls = toolUseItems.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.input ?? {}),
+            },
+          }))
+        }
+
+        if (newMsg.content || newMsg.tool_calls) {
+          messages.push(newMsg)
+        }
+
+        // Append tool results as separate tool role messages
+        if (toolResultItems.length > 0) {
+          toolResultItems.forEach(tr => {
             messages.push({
               role: 'tool',
-              content: toolResult.text || toolResult.content,
-              tool_call_id: toolResult.tool_use_id,
+              content: typeof tr.text === 'string' ? tr.text : (tr.content ?? ''),
+              tool_call_id: tr.tool_use_id,
             })
           })
         }
@@ -155,12 +169,22 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (tools.length > 0) openaiPayload.tools = tools
     debug('OpenAI payload:', openaiPayload)
 
+    // Build headers
     const headers = {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...providerSpecificHeaders(provider)
     }
-    
-    if (requiresApiKey) {
+
+    if (key) {
       headers['Authorization'] = `Bearer ${key}`
+    }
+
+    // Validate configuration early
+    if (!key) {
+      reply.code(400)
+      return {
+        error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`,
+      }
     }
     
     const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {

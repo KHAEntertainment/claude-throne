@@ -1,1 +1,39 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# VS Code extension artifacts
+extensions/claude-throne/out/
+extensions/claude-throne/webview/dist/
+extensions/claude-throne/*.vsix
+
+# Python artifacts
+backends/python/ct_secretsd/__pycache__/
+backends/python/ct_secretsd/dist/
+backends/python/ct_secretsd/.venv/
+backends/python/ct_secretsd/*.egg-info/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

@@ -7,7 +7,11 @@
     "anthropic-proxy": "index.js"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "vitest run --minWorkers=1 --maxWorkers=1",
+    "ext:dev": "cd extensions/claude-throne && npm run watch",
+    "webview:build": "cd extensions/claude-throne/webview && npm run build",
+    "secretsd": "cd backends/python/ct_secretsd && python -m ct_secretsd"
   },
   "keywords": [
     "anthropic",
@@ -29,5 +33,9 @@
   "license": "MIT",
   "dependencies": {
     "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0",
+    "vitest": "^2.0.5"
   }
 }

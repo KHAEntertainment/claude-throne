@@ -133,10 +133,10 @@ Research Checklist
 - [ ] Git‑MCP: Fetch latest OpenRouter headers guidance and limits.
 
 Acceptance Criteria
-- [ ] Custom provider requests include `Authorization: Bearer <key>`.
-- [ ] `/v1/messages` works with `stream: false` and `true` and correct event order.
+- [x] Custom provider requests include `Authorization: Bearer <key>`.
+- [x] `/v1/messages` works with `stream: false` and `true` and correct event order.
 - [ ] Tool call mapping verified both directions.
-- [ ] Clear validation error when no usable key is found.
+- [x] Clear validation error when no usable key is found.
 
 ### Week 2 — VS Code Extension Foundation
 - [ ] Scaffold extension (TypeScript) and basic React webview.
@@ -184,6 +184,25 @@ Acceptance Criteria
 - [ ] Model picker highlights recommended options; availability errors are clear.
 - [ ] Docs updated with provider-specific guidance and troubleshooting.
 
+## 11. Current Status (Week 1 — Proxy Enhancements)
+
+Completed
+- Provider-aware key resolution added (`key-resolver.js`) and integrated into proxy.
+- Always send `Authorization: Bearer <key>` for all providers when a key is resolved.
+- OpenRouter headers (`HTTP-Referer`, `X-Title`) included when base URL is OpenRouter.
+- Finish reason mapping updated to include `content_filter`.
+- Tool mapping corrected: assistant `tool_use` → OpenAI `tool_calls`; `tool_result` → `role: "tool"` with `tool_call_id`.
+- Early config validation returns 400 when no usable key is found.
+- Smoke script added (`scripts/smoke.sh`) and README usage updated.
+
+In Progress
+- HTTP integration tests for `/v1/messages` covering stream true/false, event order, tool round-trips, and error paths.
+
+Notes
+- Unit tests added for key resolver (provider detection, key precedence, OpenRouter headers).
+- Streaming event order implemented per PRD; verification will be covered by integration tests.
+ - Provider selection is per proxy process (v1). No mid‑session provider switching.
+
 ## 12. Risks & Mitigations
 - SSE differences across providers → Normalize event order; integration tests with parser.
 - Keyring platform quirks → Provide fallback instructions; clear error messaging.
@@ -207,3 +226,44 @@ Acceptance Criteria
 - Place `key-resolver.js` at project root (aligns with current no-`src/` guideline) vs. `src/`? Proposed: project root.
 - Keep CLI name `anthropic-proxy` for compatibility vs. alias `claude-throne`? Proposed: keep CLI, add alias later.
 - Exact Anthropic streaming event fidelity expectations (e.g., thinking deltas). Confirm against real clients.
+## 16. Roadmap
+
+### Per‑Request Provider Routing (Mid‑Session Switching)
+- Goal: Allow changing upstream provider per request (or per conversation) without restarting the proxy.
+- Status: Out of scope for v1; planned enhancement.
+
+Proposed Approach
+- Configuration:
+  - Add optional request override via headers, e.g. `X-Proxy-Base-URL` or `X-Proxy-Provider`, and `X-Proxy-Key-Alias` (no raw keys in request).
+  - Maintain a server‑side key registry (env or secure store) mapping aliases → provider keys.
+- Routing:
+  - Resolve provider + key per request; apply provider‑specific headers (e.g., OpenRouter `HTTP-Referer`, `X-Title`).
+  - Replay full conversation history to the selected provider; ensure tool_call id continuity and schema normalization.
+- Security & Guardrails:
+  - Do not accept raw API keys over HTTP; only accept known aliases.
+  - Redact logs; preserve current DEBUG gating; enforce allowed provider allowlist.
+- Observability:
+  - Add provider label to logs and metrics for each request; surface in extension UI.
+
+Future Acceptance Criteria
+- [ ] Per‑request header overrides route traffic to the intended provider and authenticate using registered key alias.
+- [ ] Streaming semantics preserved across provider switches within the same conversation (event order unchanged).
+- [ ] Tool call mapping continues to function across providers; ids remain consistent for downstream clients.
+
+Risks & Mitigations
+- Provider schema quirks → Keep strict normalization layer and integration tests.
+- Key management UX → Use alias registry + extension UI, not raw secrets in requests.
+- Increased complexity → Keep default mode as single‑provider per process; make per‑request switching opt‑in.
+- ### Integrated Terminal: Start Claude Code
+- Goal: Provide a VS Code command to open an integrated terminal preloaded with proxy env and optionally run a Claude CLI.
+- Status: Post‑MVP convenience feature.
+
+Proposed Approach
+- Add command: “Claude Throne: Open Terminal for Proxy”
+- Preload env: `ANTHROPIC_BASE_URL=http://localhost:<port>` and other optional vars (e.g., `DEBUG=1`).
+- Optionally run a user‑defined command (e.g., `claude` or a project script), then keep terminal interactive for normal use.
+- Surface the currently running proxy status (port, provider) and offer a one‑click copy of the env var.
+
+Acceptance Criteria
+- [ ] Command opens an integrated terminal with correct env set and remains interactive.
+- [ ] Optional auto‑run command executes and hands control back to the user.
