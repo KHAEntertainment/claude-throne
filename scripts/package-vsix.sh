@@ -3,6 +3,9 @@ set -euo pipefail
 
 # Package the VS Code extension and archive any existing VSIX
 # Usage: bash scripts/package-vsix.sh
+# Options via env vars:
+#   BUMP=patch|minor|major|prerelease   (default: patch)
+#   PREID=<label>                        (used when BUMP=prerelease, e.g. PREID=alpha)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXT_DIR="$ROOT_DIR/extensions/claude-throne"
@@ -12,22 +15,35 @@ mkdir -p "$ARCHIVE_DIR"
 
 # Read name and version from extension package.json via node
 NAME="$(node -e "console.log(require('$EXT_DIR/package.json').name)")"
-VERSION="$(node -e "console.log(require('$EXT_DIR/package.json').version)")"
+VERSION_BEFORE="$(node -e "console.log(require('$EXT_DIR/package.json').version)")"
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
 # Archive any existing VSIX files in the extension folder
 shopt -s nullglob
 for f in "$EXT_DIR"/*.vsix; do
   base="$(basename "$f" .vsix)"
-  dest="$ARCHIVE_DIR/${base}-v${VERSION}-${TIMESTAMP}.vsix"
+  dest="$ARCHIVE_DIR/${base}-v${VERSION_BEFORE}-${TIMESTAMP}.vsix"
   echo "Archiving existing VSIX: $f -> $dest"
   mv "$f" "$dest"
 done
 shopt -u nullglob
 
+# Optionally bump version
+BUMP_MODE="${BUMP:-patch}"
+echo "Bumping version: $BUMP_MODE"
+if [[ "$BUMP_MODE" == "prerelease" ]]; then
+  PREID_VAL="${PREID:-alpha}"
+  (cd "$EXT_DIR" && npm version prerelease --preid "$PREID_VAL" --no-git-tag-version >/dev/null)
+else
+  (cd "$EXT_DIR" && npm version "$BUMP_MODE" --no-git-tag-version >/dev/null)
+fi
+
+VERSION_AFTER="$(node -e "console.log(require('$EXT_DIR/package.json').version)")"
+echo "Extension version: $VERSION_BEFORE -> $VERSION_AFTER"
+
 # Build new VSIX
 echo "Installing dependencies..."
-npm install --prefix "$EXT_DIR"
+npm install --prefix "$EXT_DIR" >/dev/null
 
 echo "Compiling TypeScript..."
 npm run --prefix "$EXT_DIR" compile
