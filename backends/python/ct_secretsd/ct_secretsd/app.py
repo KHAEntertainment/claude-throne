@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .providers import get_provider_registry, ProviderAdapter
 from .storage import SecretStorage, get_secret_storage
+from .proxy_controller import ProxyController
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,21 @@ class TestResult(BaseModel):
     error_message: Optional[str] = None
     latency_ms: Optional[float] = None
     provider_status: Optional[str] = None
+
+
+class ProxyConfig(BaseModel):
+    provider: str
+    custom_url: Optional[str] = None
+    reasoning_model: Optional[str] = None
+    execution_model: Optional[str] = None
+    port: int = 3000
+    debug: bool = False
+
+
+class ProxyStatus(BaseModel):
+    running: bool
+    port: Optional[int] = None
+    pid: Optional[int] = None
 
 
 def create_auth_dependency(auth_token: str):
@@ -141,6 +157,8 @@ def create_app(auth_token: str) -> FastAPI:
     
     def get_providers() -> Dict[str, ProviderAdapter]:
         return get_provider_registry()
+
+    proxy_controller = ProxyController()
     
     @app.get("/health", response_model=HealthResponse)
     async def health_check() -> HealthResponse:
@@ -312,5 +330,80 @@ def create_app(auth_token: str) -> FastAPI:
                 error_message=f"Test failed: {str(e)}",
                 latency_ms=round(latency, 2),
             )
+
+    # Proxy lifecycle endpoints
+    @app.get("/proxy/status", response_model=ProxyStatus)
+    async def proxy_status(_: bool = Depends(auth_dependency)) -> ProxyStatus:
+        if proxy_controller.is_running and proxy_controller.info:
+            return ProxyStatus(running=True, port=proxy_controller.info.port, pid=proxy_controller.info.pid)
+        return ProxyStatus(running=False)
+
+    @app.post("/proxy/stop")
+    async def proxy_stop(_: bool = Depends(auth_dependency)) -> Dict[str, bool]:
+        ok = proxy_controller.stop()
+        return {"success": ok}
+
+    @app.post("/proxy/start", response_model=ProxyStatus)
+    async def proxy_start(
+        cfg: ProxyConfig,
+        _: bool = Depends(auth_dependency),
+        storage: SecretStorage = Depends(get_storage),
+        providers: Dict[str, ProviderAdapter] = Depends(get_providers),
+    ) -> ProxyStatus:
+        provider_id = cfg.provider
+        if provider_id not in providers:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown provider '{provider_id}'")
+
+        # Require key for provider
+        api_key = await storage.get_key(provider_id)
+        if not api_key:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"No API key stored for provider '{provider_id}'")
+
+        # Compose environment for Node proxy
+        env: Dict[str, str] = {
+            "PORT": str(cfg.port),
+        }
+        if cfg.reasoning_model:
+            env["REASONING_MODEL"] = cfg.reasoning_model
+        if cfg.execution_model:
+            env["COMPLETION_MODEL"] = cfg.execution_model
+        if cfg.debug:
+            env["DEBUG"] = "1"
+
+        # Provider base URLs for Node proxy (must match OpenAI-compatible endpoints)
+        base_urls = {
+            "openrouter": "https://openrouter.ai/api",
+            "openai": "https://api.openai.com",
+            "together": "https://api.together.xyz",
+            "groq": "https://api.groq.com/openai",
+            "custom": cfg.custom_url or "",
+        }
+
+        # Set provider-specific env
+        if provider_id == "custom":
+            if not cfg.custom_url:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="custom_url is required for custom provider")
+            env["ANTHROPIC_PROXY_BASE_URL"] = cfg.custom_url
+            env["CUSTOM_API_KEY"] = api_key
+        elif provider_id == "openrouter":
+            env["ANTHROPIC_PROXY_BASE_URL"] = base_urls["openrouter"]
+            env["OPENROUTER_API_KEY"] = api_key
+        elif provider_id == "openai":
+            env["ANTHROPIC_PROXY_BASE_URL"] = base_urls["openai"]
+            env["OPENAI_API_KEY"] = api_key
+        elif provider_id == "together":
+            env["ANTHROPIC_PROXY_BASE_URL"] = base_urls["together"]
+            env["TOGETHER_API_KEY"] = api_key
+        elif provider_id == "groq":
+            env["ANTHROPIC_PROXY_BASE_URL"] = base_urls["groq"]
+            env["GROQ_API_KEY"] = api_key
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported provider '{provider_id}'")
+
+        try:
+            info = proxy_controller.start(env=env, port=cfg.port)
+            return ProxyStatus(running=True, port=info.port, pid=info.pid)
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     
     return app

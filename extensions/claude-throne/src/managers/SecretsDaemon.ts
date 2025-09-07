@@ -11,6 +11,17 @@ export interface SecretsDaemonInfo {
   url: string
 }
 
+export interface StartProxyConfig {
+  provider: 'openrouter' | 'openai' | 'together' | 'groq' | 'custom'
+  custom_url?: string
+  reasoning_model?: string
+  execution_model?: string
+  port?: number
+  debug?: boolean
+}
+
+export interface ProxyStatus { running: boolean; port?: number; pid?: number }
+
 export class SecretsDaemonManager {
   private proc: ChildProcessWithoutNullStreams | null = null
   private info: SecretsDaemonInfo | null = null
@@ -87,6 +98,43 @@ export class SecretsDaemonManager {
     } catch {}
     this.proc = null
     this.info = null
+  }
+
+  private authHeaders(): Record<string, string> {
+    if (!this.info) throw new Error('secrets daemon not running')
+    return {
+      'Authorization': `Bearer ${this.info.token}`,
+      'Content-Type': 'application/json'
+    }
+  }
+
+  async getProxyStatus(): Promise<ProxyStatus> {
+    if (!this.info) throw new Error('secrets daemon not running')
+    const res = await fetch(`${this.info.url}/proxy/status`, { headers: this.authHeaders() })
+    if (!res.ok) throw new Error(`status failed: ${res.status}`)
+    return res.json()
+  }
+
+  async startProxy(cfg: StartProxyConfig): Promise<ProxyStatus> {
+    if (!this.info) throw new Error('secrets daemon not running')
+    const res = await fetch(`${this.info.url}/proxy/start`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+      body: JSON.stringify(cfg)
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      throw new Error(`start proxy failed: ${res.status} ${msg}`)
+    }
+    return res.json()
+  }
+
+  async stopProxy(): Promise<boolean> {
+    if (!this.info) throw new Error('secrets daemon not running')
+    const res = await fetch(`${this.info.url}/proxy/stop`, { method: 'POST', headers: this.authHeaders() })
+    if (!res.ok) throw new Error(`stop proxy failed: ${res.status}`)
+    const data = await res.json()
+    return Boolean(data?.success)
   }
 
   private async waitForHealth(url: string, timeoutMs = 10000): Promise<void> {
