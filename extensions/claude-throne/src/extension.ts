@@ -32,6 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('OpenRouter API key stored successfully')
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to store key: ${err?.message || err}`)
+      log.appendLine(`[extension] store key error: ${err?.stack || err}`)
     }
   })
 
@@ -44,6 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Claude-Throne: proxy ${status.running ? 'running' : 'not running'} on port ${status.port}`)
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to start proxy: ${err?.message || err}`)
+      log.appendLine(`[extension] start proxy error: ${err?.stack || err}`)
     }
   })
 
@@ -57,6 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (no-op)'}`)
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to stop proxy: ${err?.message || err}`)
+      log.appendLine(`[extension] stop proxy error: ${err?.stack || err}`)
     }
   })
 
@@ -70,6 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Claude-Throne: proxy ${s.running ? 'running' : 'stopped'}${s.port ? ' on ' + s.port : ''}`)
     } catch (err: any) {
       vscode.window.showErrorMessage(`Status error: ${err?.message || err}`)
+      log.appendLine(`[extension] status error: ${err?.stack || err}`)
     }
   })
 

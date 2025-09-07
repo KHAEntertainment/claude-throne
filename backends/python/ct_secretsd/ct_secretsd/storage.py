@@ -5,6 +5,7 @@ Secure storage for API keys using OS keyring.
 import asyncio
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 
