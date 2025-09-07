@@ -129,6 +129,19 @@ export class SecretsDaemonManager {
     return res.json()
   }
 
+  async saveProviderKey(providerId: string, apiKey: string): Promise<void> {
+    if (!this.info) throw new Error('secrets daemon not running')
+    const res = await fetch(`${this.info.url}/secrets/provider/${providerId}`, {
+      method: 'PUT',
+      headers: this.authHeaders(),
+      body: JSON.stringify({ api_key: apiKey })
+    })
+    if (!res.ok) {
+      const msg = await res.text()
+      throw new Error(`save key failed: ${res.status} ${msg}`)
+    }
+  }
+
   async stopProxy(): Promise<boolean> {
     if (!this.info) throw new Error('secrets daemon not running')
     const res = await fetch(`${this.info.url}/proxy/stop`, { method: 'POST', headers: this.authHeaders() })

@@ -17,6 +17,24 @@ export function activate(context: vscode.ExtensionContext) {
     ConfigPanel.show(context)
   })
 
+  const storeOpenRouterKey = vscode.commands.registerCommand('claudeThrone.storeOpenRouterKey', async () => {
+    try {
+      const info = await ensureSecretsd()
+      const key = await vscode.window.showInputBox({
+        title: 'Enter OpenRouter API Key',
+        prompt: 'Your key will be stored securely (keyring or encrypted file fallback)',
+        password: true,
+        ignoreFocusOut: true,
+        validateInput: (v) => v && v.trim().length > 0 ? undefined : 'Key is required'
+      })
+      if (!key) return
+      await secretsd!.saveProviderKey('openrouter', key)
+      vscode.window.showInformationMessage('OpenRouter API key stored successfully')
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to store key: ${err?.message || err}`)
+    }
+  })
+
   const startProxy = vscode.commands.registerCommand('claudeThrone.startProxy', async () => {
     try {
       const info = await ensureSecretsd()
@@ -55,7 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   })
 
-  context.subscriptions.push(openConfig, startProxy, stopProxy, status, log)
+  context.subscriptions.push(openConfig, storeOpenRouterKey, startProxy, stopProxy, status, log)
 
   log.appendLine('Claude-Throne extension activated')
 }

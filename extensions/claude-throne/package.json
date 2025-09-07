@@ -21,6 +21,7 @@
   "contributes": {
     "commands": [
       { "command": "claudeThrone.openConfig", "title": "Claude Throne: Open Configuration" },
+      { "command": "claudeThrone.storeOpenRouterKey", "title": "Claude Throne: Store OpenRouter API Key" },
       { "command": "claudeThrone.startProxy", "title": "Claude Throne: Start Proxy" },
       { "command": "claudeThrone.stopProxy", "title": "Claude Throne: Stop Proxy" },
       { "command": "claudeThrone.status", "title": "Claude Throne: Show Status" }
