@@ -1,0 +1,36 @@
+{
+  "name": "claude-throne",
+  "displayName": "Claude Throne",
+  "publisher": "thehive",
+  "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:claudeThrone.openConfig",
+    "onCommand:claudeThrone.startProxy",
+    "onCommand:claudeThrone.stopProxy",
+    "onCommand:claudeThrone.status"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "claudeThrone.openConfig", "title": "Claude Throne: Open Configuration" },
+      { "command": "claudeThrone.startProxy", "title": "Claude Throne: Start Proxy" },
+      { "command": "claudeThrone.stopProxy", "title": "Claude Throne: Stop Proxy" },
+      { "command": "claudeThrone.status", "title": "Claude Throne: Show Status" }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0",
+    "vsce": "^2.15.0"
+  }
+}
+

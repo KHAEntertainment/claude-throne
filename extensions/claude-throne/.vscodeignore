@@ -1,0 +1,13 @@
+# Exclude dev sources from VSIX
+**/*.map
+src/**
+.vscode/**
+.vscode-test/**
+node_modules/**
+
+# Keep compiled output and package metadata
+!out/**
+!package.json
+!README.md
+!LICENSE
+

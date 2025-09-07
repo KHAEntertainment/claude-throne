@@ -198,6 +198,20 @@ Completed
 In Progress
 - HTTP integration tests for `/v1/messages` covering stream true/false, event order, tool round-trips, and error paths.
 
+### Week 2 — VS Code Extension Foundation (In Progress)
+
+Completed
+- Secrets daemon scaffolded (`backends/python/ct_secretsd`):
+  - FastAPI app with secure endpoints and bearer auth
+  - Keyring-backed storage with encrypted file fallback
+  - Provider adapters (OpenRouter, OpenAI, Together, Groq, Custom)
+  - CLI (`ct-secretsd`) with localhost-only binding and JSON logging
+- Docs added: backend README, LICENSE, Makefile
+
+Next
+- Scaffold VS Code extension (TypeScript) and basic React webview
+- Implement extension <-> secrets daemon process orchestration
+
 Notes
 - Unit tests added for key resolver (provider detection, key precedence, OpenRouter headers).
 - Streaming event order implemented per PRD; verification will be covered by integration tests.
