@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import { SecretsDaemonManager } from './managers/SecretsDaemon'
+import { ConfigPanel } from './panels/ConfigPanel'
 
 let secretsd: SecretsDaemonManager | null = null
 
@@ -13,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   const openConfig = vscode.commands.registerCommand('claudeThrone.openConfig', async () => {
-    vscode.window.showInformationMessage('Claude-Throne configuration UI coming soon.')
+    ConfigPanel.show(context)
   })
 
   const startProxy = vscode.commands.registerCommand('claudeThrone.startProxy', async () => {
