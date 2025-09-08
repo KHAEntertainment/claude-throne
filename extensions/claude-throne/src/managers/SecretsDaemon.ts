@@ -47,24 +47,19 @@ export class SecretsDaemonManager {
     const port = await this.getFreePort()
     const token = this.generateToken()
 
-    // Resolve python interpreter
-    const configured = pythonPath || vscode.workspace.getConfiguration('claudeThrone').get<string>('pythonInterpreterPath')
-    const python = configured || 'python3'
+    // Resolve backend path with multiple strategies
+    const backendRoot = await this.resolveBackendPath(context)
+    
+    // Resolve python interpreter - try to find one that works
+    const python = await this.resolvePython(backendRoot, pythonPath)
 
-    // Resolve backend path
-    const configuredBackend = vscode.workspace.getConfiguration('claudeThrone').get<string>('backendPath')?.trim() || ''
-    let backendRoot = configuredBackend
-    if (!backendRoot) {
-      const wf = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-      if (wf) {
-        backendRoot = path.join(wf, 'backends/python/ct_secretsd')
-      } else {
-        backendRoot = path.resolve(context.extensionPath, '../../backends/python/ct_secretsd')
-      }
-    }
     // Validate backend path exists (expect ct_secretsd package dir)
     if (!fs.existsSync(backendRoot) || !fs.existsSync(path.join(backendRoot, 'ct_secretsd'))) {
-      this.output.appendLine(`[secretsd] backend not found at ${backendRoot}. Set setting 'claudeThrone.backendPath'.`)
+      this.output.appendLine(`[secretsd] backend not found at ${backendRoot}`)
+      this.output.appendLine(`[secretsd] Please either:`)
+      this.output.appendLine(`[secretsd]   1. Set 'claudeThrone.backendPath' in settings`)
+      this.output.appendLine(`[secretsd]   2. Ensure the backend exists at workspace/backends/python/ct_secretsd`)
+      this.output.appendLine(`[secretsd]   3. Install dependencies: pip install fastapi uvicorn keyring httpx cryptography`)
       throw new Error(`Backend path not found: ${backendRoot}`)
     }
 
@@ -196,6 +191,132 @@ export class SecretsDaemonManager {
 
   private generateToken(): string {
     return randomBytes(32).toString('base64url')
+  }
+
+  private async resolveBackendPath(context: vscode.ExtensionContext): Promise<string> {
+    // Strategy 1: Use explicitly configured path
+    const configuredBackend = vscode.workspace.getConfiguration('claudeThrone').get<string>('backendPath')?.trim()
+    if (configuredBackend && fs.existsSync(configuredBackend)) {
+      this.output.appendLine(`[secretsd] Using configured backend path: ${configuredBackend}`)
+      return configuredBackend
+    }
+
+    // Strategy 2: Check common container paths
+    const containerPaths = [
+      '/workspaces/claude-throne/backends/python/ct_secretsd',
+      '/workspace/claude-throne/backends/python/ct_secretsd',
+      '/workspaces/mighty-morphin-claude/backends/python/ct_secretsd',
+      '/app/backends/python/ct_secretsd',
+      '/home/node/backends/python/ct_secretsd'
+    ]
+    
+    for (const containerPath of containerPaths) {
+      if (fs.existsSync(containerPath) && fs.existsSync(path.join(containerPath, 'ct_secretsd'))) {
+        this.output.appendLine(`[secretsd] Found backend in container at: ${containerPath}`)
+        return containerPath
+      }
+    }
+
+    // Strategy 3: Check workspace folders
+    const workspaceFolders = vscode.workspace.workspaceFolders
+    if (workspaceFolders) {
+      for (const folder of workspaceFolders) {
+        const possiblePaths = [
+          path.join(folder.uri.fsPath, 'backends/python/ct_secretsd'),
+          path.join(folder.uri.fsPath, 'backends', 'python', 'ct_secretsd'),
+          path.join(folder.uri.fsPath, '..', 'backends/python/ct_secretsd')  // parent dir
+        ]
+        
+        for (const wsPath of possiblePaths) {
+          if (fs.existsSync(wsPath) && fs.existsSync(path.join(wsPath, 'ct_secretsd'))) {
+            this.output.appendLine(`[secretsd] Found backend in workspace at: ${wsPath}`)
+            return wsPath
+          }
+        }
+      }
+    }
+
+    // Strategy 4: Check relative to extension installation
+    const extensionRelativePaths = [
+      path.resolve(context.extensionPath, '../../backends/python/ct_secretsd'),
+      path.resolve(context.extensionPath, '../../../backends/python/ct_secretsd'),
+      path.resolve(context.extensionPath, 'backends/python/ct_secretsd')
+    ]
+    
+    for (const extPath of extensionRelativePaths) {
+      if (fs.existsSync(extPath) && fs.existsSync(path.join(extPath, 'ct_secretsd'))) {
+        this.output.appendLine(`[secretsd] Found backend relative to extension at: ${extPath}`)
+        return extPath
+      }
+    }
+
+    // Strategy 5: Try to find it anywhere in common development locations
+    const homedir = process.env.HOME || process.env.USERPROFILE
+    if (homedir) {
+      const devPaths = [
+        path.join(homedir, 'Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd'),
+        path.join(homedir, 'projects/claude-throne/backends/python/ct_secretsd'),
+        path.join(homedir, 'dev/claude-throne/backends/python/ct_secretsd'),
+        path.join(homedir, 'workspace/claude-throne/backends/python/ct_secretsd')
+      ]
+      
+      for (const devPath of devPaths) {
+        if (fs.existsSync(devPath) && fs.existsSync(path.join(devPath, 'ct_secretsd'))) {
+          this.output.appendLine(`[secretsd] Found backend in development directory at: ${devPath}`)
+          return devPath
+        }
+      }
+    }
+
+    // Fallback: return the most likely path even if it doesn't exist
+    const fallback = workspaceFolders?.[0]?.uri.fsPath 
+      ? path.join(workspaceFolders[0].uri.fsPath, 'backends/python/ct_secretsd')
+      : '/workspaces/claude-throne/backends/python/ct_secretsd'
+    
+    this.output.appendLine(`[secretsd] No backend found, using fallback: ${fallback}`)
+    return fallback
+  }
+
+  private async resolvePython(backendRoot: string, pythonPath?: string): Promise<string> {
+    // Check configured path first
+    const configured = pythonPath || vscode.workspace.getConfiguration('claudeThrone').get<string>('pythonInterpreterPath')
+    if (configured) {
+      this.output.appendLine(`[secretsd] Using configured Python: ${configured}`)
+      return configured
+    }
+
+    // Check for virtual environment in backend
+    const venvPythonPaths = [
+      path.join(backendRoot, 'venv/bin/python3'),
+      path.join(backendRoot, 'venv/bin/python'),
+      path.join(backendRoot, '.venv/bin/python3'),
+      path.join(backendRoot, '.venv/bin/python'),
+      path.join(backendRoot, 'env/bin/python3'),
+      path.join(backendRoot, 'env/bin/python')
+    ]
+
+    for (const venvPath of venvPythonPaths) {
+      if (fs.existsSync(venvPath)) {
+        this.output.appendLine(`[secretsd] Found venv Python at: ${venvPath}`)
+        return venvPath
+      }
+    }
+
+    // Try system Python paths
+    const systemPaths = ['python3', 'python', '/usr/bin/python3', '/usr/local/bin/python3']
+    for (const sysPython of systemPaths) {
+      try {
+        const { promisify } = require('util')
+        const exec = promisify(require('child_process').exec)
+        await exec(`${sysPython} --version`)
+        this.output.appendLine(`[secretsd] Using system Python: ${sysPython}`)
+        return sysPython
+      } catch {}
+    }
+
+    // Default fallback
+    this.output.appendLine(`[secretsd] Using default Python: python3`)
+    return 'python3'
   }
 }
 

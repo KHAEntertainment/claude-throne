@@ -77,7 +77,84 @@ export function activate(context: vscode.ExtensionContext) {
     }
   })
 
-  context.subscriptions.push(openConfig, storeOpenRouterKey, startProxy, stopProxy, status, log)
+  const diagnose = vscode.commands.registerCommand('claudeThrone.diagnose', async () => {
+    log.show()
+    log.appendLine('\n=== Claude Throne Diagnostic Report ===')
+    log.appendLine(`Extension Path: ${context.extensionPath}`)
+    log.appendLine(`Workspace: ${vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace'}`)
+    log.appendLine(`Platform: ${process.platform}`)
+    log.appendLine(`VS Code Version: ${vscode.version}`)
+    log.appendLine(`Is Container: ${process.env.REMOTE_CONTAINERS || process.env.CODESPACES ? 'Yes' : 'No'}`)
+    
+    // Check backend path resolution
+    log.appendLine('\n--- Backend Path Resolution ---')
+    const mgr = new SecretsDaemonManager(log)
+    try {
+      await mgr.start(context)
+      log.appendLine('✅ Backend started successfully!')
+    } catch (err: any) {
+      log.appendLine(`❌ Backend start failed: ${err.message}`)
+    }
+    
+    // Check Python
+    log.appendLine('\n--- Python Check ---')
+    const { exec } = require('child_process')
+    const { promisify } = require('util')
+    const execAsync = promisify(exec)
+    
+    for (const py of ['python3', 'python', '/usr/bin/python3']) {
+      try {
+        const { stdout } = await execAsync(`${py} --version`)
+        log.appendLine(`✅ ${py}: ${stdout.trim()}`)
+        
+        // Check if dependencies are installed
+        try {
+          await execAsync(`${py} -c "import fastapi, uvicorn, keyring, httpx"`)
+          log.appendLine(`  ✅ Dependencies installed for ${py}`)
+        } catch {
+          log.appendLine(`  ❌ Missing dependencies for ${py}`)
+        }
+      } catch {
+        log.appendLine(`❌ ${py}: Not found`)
+      }
+    }
+    
+    log.appendLine('\n=== End Diagnostic Report ===')
+    vscode.window.showInformationMessage('Diagnostic report written to output channel')
+  })
+
+  const setupBackend = vscode.commands.registerCommand('claudeThrone.setupBackend', async () => {
+    const terminal = vscode.window.createTerminal('Claude Throne Setup')
+    terminal.show()
+    
+    // Detect if we're in a container
+    const isContainer = process.env.REMOTE_CONTAINERS || process.env.CODESPACES
+    
+    if (isContainer) {
+      terminal.sendText('# Setting up Claude Throne backend in container...')
+      terminal.sendText('cd /workspaces/claude-throne/backends/python/ct_secretsd 2>/dev/null || cd /workspace/claude-throne/backends/python/ct_secretsd 2>/dev/null || cd backends/python/ct_secretsd')
+      terminal.sendText('pip install fastapi uvicorn keyring httpx cryptography python-multipart')
+    } else {
+      terminal.sendText('# Setting up Claude Throne backend...')
+      
+      // Try to find backend path
+      const wf = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+      const backendPath = wf ? `${wf}/backends/python/ct_secretsd` : 'backends/python/ct_secretsd'
+      
+      terminal.sendText(`cd "${backendPath}"`)
+      terminal.sendText('# Creating virtual environment...')
+      terminal.sendText('python3 -m venv venv')
+      terminal.sendText('source venv/bin/activate')
+      terminal.sendText('pip install --upgrade pip')
+      terminal.sendText('pip install fastapi uvicorn keyring httpx cryptography python-multipart')
+      terminal.sendText('pip install -e .')
+      terminal.sendText('echo "✅ Setup complete! The extension will use this virtual environment."')
+    }
+    
+    vscode.window.showInformationMessage('Running backend setup in terminal...')
+  })
+
+  context.subscriptions.push(openConfig, storeOpenRouterKey, startProxy, stopProxy, status, diagnose, setupBackend, log)
 
   log.appendLine('Claude-Throne extension activated')
 }
