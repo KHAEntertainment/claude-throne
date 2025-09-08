@@ -10,6 +10,7 @@ describe('POST /v1/messages (errors)', () => {
       port: proxyPort,
       baseUrl: `http://127.0.0.1:${upstream.port}`,
       env: { },
+      isolateEnv: true,  // Don't inherit parent process env vars
     })
 
     try {

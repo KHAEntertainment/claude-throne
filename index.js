@@ -180,7 +180,9 @@ fastify.post('/v1/messages', async (request, reply) => {
     }
 
     // Validate configuration early
+    debug('API key check:', { provider, hasKey: !!key })
     if (!key) {
+      debug('No API key found, returning 400')
       reply.code(400)
       return {
         error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`,

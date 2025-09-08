@@ -55,13 +55,15 @@ export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, asse
   })
 }
 
-export async function spawnProxyProcess({ port, baseUrl, env = {} }) {
+export async function spawnProxyProcess({ port, baseUrl, env = {}, isolateEnv = false }) {
   const { spawn } = await import('node:child_process')
+  const baseEnv = isolateEnv ? {} : process.env
   const child = spawn(process.execPath, ['index.js'], {
     env: {
-      ...process.env,
+      ...baseEnv,
       PORT: String(port),
       ANTHROPIC_PROXY_BASE_URL: baseUrl,
+      PATH: process.env.PATH,  // Need PATH to find node
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
