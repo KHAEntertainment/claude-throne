@@ -3,14 +3,18 @@
   "displayName": "Claude Throne",
   "publisher": "thehive",
   "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/KHAEntertainment/claude-throne"
   },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onCommand:claudeThrone.openConfig",
     "onCommand:claudeThrone.startProxy",
@@ -20,12 +24,42 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "claudeThrone.openConfig", "title": "Claude Throne: Open Configuration" },
-      { "command": "claudeThrone.storeOpenRouterKey", "title": "Claude Throne: Store OpenRouter API Key" },
-      { "command": "claudeThrone.startProxy", "title": "Claude Throne: Start Proxy" },
-      { "command": "claudeThrone.stopProxy", "title": "Claude Throne: Stop Proxy" },
-      { "command": "claudeThrone.status", "title": "Claude Throne: Show Status" }
-    ]
+      {
+        "command": "claudeThrone.openConfig",
+        "title": "Claude Throne: Open Configuration"
+      },
+      {
+        "command": "claudeThrone.storeOpenRouterKey",
+        "title": "Claude Throne: Store OpenRouter API Key"
+      },
+      {
+        "command": "claudeThrone.startProxy",
+        "title": "Claude Throne: Start Proxy"
+      },
+      {
+        "command": "claudeThrone.stopProxy",
+        "title": "Claude Throne: Stop Proxy"
+      },
+      {
+        "command": "claudeThrone.status",
+        "title": "Claude Throne: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Throne",
+      "properties": {
+        "claudeThrone.backendPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the backend service folder (backends/python/ct_secretsd). If empty, the extension will try to use the first workspace folder at `backends/python/ct_secretsd`."
+        },
+        "claudeThrone.pythonInterpreterPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional explicit Python interpreter path (e.g., /usr/bin/python3). If empty, the extension uses 'python3'."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -40,4 +74,3 @@
     "vsce": "^2.15.0"
   }
 }
-

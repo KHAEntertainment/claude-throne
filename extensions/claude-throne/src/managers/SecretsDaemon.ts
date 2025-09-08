@@ -2,6 +2,7 @@ import * as vscode from 'vscode'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import * as path from 'path'
 import * as net from 'net'
+import * as fs from 'fs'
 import { randomBytes } from 'crypto'
 
 export interface SecretsDaemonInfo {
@@ -50,7 +51,22 @@ export class SecretsDaemonManager {
     const configured = pythonPath || vscode.workspace.getConfiguration('claudeThrone').get<string>('pythonInterpreterPath')
     const python = configured || 'python3'
 
-    const backendRoot = path.resolve(context.extensionPath, '../../backends/python/ct_secretsd')
+    // Resolve backend path
+    const configuredBackend = vscode.workspace.getConfiguration('claudeThrone').get<string>('backendPath')?.trim() || ''
+    let backendRoot = configuredBackend
+    if (!backendRoot) {
+      const wf = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+      if (wf) {
+        backendRoot = path.join(wf, 'backends/python/ct_secretsd')
+      } else {
+        backendRoot = path.resolve(context.extensionPath, '../../backends/python/ct_secretsd')
+      }
+    }
+    // Validate backend path exists (expect ct_secretsd package dir)
+    if (!fs.existsSync(backendRoot) || !fs.existsSync(path.join(backendRoot, 'ct_secretsd'))) {
+      this.output.appendLine(`[secretsd] backend not found at ${backendRoot}. Set setting 'claudeThrone.backendPath'.`)
+      throw new Error(`Backend path not found: ${backendRoot}`)
+    }
 
     this.output.appendLine(`[secretsd] launching via ${python} at ${backendRoot} on ${host}:${port}`)
 
