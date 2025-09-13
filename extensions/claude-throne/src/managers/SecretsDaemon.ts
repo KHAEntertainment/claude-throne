@@ -53,14 +53,17 @@ export class SecretsDaemonManager {
     // Resolve python interpreter - try to find one that works
     const python = await this.resolvePython(backendRoot, pythonPath)
 
-    // Validate backend path exists (expect ct_secretsd package dir)
-    if (!fs.existsSync(backendRoot) || !fs.existsSync(path.join(backendRoot, 'ct_secretsd'))) {
-      this.output.appendLine(`[secretsd] backend not found at ${backendRoot}`)
+    // Validate backend path exists - check for the Python module structure
+    const moduleCheck = path.join(backendRoot, 'ct_secretsd', '__main__.py')
+    const directCheck = path.join(backendRoot, '__main__.py')
+    
+    if (!fs.existsSync(backendRoot) || (!fs.existsSync(moduleCheck) && !fs.existsSync(directCheck))) {
+      this.output.appendLine(`[secretsd] Backend module not found at ${backendRoot}`)
       this.output.appendLine(`[secretsd] Please either:`)
       this.output.appendLine(`[secretsd]   1. Set 'claudeThrone.backendPath' in settings`)
       this.output.appendLine(`[secretsd]   2. Ensure the backend exists at workspace/backends/python/ct_secretsd`)
       this.output.appendLine(`[secretsd]   3. Install dependencies: pip install fastapi uvicorn keyring httpx cryptography`)
-      throw new Error(`Backend path not found: ${backendRoot}`)
+      throw new Error(`Backend module not found: ${backendRoot}`)
     }
 
     this.output.appendLine(`[secretsd] launching via ${python} at ${backendRoot} on ${host}:${port}`)
@@ -194,86 +197,250 @@ export class SecretsDaemonManager {
   }
 
   private async resolveBackendPath(context: vscode.ExtensionContext): Promise<string> {
-    // Strategy 1: Use explicitly configured path
-    const configuredBackend = vscode.workspace.getConfiguration('claudeThrone').get<string>('backendPath')?.trim()
-    if (configuredBackend && fs.existsSync(configuredBackend)) {
-      this.output.appendLine(`[secretsd] Using configured backend path: ${configuredBackend}`)
-      return configuredBackend
-    }
-
-    // Strategy 2: Check common container paths
-    const containerPaths = [
-      '/workspaces/claude-throne/backends/python/ct_secretsd',
-      '/workspace/claude-throne/backends/python/ct_secretsd',
-      '/workspaces/mighty-morphin-claude/backends/python/ct_secretsd',
-      '/app/backends/python/ct_secretsd',
-      '/home/node/backends/python/ct_secretsd'
-    ]
+    const TARGET_DIR = 'ct_secretsd'  // What we're looking for
+    const BACKEND_PATTERN = path.join('backends', 'python', TARGET_DIR)
     
-    for (const containerPath of containerPaths) {
-      if (fs.existsSync(containerPath) && fs.existsSync(path.join(containerPath, 'ct_secretsd'))) {
-        this.output.appendLine(`[secretsd] Found backend in container at: ${containerPath}`)
-        return containerPath
-      }
-    }
-
-    // Strategy 3: Check workspace folders
+    this.output.appendLine(`[secretsd] Starting dynamic backend search...`)
+    this.output.appendLine(`[secretsd] Environment: ${process.platform}, Node: ${process.version}`)
+    this.output.appendLine(`[secretsd] Extension path: ${context.extensionPath}`)
+    
+    // Log workspace information for debugging
     const workspaceFolders = vscode.workspace.workspaceFolders
     if (workspaceFolders) {
-      for (const folder of workspaceFolders) {
-        const possiblePaths = [
-          path.join(folder.uri.fsPath, 'backends/python/ct_secretsd'),
-          path.join(folder.uri.fsPath, 'backends', 'python', 'ct_secretsd'),
-          path.join(folder.uri.fsPath, '..', 'backends/python/ct_secretsd')  // parent dir
-        ]
-        
-        for (const wsPath of possiblePaths) {
-          if (fs.existsSync(wsPath) && fs.existsSync(path.join(wsPath, 'ct_secretsd'))) {
-            this.output.appendLine(`[secretsd] Found backend in workspace at: ${wsPath}`)
-            return wsPath
+      this.output.appendLine(`[secretsd] Workspace folders: ${workspaceFolders.map(f => f.uri.fsPath).join(', ')}`)
+    }
+    
+    // Strategy 1: Use explicitly configured path (absolute or relative to workspace)
+    const configuredBackend = vscode.workspace.getConfiguration('claudeThrone').get<string>('backendPath')?.trim()
+    if (configuredBackend) {
+      // Try as absolute path first
+      if (fs.existsSync(configuredBackend)) {
+        this.output.appendLine(`[secretsd] Using configured backend path: ${configuredBackend}`)
+        return configuredBackend
+      }
+      
+      // Try relative to workspace folders
+      const workspaceFolders = vscode.workspace.workspaceFolders
+      if (workspaceFolders) {
+        for (const folder of workspaceFolders) {
+          const relativePath = path.join(folder.uri.fsPath, configuredBackend)
+          if (fs.existsSync(relativePath)) {
+            this.output.appendLine(`[secretsd] Using configured relative backend path: ${relativePath}`)
+            return relativePath
           }
         }
       }
     }
 
-    // Strategy 4: Check relative to extension installation
-    const extensionRelativePaths = [
-      path.resolve(context.extensionPath, '../../backends/python/ct_secretsd'),
-      path.resolve(context.extensionPath, '../../../backends/python/ct_secretsd'),
-      path.resolve(context.extensionPath, 'backends/python/ct_secretsd')
-    ]
-    
-    for (const extPath of extensionRelativePaths) {
-      if (fs.existsSync(extPath) && fs.existsSync(path.join(extPath, 'ct_secretsd'))) {
-        this.output.appendLine(`[secretsd] Found backend relative to extension at: ${extPath}`)
-        return extPath
-      }
-    }
-
-    // Strategy 5: Try to find it anywhere in common development locations
-    const homedir = process.env.HOME || process.env.USERPROFILE
-    if (homedir) {
-      const devPaths = [
-        path.join(homedir, 'Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd'),
-        path.join(homedir, 'projects/claude-throne/backends/python/ct_secretsd'),
-        path.join(homedir, 'dev/claude-throne/backends/python/ct_secretsd'),
-        path.join(homedir, 'workspace/claude-throne/backends/python/ct_secretsd')
-      ]
-      
-      for (const devPath of devPaths) {
-        if (fs.existsSync(devPath) && fs.existsSync(path.join(devPath, 'ct_secretsd'))) {
-          this.output.appendLine(`[secretsd] Found backend in development directory at: ${devPath}`)
-          return devPath
+    // Strategy 2: Search workspace folders and their parents recursively
+    if (workspaceFolders) {
+      for (const folder of workspaceFolders) {
+        // Build comprehensive search paths based on workspace structure
+        const workspaceName = path.basename(folder.uri.fsPath)
+        const searchPaths = [
+          folder.uri.fsPath,  // Current workspace folder
+          path.dirname(folder.uri.fsPath),  // Parent of workspace
+          path.dirname(path.dirname(folder.uri.fsPath))  // Grandparent
+        ]
+        
+        // If workspace has a variant name (like mighty-morphin-claude), also check for claude-throne
+        if (workspaceName.includes('claude') || workspaceName.includes('throne')) {
+          const parentDir = path.dirname(folder.uri.fsPath)
+          searchPaths.push(
+            path.join(parentDir, 'claude-throne'),
+            path.join(parentDir, 'mighty-morphin-claude'),
+            path.join(parentDir, 'claude-throne-main')
+          )
+        }
+        
+        for (const searchBase of searchPaths) {
+          // Look for the standard backend pattern
+          const standardPath = path.join(searchBase, BACKEND_PATTERN)
+          if (fs.existsSync(standardPath)) {
+            this.output.appendLine(`[secretsd] Found backend in workspace hierarchy: ${standardPath}`)
+            return standardPath
+          }
+          
+          // Also check if ct_secretsd exists directly in common locations
+          const directPaths = [
+            path.join(searchBase, TARGET_DIR),
+            path.join(searchBase, 'backend', TARGET_DIR),
+            path.join(searchBase, 'backends', TARGET_DIR),
+            path.join(searchBase, 'python', TARGET_DIR)
+          ]
+          
+          for (const directPath of directPaths) {
+            // Check both nested module structure and direct module
+            const hasNestedModule = fs.existsSync(path.join(directPath, 'ct_secretsd', '__main__.py'))
+            const hasDirectModule = fs.existsSync(path.join(directPath, '__main__.py'))
+            
+            if (fs.existsSync(directPath) && (hasNestedModule || hasDirectModule)) {
+              this.output.appendLine(`[secretsd] Found backend at: ${directPath}`)
+              return directPath
+            }
+          }
         }
       }
     }
 
-    // Fallback: return the most likely path even if it doesn't exist
-    const fallback = workspaceFolders?.[0]?.uri.fsPath 
-      ? path.join(workspaceFolders[0].uri.fsPath, 'backends/python/ct_secretsd')
-      : '/workspaces/claude-throne/backends/python/ct_secretsd'
+    // Strategy 3: Search relative to extension installation location
+    // This handles cases where extension is installed globally or in unusual locations
+    const extensionSearchPaths = [
+      context.extensionPath,  // Extension root
+      path.dirname(context.extensionPath),  // Parent of extension
+      path.dirname(path.dirname(context.extensionPath)),  // Grandparent
+      path.dirname(path.dirname(path.dirname(context.extensionPath)))  // Great-grandparent
+    ]
     
-    this.output.appendLine(`[secretsd] No backend found, using fallback: ${fallback}`)
+    for (const searchBase of extensionSearchPaths) {
+      const standardPath = path.join(searchBase, BACKEND_PATTERN)
+      if (fs.existsSync(standardPath)) {
+        this.output.appendLine(`[secretsd] Found backend relative to extension: ${standardPath}`)
+        return standardPath
+      }
+    }
+
+    // Strategy 4: Check common container/devcontainer paths
+    // These are absolute paths commonly used in containers
+    const containerPaths = [
+      '/workspaces',
+      '/workspace',
+      '/app',
+      '/home/node',
+      '/home/vscode',
+      '/home/user'
+    ]
+    
+    for (const containerBase of containerPaths) {
+      // Try to find any folder that might contain our backend
+      if (fs.existsSync(containerBase)) {
+        try {
+          const entries = fs.readdirSync(containerBase)
+          for (const entry of entries) {
+            // Check both the exact project name and common variations
+            const projectVariations = [
+              BACKEND_PATTERN,  // Standard path
+              path.join('claude-throne', BACKEND_PATTERN),  // Nested in claude-throne
+              path.join('mighty-morphin-claude', BACKEND_PATTERN),  // Alternative name
+            ]
+            
+            for (const variation of projectVariations) {
+              const possibleProjectPath = path.join(containerBase, entry, variation)
+              if (fs.existsSync(possibleProjectPath)) {
+                // Verify it's a valid backend module
+                const hasNestedModule = fs.existsSync(path.join(possibleProjectPath, 'ct_secretsd', '__main__.py'))
+                const hasDirectModule = fs.existsSync(path.join(possibleProjectPath, '__main__.py'))
+                
+                if (hasNestedModule || hasDirectModule) {
+                  this.output.appendLine(`[secretsd] Found backend in container: ${possibleProjectPath}`)
+                  return possibleProjectPath
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Strategy 5: Search in user's home directory for common project locations
+    const homedir = process.env.HOME || process.env.USERPROFILE
+    if (homedir) {
+      // Common development directory patterns
+      const devDirPatterns = [
+        'Documents/Scripting Projects',
+        'Documents/Projects',
+        'Documents/Code',
+        'projects',
+        'Projects',
+        'dev',
+        'Development',
+        'code',
+        'Code',
+        'workspace',
+        'Workspace',
+        'repos',
+        'github',
+        'git'
+      ]
+      
+      for (const pattern of devDirPatterns) {
+        const devDir = path.join(homedir, pattern)
+        if (fs.existsSync(devDir)) {
+          try {
+            // Look for claude-throne or similar project folders
+            const entries = fs.readdirSync(devDir)
+            for (const entry of entries) {
+              if (entry.toLowerCase().includes('claude') || entry.toLowerCase().includes('throne')) {
+                const possiblePath = path.join(devDir, entry, BACKEND_PATTERN)
+                if (fs.existsSync(possiblePath)) {
+                  this.output.appendLine(`[secretsd] Found backend in home directory: ${possiblePath}`)
+                  return possiblePath
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // Strategy 6: Use find/where command as last resort (platform-specific)
+    try {
+      const { promisify } = require('util')
+      const exec = promisify(require('child_process').exec)
+      
+      // Determine the appropriate search command based on platform
+      const isWindows = process.platform === 'win32'
+      let searchCmd: string
+      
+      if (isWindows) {
+        // Windows: search in common locations
+        searchCmd = `where /r "${homedir}" ct_secretsd 2>nul`
+      } else {
+        // Unix-like: use find with timeout to avoid hanging
+        const searchLocations = [
+          homedir,
+          '/workspaces',
+          '/workspace',
+          workspaceFolders?.[0]?.uri.fsPath
+        ].filter(Boolean).slice(0, 2)  // Limit to avoid long searches
+        
+        searchCmd = `find ${searchLocations.join(' ')} -type d -name "ct_secretsd" -path "*/backends/python/*" 2>/dev/null | head -1`
+      }
+      
+      const { stdout } = await exec(searchCmd, { timeout: 3000 })  // 3 second timeout
+      const foundPath = stdout.trim().split('\n')[0]
+      if (foundPath && fs.existsSync(foundPath)) {
+        this.output.appendLine(`[secretsd] Found backend via system search: ${foundPath}`)
+        return foundPath
+      }
+    } catch {
+      // System search failed, continue to fallback
+    }
+
+    // Final fallback: Create the expected path structure for user guidance
+    const fallbackBase = workspaceFolders?.[0]?.uri.fsPath || homedir || '/workspace'
+    const fallback = path.join(fallbackBase, BACKEND_PATTERN)
+    
+    this.output.appendLine(`[secretsd] Backend not found after exhaustive search`)
+    this.output.appendLine(`[secretsd] Expected location: ${fallback}`)
+    
+    // Check if we're in a container environment
+    const isContainer = context.extensionPath.includes('/home/node/.') || 
+                       context.extensionPath.includes('/home/vscode/.') ||
+                       fallbackBase.startsWith('/workspace')
+    
+    if (isContainer) {
+      this.output.appendLine(`[secretsd] Detected container environment. To fix:`)
+      this.output.appendLine(`[secretsd]   1. Copy backend from host: cp -r ~/Documents/Scripting\\ Projects/claude-throne/backends ${fallbackBase}/`)
+      this.output.appendLine(`[secretsd]   2. Or mount it in devcontainer.json: "mounts": ["source=~/Documents/Scripting Projects/claude-throne/backends,target=${fallbackBase}/backends,type=bind"]`)
+      this.output.appendLine(`[secretsd]   3. Or clone the full repo in the container: git clone <repo-url> ${fallbackBase}`)
+    } else {
+      this.output.appendLine(`[secretsd] To fix this, either:`)
+      this.output.appendLine(`[secretsd]   1. Place the backend at: ${fallback}`)
+      this.output.appendLine(`[secretsd]   2. Set 'claudeThrone.backendPath' in VS Code settings to the actual location`)
+      this.output.appendLine(`[secretsd]   3. Run 'Claude Throne: Setup Backend' command to install dependencies`)
+    }
+    
     return fallback
   }
 

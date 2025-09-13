@@ -1,48 +1,128 @@
 import * as vscode from 'vscode'
-import { SecretsDaemonManager } from './managers/SecretsDaemon'
-import { ConfigPanel } from './panels/ConfigPanel'
+import { SecretsService } from './services/Secrets'
+import { ProxyManager } from './services/ProxyManager'
+import { PanelViewProvider } from './views/PanelViewProvider'
 
-let secretsd: SecretsDaemonManager | null = null
+let proxy: ProxyManager | null = null
 
 export function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Claude-Throne')
+  const secrets = new SecretsService(context.secrets)
+  proxy = new ProxyManager(context, log, secrets)
 
-  const ensureSecretsd = async () => {
-    if (!secretsd) secretsd = new SecretsDaemonManager(log)
-    const info = await secretsd.start(context)
-    return info
-  }
+  // Register the sidebar/activity bar panel view
+  const panelProvider = new PanelViewProvider(context, secrets, proxy, log)
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('claudeThrone.panel', panelProvider),
+    vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
+  )
 
-  const openConfig = vscode.commands.registerCommand('claudeThrone.openConfig', async () => {
-    ConfigPanel.show(context)
+  // Commands
+  const openPanel = vscode.commands.registerCommand('claudeThrone.openPanel', async () => {
+    // Try Panel view first, fall back to Activity Bar view
+    if (!(await tryOpenView('claudeThrone.panel'))) {
+      if (!(await tryOpenView('claudeThrone.activity'))) {
+        await panelProvider.reveal()
+      }
+    }
+  })
+
+  const revertApply = vscode.commands.registerCommand('claudeThrone.revertApply', async () => {
+    // Remove base URL overrides from known extension settings
+    const candidates: { section: string; key: string }[] = [
+      { section: 'anthropic', key: 'baseUrl' },
+      { section: 'claude', key: 'baseUrl' },
+      { section: 'claudeCode', key: 'baseUrl' },
+      { section: 'claude-code', key: 'baseUrl' },
+      { section: 'claude', key: 'apiBaseUrl' },
+      { section: 'claudeCode', key: 'apiBaseUrl' },
+    ]
+    const removed: string[] = []
+    for (const c of candidates) {
+      try {
+        const s = vscode.workspace.getConfiguration(c.section)
+        const current = s.get(c.key)
+        if (current !== undefined) {
+          await s.update(c.key, undefined, vscode.ConfigurationTarget.Workspace)
+          removed.push(`${c.section}.${c.key}`)
+        }
+      } catch {}
+    }
+
+    // Remove ANTHROPIC_BASE_URL from terminal env
+    const termKeys = [
+      'terminal.integrated.env.osx',
+      'terminal.integrated.env.linux',
+      'terminal.integrated.env.windows',
+    ]
+    let termTouched = 0
+    for (const key of termKeys) {
+      try {
+        const cfg = vscode.workspace.getConfiguration()
+        const cur = (cfg.get<Record<string, string>>(key) || {})
+        if ('ANTHROPIC_BASE_URL' in cur) {
+          const next = { ...cur }
+          delete next['ANTHROPIC_BASE_URL']
+          const hasAny = Object.keys(next).length > 0
+          await cfg.update(key, hasAny ? next : undefined, vscode.ConfigurationTarget.Workspace)
+          termTouched++
+        }
+      } catch {}
+    }
+
+    const parts: string[] = []
+    if (removed.length) parts.push(`extensions: ${removed.join(', ')}`)
+    if (termTouched) parts.push(`terminal env: ${termTouched} target(s)`)
+    if (parts.length) {
+      vscode.window.showInformationMessage(`Reverted Claude overrides (${parts.join(' | ')}). Open a new terminal for env changes to take effect.`)
+    } else {
+      vscode.window.showInformationMessage('No Claude overrides were found to revert.')
+    }
   })
 
   const storeOpenRouterKey = vscode.commands.registerCommand('claudeThrone.storeOpenRouterKey', async () => {
-    try {
-      const info = await ensureSecretsd()
-      const key = await vscode.window.showInputBox({
-        title: 'Enter OpenRouter API Key',
-        prompt: 'Your key will be stored securely (keyring or encrypted file fallback)',
-        password: true,
-        ignoreFocusOut: true,
-        validateInput: (v) => v && v.trim().length > 0 ? undefined : 'Key is required'
-      })
-      if (!key) return
-      await secretsd!.saveProviderKey('openrouter', key)
-      vscode.window.showInformationMessage('OpenRouter API key stored successfully')
-    } catch (err: any) {
-      vscode.window.showErrorMessage(`Failed to store key: ${err?.message || err}`)
-      log.appendLine(`[extension] store key error: ${err?.stack || err}`)
-    }
+    await storeKey('openrouter', secrets)
+  })
+  const storeOpenAIKey = vscode.commands.registerCommand('claudeThrone.storeOpenAIKey', async () => {
+    await storeKey('openai', secrets)
+  })
+  const storeTogetherKey = vscode.commands.registerCommand('claudeThrone.storeTogetherKey', async () => {
+    await storeKey('together', secrets)
+  })
+  const storeGrokKey = vscode.commands.registerCommand('claudeThrone.storeGrokKey', async () => {
+    await storeKey('grok', secrets)
+  })
+  const storeCustomKey = vscode.commands.registerCommand('claudeThrone.storeCustomKey', async () => {
+    await storeKey('custom', secrets)
+  })
+  const storeAnyKey = vscode.commands.registerCommand('claudeThrone.storeAnyKey', async () => {
+    const pick = await vscode.window.showQuickPick([
+      { label: 'OpenRouter', id: 'openrouter' },
+      { label: 'OpenAI', id: 'openai' },
+      { label: 'Together', id: 'together' },
+      { label: 'Grok', id: 'grok' },
+      { label: 'Custom', id: 'custom' },
+    ], { title: 'Choose Provider', canPickMany: false })
+    if (!pick) return
+    await storeKey(pick.id as any, secrets)
   })
 
   const startProxy = vscode.commands.registerCommand('claudeThrone.startProxy', async () => {
     try {
-      const info = await ensureSecretsd()
-      log.appendLine(`[extension] secretsd ready at ${info.url}`)
-      // Default config until UI is wired: provider openrouter, default port 3000
-      const status = await secretsd!.startProxy({ provider: 'openrouter', port: 3000, debug: false })
-      vscode.window.showInformationMessage(`Claude-Throne: proxy ${status.running ? 'running' : 'not running'} on port ${status.port}`)
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const provider = cfg.get<'openrouter' | 'openai' | 'together' | 'grok' | 'custom'>('provider', 'openrouter')
+      const customBaseUrl = cfg.get<string>('customBaseUrl', '')
+      const port = cfg.get<number>('proxy.port', 3000)
+      const debug = cfg.get<boolean>('proxy.debug', false)
+      const reasoningModel = cfg.get<string>('reasoningModel')
+      const completionModel = cfg.get<string>('completionModel')
+      await proxy!.start({ provider, customBaseUrl, port, debug, reasoningModel, completionModel })
+      vscode.window.showInformationMessage(`Claude-Throne: proxy started on port ${port}`)
+
+      const auto = cfg.get<boolean>('autoApply', true)
+      if (auto) {
+        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      }
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to start proxy: ${err?.message || err}`)
       log.appendLine(`[extension] start proxy error: ${err?.stack || err}`)
@@ -51,12 +131,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   const stopProxy = vscode.commands.registerCommand('claudeThrone.stopProxy', async () => {
     try {
-      if (!secretsd) {
-        vscode.window.showInformationMessage('Claude-Throne: secrets daemon not running')
-        return
+      const ok = await proxy!.stop()
+      vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (not running)'}`)
+
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const auto = cfg.get<boolean>('autoApply', true)
+      if (auto) {
+        await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
-      const ok = await secretsd.stopProxy()
-      vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (no-op)'}`)
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to stop proxy: ${err?.message || err}`)
       log.appendLine(`[extension] stop proxy error: ${err?.stack || err}`)
@@ -64,102 +146,113 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   const status = vscode.commands.registerCommand('claudeThrone.status', async () => {
-    if (!secretsd?.infoSafe) {
-      vscode.window.showInformationMessage('Claude-Throne: secrets daemon not running')
-      return
-    }
-    try {
-      const s = await secretsd.getProxyStatus()
-      vscode.window.showInformationMessage(`Claude-Throne: proxy ${s.running ? 'running' : 'stopped'}${s.port ? ' on ' + s.port : ''}`)
-    } catch (err: any) {
-      vscode.window.showErrorMessage(`Status error: ${err?.message || err}`)
-      log.appendLine(`[extension] status error: ${err?.stack || err}`)
-    }
+    const s = proxy!.getStatus()
+    vscode.window.showInformationMessage(`Claude-Throne: proxy ${s.running ? 'running' : 'stopped'}${s.port ? ' on ' + s.port : ''}`)
   })
 
-  const diagnose = vscode.commands.registerCommand('claudeThrone.diagnose', async () => {
-    log.show()
-    log.appendLine('\n=== Claude Throne Diagnostic Report ===')
-    log.appendLine(`Extension Path: ${context.extensionPath}`)
-    log.appendLine(`Workspace: ${vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace'}`)
-    log.appendLine(`Platform: ${process.platform}`)
-    log.appendLine(`VS Code Version: ${vscode.version}`)
-    log.appendLine(`Is Container: ${process.env.REMOTE_CONTAINERS || process.env.CODESPACES ? 'Yes' : 'No'}`)
-    
-    // Check backend path resolution
-    log.appendLine('\n--- Backend Path Resolution ---')
-    const mgr = new SecretsDaemonManager(log)
-    try {
-      await mgr.start(context)
-      log.appendLine('✅ Backend started successfully!')
-    } catch (err: any) {
-      log.appendLine(`❌ Backend start failed: ${err.message}`)
-    }
-    
-    // Check Python
-    log.appendLine('\n--- Python Check ---')
-    const { exec } = require('child_process')
-    const { promisify } = require('util')
-    const execAsync = promisify(exec)
-    
-    for (const py of ['python3', 'python', '/usr/bin/python3']) {
+  const applyToClaudeCode = vscode.commands.registerCommand('claudeThrone.applyToClaudeCode', async () => {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const port = cfg.get<number>('proxy.port', 3000)
+    const baseUrl = `http://127.0.0.1:${port}`
+
+    // 1) Try to apply to known Claude/Anthropic extension settings
+    const candidates: { section: string; key: string }[] = [
+      { section: 'anthropic', key: 'baseUrl' },
+      { section: 'claude', key: 'baseUrl' },
+      { section: 'claudeCode', key: 'baseUrl' },
+      { section: 'claude-code', key: 'baseUrl' },
+      { section: 'claude', key: 'apiBaseUrl' },
+      { section: 'claudeCode', key: 'apiBaseUrl' },
+    ]
+
+    const applied: string[] = []
+    for (const c of candidates) {
       try {
-        const { stdout } = await execAsync(`${py} --version`)
-        log.appendLine(`✅ ${py}: ${stdout.trim()}`)
-        
-        // Check if dependencies are installed
-        try {
-          await execAsync(`${py} -c "import fastapi, uvicorn, keyring, httpx"`)
-          log.appendLine(`  ✅ Dependencies installed for ${py}`)
-        } catch {
-          log.appendLine(`  ❌ Missing dependencies for ${py}`)
+        const s = vscode.workspace.getConfiguration(c.section)
+        await s.update(c.key, baseUrl, vscode.ConfigurationTarget.Workspace)
+        applied.push(`${c.section}.${c.key}`)
+      } catch {}
+    }
+
+    // 2) Apply to VS Code integrated terminal env for CLI usage (claude/claude-code)
+    const termKeys = [
+      'terminal.integrated.env.osx',
+      'terminal.integrated.env.linux',
+      'terminal.integrated.env.windows',
+    ]
+    const termApplied: string[] = []
+    for (const key of termKeys) {
+      try {
+        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
+        if (current['ANTHROPIC_BASE_URL'] === baseUrl) {
+          termApplied.push(key)
+          continue
         }
-      } catch {
-        log.appendLine(`❌ ${py}: Not found`)
-      }
+        const updated = { ...current, ANTHROPIC_BASE_URL: baseUrl }
+        await vscode.workspace.getConfiguration().update(key, updated, vscode.ConfigurationTarget.Workspace)
+        termApplied.push(key)
+      } catch {}
     }
-    
-    log.appendLine('\n=== End Diagnostic Report ===')
-    vscode.window.showInformationMessage('Diagnostic report written to output channel')
-  })
 
-  const setupBackend = vscode.commands.registerCommand('claudeThrone.setupBackend', async () => {
-    const terminal = vscode.window.createTerminal('Claude Throne Setup')
-    terminal.show()
-    
-    // Detect if we're in a container
-    const isContainer = process.env.REMOTE_CONTAINERS || process.env.CODESPACES
-    
-    if (isContainer) {
-      terminal.sendText('# Setting up Claude Throne backend in container...')
-      terminal.sendText('cd /workspaces/claude-throne/backends/python/ct_secretsd 2>/dev/null || cd /workspace/claude-throne/backends/python/ct_secretsd 2>/dev/null || cd backends/python/ct_secretsd')
-      terminal.sendText('pip install fastapi uvicorn keyring httpx cryptography python-multipart')
+    const parts: string[] = []
+    if (applied.length) parts.push(`extensions: ${applied.join(', ')}`)
+    if (termApplied.length) parts.push(`terminal env (new terminals): ${termApplied.length} target(s)`)
+
+    if (parts.length) {
+      vscode.window.showInformationMessage(`Applied base URL ${baseUrl} to ${parts.join(' | ')}. Open a new terminal for env changes to take effect.`)
     } else {
-      terminal.sendText('# Setting up Claude Throne backend...')
-      
-      // Try to find backend path
-      const wf = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-      const backendPath = wf ? `${wf}/backends/python/ct_secretsd` : 'backends/python/ct_secretsd'
-      
-      terminal.sendText(`cd "${backendPath}"`)
-      terminal.sendText('# Creating virtual environment...')
-      terminal.sendText('python3 -m venv venv')
-      terminal.sendText('source venv/bin/activate')
-      terminal.sendText('pip install --upgrade pip')
-      terminal.sendText('pip install fastapi uvicorn keyring httpx cryptography python-multipart')
-      terminal.sendText('pip install -e .')
-      terminal.sendText('echo "✅ Setup complete! The extension will use this virtual environment."')
+      vscode.window.showWarningMessage(`No Claude Code settings detected. Set base URL to ${baseUrl} in the Claude/Anthropic extension or export ANTHROPIC_BASE_URL in your shell.`)
     }
-    
-    vscode.window.showInformationMessage('Running backend setup in terminal...')
   })
 
-  context.subscriptions.push(openConfig, storeOpenRouterKey, startProxy, stopProxy, status, diagnose, setupBackend, log)
-
+  context.subscriptions.push(
+    openPanel,
+    storeOpenRouterKey,
+    storeOpenAIKey,
+    storeTogetherKey,
+    storeGrokKey,
+    storeCustomKey,
+    storeAnyKey,
+    startProxy,
+    stopProxy,
+    status,
+    applyToClaudeCode,
+    revertApply,
+    log,
+  )
   log.appendLine('Claude-Throne extension activated')
 }
 
+async function tryOpenView(viewId: string): Promise<boolean> {
+  try {
+    await vscode.commands.executeCommand('workbench.view.openView', viewId, true)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function storeKey(provider: 'openrouter' | 'openai' | 'together' | 'grok' | 'custom', secrets: SecretsService) {
+  const titles: Record<typeof provider, string> = {
+    openrouter: 'OpenRouter API Key',
+    openai: 'OpenAI API Key',
+    together: 'Together API Key',
+    grok: 'Grok API Key',
+    custom: 'Custom Provider API Key',
+  } as any
+  const key = await vscode.window.showInputBox({
+    title: `Enter ${titles[provider]}`,
+    prompt: 'Your key will be stored securely in your OS keychain via VS Code SecretStorage',
+    password: true,
+    ignoreFocusOut: true,
+    validateInput: (v) => v && v.trim().length > 0 ? undefined : 'Key is required'
+  })
+  if (!key) return
+  await secrets.setProviderKey(provider, key)
+  vscode.window.showInformationMessage(`${titles[provider]} stored successfully`)
+}
+
 export function deactivate() {
-  // Process cleanup is handled by SecretsDaemonManager exit handler
+  try { proxy?.stop() } catch {}
 }
 

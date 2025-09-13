@@ -45,6 +45,9 @@ echo "Extension version: $VERSION_BEFORE -> $VERSION_AFTER"
 echo "Installing dependencies..."
 npm install --prefix "$EXT_DIR" >/dev/null
 
+echo "Bundling proxy..."
+npm run --prefix "$EXT_DIR" bundle:proxy
+
 echo "Compiling TypeScript..."
 npm run --prefix "$EXT_DIR" compile
 

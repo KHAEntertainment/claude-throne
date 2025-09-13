@@ -41,6 +41,28 @@ function mapStopReason(finishReason) {
   }
 }
 
+fastify.get('/v1/models', async (request, reply) => {
+  try {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...providerSpecificHeaders(provider)
+    }
+    if (key) headers['Authorization'] = `Bearer ${key}`
+
+    const resp = await fetch(`${baseUrl}/v1/models`, { method: 'GET', headers })
+    const text = await resp.text()
+    reply.code(resp.status)
+    // Pass-through upstream JSON as-is; many clients expect OpenAI-style { data: [...] }
+    try {
+      reply.type('application/json').send(JSON.parse(text))
+    } catch {
+      reply.type('application/json').send({ error: text })
+    }
+  } catch (err) {
+    reply.code(500).send({ error: String(err?.message || err) })
+  }
+})
+
 fastify.post('/v1/messages', async (request, reply) => {
   try {
     const payload = request.body

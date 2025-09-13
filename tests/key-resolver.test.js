@@ -7,7 +7,7 @@ describe('key-resolver', () => {
     expect(detectProvider('https://api.openai.com')).toBe('openai')
     expect(detectProvider('https://api.together.ai')).toBe('together')
     expect(detectProvider('https://api.together.xyz')).toBe('together')
-    expect(detectProvider('https://api.groq.com/openai/v1')).toBe('groq')
+    expect(detectProvider('https://api.x.ai/v1')).toBe('grok')
     expect(detectProvider('https://example.com/v1')).toBe('custom')
   })
 

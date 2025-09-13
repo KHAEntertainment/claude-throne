@@ -18,6 +18,12 @@ For details, see docs/Claude-Throne-PRD.md.
 
 ## Usage
 
+Current state highlights
+- Panel-first configuration: Provider, Custom URL, and Model selections happen in the Claude Throne panel. Port, Debug, and Auto‑apply live in extension Settings.
+- xAI (Grok) supported at https://api.x.ai; keys supported via XAI_API_KEY (preferred), GROK_API_KEY, and legacy GROQ_API_KEY.
+- Custom endpoint detection: Detects OpenAI-style vs Anthropic-style; offers a one-click Bypass and Apply for Anthropic endpoints to set Claude Code directly.
+- Inline key status under Provider: Add/Update API Key button appears contextually.
+
 With this command, you can start the proxy server with your OpenRouter API key on port 3000:
 
 ```bash
@@ -26,9 +32,11 @@ OPENROUTER_API_KEY=your-api-key npx anthropic-proxy
 
 Environment variables:
 
-- `ANTHROPIC_PROXY_BASE_URL`: Custom OpenAI-compatible base URL (default: `https://openrouter.ai/api`).
+Note: Configure provider, custom URL, and models in the panel. Environment variables are primarily for the proxy process and CI.
+
+- `ANTHROPIC_PROXY_BASE_URL`: Custom OpenAI-compatible base URL for the proxy (default: `https://openrouter.ai/api`).
 - `CUSTOM_API_KEY` / `API_KEY`: Preferred when using a custom base URL.
-- `OPENROUTER_API_KEY` | `OPENAI_API_KEY` | `TOGETHER_API_KEY` | `GROQ_API_KEY`: Provider keys. The proxy resolves the right key based on `ANTHROPIC_PROXY_BASE_URL`.
+- `OPENROUTER_API_KEY` | `OPENAI_API_KEY` | `TOGETHER_API_KEY` | `XAI_API_KEY` (aka `GROK_API_KEY`, legacy `GROQ_API_KEY`): Provider keys. The proxy resolves the right key based on `ANTHROPIC_PROXY_BASE_URL`.
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_TITLE`: Optional headers recommended by OpenRouter (sent as `HTTP-Referer` and `X-Title`).
 - `PORT`: The port the proxy server should listen on (default: 3000)
 - `REASONING_MODEL`: The reasoning model to use (default: `google/gemini-2.0-pro-exp-02-05:free`)
@@ -41,7 +49,13 @@ Key resolution order:
 - OpenRouter URL: `OPENROUTER_API_KEY`
 - OpenAI URL: `OPENAI_API_KEY`
 - Together URL: `TOGETHER_API_KEY`
-- Groq URL: `GROQ_API_KEY`
+- Grok (xAI) URL: `XAI_API_KEY` (also accepts `GROK_API_KEY` or legacy `GROQ_API_KEY`)
+
+Provider endpoints (Chat Completions)
+- OpenAI: https://api.openai.com/v1/chat/completions
+- OpenRouter: https://openrouter.ai/api/v1/chat/completions
+- Together AI: https://api.together.xyz/v1/chat/completions
+- xAI (Grok): https://api.x.ai/v1/chat/completions
 
 If no usable key is found, the proxy returns a clear 400 error.
 
