@@ -4,7 +4,7 @@ Claude Throne is a fork and evolution of the excellent anthropic-proxy. It keeps
 
 See the project goals and roadmap in docs/Claude-Throne-PRD.md.
 
-## VS Code Extension (Planned)
+## VS Code Extension (In Development)
 - GUI to configure provider, keys, models, and port
 - Secure credential storage (OS keychain) and proxy lifecycle controls
 - Targets seamless Claude Code setup with proper headers and streaming semantics
