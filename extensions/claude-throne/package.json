@@ -3,7 +3,7 @@
   "displayName": "Claude Throne",
   "publisher": "thehive",
   "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "license": "MIT",
   "repository": {
     "type": "git",
