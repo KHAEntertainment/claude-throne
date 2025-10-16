@@ -3,7 +3,7 @@
   "displayName": "Claude Throne",
   "publisher": "thehive",
   "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
-  "version": "0.1.16",
+  "version": "1.3.9",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,28 +13,16 @@
     "vscode": "^1.85.0"
   },
   "extensionKind": [
+    "ui",
     "workspace"
   ],
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:claudeThrone.panel",
-    "onView:claudeThrone.activity",
-    "onCommand:claudeThrone.openPanel",
-    "onCommand:claudeThrone.startProxy",
-    "onCommand:claudeThrone.stopProxy",
-    "onCommand:claudeThrone.status",
-    "onCommand:claudeThrone.storeOpenRouterKey",
-    "onCommand:claudeThrone.storeOpenAIKey",
-    "onCommand:claudeThrone.storeTogetherKey",
-    "onCommand:claudeThrone.storeGrokKey",
-    "onCommand:claudeThrone.storeCustomKey",
-    "onCommand:claudeThrone.storeAnyKey",
-    "onCommand:claudeThrone.applyToClaudeCode",
-    "onCommand:claudeThrone.revertApply"
-  ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "*"
+  ],
   "contributes": {
     "viewsContainers": {
       "panel": [
@@ -145,6 +133,36 @@
             "anthropic"
           ],
           "markdownDescription": "Detection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
+        },
+        "claudeThrone.twoModelMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable two-model mode to use separate models for reasoning and execution."
+        },
+        "claudeThrone.reasoningModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The primary/reasoning model to use."
+        },
+        "claudeThrone.completionModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The execution/completion model to use (when two-model mode is enabled)."
+        },
+        "claudeThrone.customCombos": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "User-saved model combinations (global)."
+        },
+        "claudeThrone.workspaceCombos": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "User-saved model combinations (workspace-specific)."
+        },
+        "claudeThrone.customEndpointOverrides": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Manual endpoint type overrides per URL (internal use)."
         }
       }
     }

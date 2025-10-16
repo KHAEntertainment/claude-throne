@@ -7,15 +7,25 @@ let proxy: ProxyManager | null = null
 
 export function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Claude-Throne')
+  log.appendLine('🚀 Claude-Throne extension activating...')
+  log.show()
+  
   const secrets = new SecretsService(context.secrets)
+  log.appendLine('✅ Secrets service initialized')
+  
   proxy = new ProxyManager(context, log, secrets)
+  log.appendLine('✅ Proxy manager initialized')
 
   // Register the sidebar/activity bar panel view
+  log.appendLine('📋 Registering webview view providers...')
   const panelProvider = new PanelViewProvider(context, secrets, proxy, log)
+  log.appendLine('✅ Panel provider created')
+  
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('claudeThrone.panel', panelProvider),
     vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
   )
+  log.appendLine('✅ Webview providers registered')
 
   // Commands
   const openPanel = vscode.commands.registerCommand('claudeThrone.openPanel', async () => {
@@ -220,7 +230,7 @@ export function activate(context: vscode.ExtensionContext) {
     revertApply,
     log,
   )
-  log.appendLine('Claude-Throne extension activated')
+  log.appendLine('✅ Claude-Throne extension fully activated and ready')
 }
 
 async function tryOpenView(viewId: string): Promise<boolean> {

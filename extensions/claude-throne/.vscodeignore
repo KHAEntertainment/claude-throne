@@ -3,11 +3,17 @@
 src/**
 .vscode/**
 .vscode-test/**
+
+# Exclude all node_modules except production dependencies
 node_modules/**
+!node_modules/undici/**
 
 # Keep compiled output and package metadata
 !out/**
 !package.json
 !README.md
 !LICENSE
+
+# Keep webview assets
+!webview/**
 

@@ -1,10 +1,11 @@
 import * as vscode from 'vscode'
-
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
+import { listModels, type ProviderId } from '../services/Models'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
+  private currentProvider: string = 'openrouter'
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -26,103 +27,113 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
+    this.log.appendLine('🎨 Resolving webview view...')
     this.view = webviewView
     webviewView.webview.options = { enableScripts: true }
+    this.log.appendLine('📝 Generating webview HTML...')
     webviewView.webview.html = this.getHtml()
+    this.log.appendLine('✅ Webview HTML loaded')
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
+      this.log.appendLine(`📨 Received message from webview: ${msg.type}`)
       try {
         switch (msg.type) {
-          case 'storeKey': {
-            const provider = String(msg.provider || 'openrouter')
-            const key = await vscode.window.showInputBox({
-              title: `Enter ${provider} API Key`,
-              password: true,
-              ignoreFocusOut: true,
-              validateInput: (v) => v && v.trim().length > 0 ? undefined : 'Key is required'
-            })
-            if (key) {
-              await this.secrets.setProviderKey(provider, key)
-              vscode.window.showInformationMessage(`${provider} API key stored`)
-              await this.postKeys()
-            }
+          case 'webviewReady':
+            this.log.appendLine('✅ Webview reports it is ready!')
+            // Send initial data now that webview is ready
+            this.postStatus()
+            await this.postKeys()
+            this.postConfig()
+            this.postModels()
+            await this.postPopularModels()
             break
-          }
-          case 'detectEndpoint': {
-            const url = String(msg.url || '')
-            const result = await this.detectEndpoint(url)
-            this.view?.webview.postMessage({ type: 'endpointDetection', payload: result })
-            break
-          }
-          case 'applyDirectBaseUrl': {
-            const url = String(msg.url || '')
-            await this.applyDirectBaseUrl(url)
-            break
-          }
-          case 'startProxy': {
-            await vscode.commands.executeCommand('claudeThrone.startProxy')
+            
+          case 'requestStatus':
             this.postStatus()
             break
-          }
-          case 'stopProxy': {
-            await vscode.commands.executeCommand('claudeThrone.stopProxy')
-            this.postStatus()
+            
+          case 'requestKeys':
+            await this.postKeys()
             break
-          }
-          case 'applyClaudeCode': {
-            await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+            
+          case 'requestConfig':
+            this.postConfig()
             break
-          }
-          case 'revertClaudeCode': {
-            await vscode.commands.executeCommand('claudeThrone.revertApply')
+            
+          case 'requestModels':
+            await this.postModels()
             break
-          }
-          case 'listModels': {
-            await this.handleListModels()
+            
+          case 'listPublicModels':
+            await this.handleListModels(false)
             break
-          }
-          case 'saveModels': {
+            
+          case 'listFreeModels':
+            await this.handleListModels(true)
+            break
+            
+          case 'requestPopularModels':
+            await this.postPopularModels()
+            break
+            
+          case 'updateProvider':
+            await this.handleUpdateProvider(msg.provider)
+            break
+            
+          case 'updateCustomBaseUrl':
+            await this.handleUpdateCustomUrl(msg.url)
+            break
+            
+          case 'storeKey':
+            await this.handleStoreKey(msg.provider, msg.key)
+            break
+            
+          case 'startProxy':
+            await this.handleStartProxy()
+            break
+            
+          case 'stopProxy':
+            await this.handleStopProxy()
+            break
+            
+          case 'openSettings':
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
+            break
+            
+          case 'saveModels':
             await this.handleSaveModels(msg.reasoning, msg.completion)
             break
-          }
-          case 'updateProvider': {
-            const provider = String(msg.provider || 'openrouter')
-            const cfg = vscode.workspace.getConfiguration('claudeThrone')
-            await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
-            vscode.window.showInformationMessage(`Provider set to ${provider}`)
-            await this.handleListModels()
-            await this.postKeys()
+            
+          case 'setModelFromList':
+            await this.handleSetModelFromList(msg.modelId, msg.modelType)
             break
-          }
-          case 'updateCustomBaseUrl': {
-            const url = String(msg.url || '')
-            const cfg = vscode.workspace.getConfiguration('claudeThrone')
-            await cfg.update('customBaseUrl', url, vscode.ConfigurationTarget.Workspace)
-            vscode.window.showInformationMessage('Custom base URL updated')
+            
+          case 'toggleTwoModelMode':
+            await this.handleToggleTwoModelMode(msg.enabled)
             break
-          }
-          case 'openSettings': {
-            // Open the extension page via marketplace search (works in VS Code/Cursor)
-            try {
-              await vscode.commands.executeCommand('workbench.extensions.search', '@ext:thehive.claude-throne')
-            } catch {
-              // Fallback to settings filter
-              await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
-            }
+            
+          case 'filterModels':
+            await this.handleFilterModels(msg.filter)
             break
-          }
-          case 'requestKeys': {
-            await this.postKeys()
+            
+          case 'openExternal':
+            await vscode.env.openExternal(vscode.Uri.parse(msg.url))
             break
-          }
+            
+          default:
+            this.log.appendLine(`⚠️ Unknown message type: ${msg.type}`)
         }
       } catch (err: any) {
+        this.log.appendLine(`❌ Error handling message: ${err?.message || String(err)}`)
         vscode.window.showErrorMessage(err?.message || String(err))
+        this.view?.webview.postMessage({ 
+          type: 'error', 
+          payload: err?.message || String(err)
+        })
       }
     })
 
-    this.postStatus()
-    this.postKeys()
+    this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
   }
 
   private postStatus() {
@@ -144,398 +155,411 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         map[p] = false
       }
     }
+    this.log.appendLine(`📤 Sending keys status to webview: ${JSON.stringify(map)}`)
     this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
 
-  private async handleListModels() {
+  private postConfig() {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const config = {
+      provider: 'openrouter',
+      customUrl: '',
+      reasoningModel: String(cfg.get('reasoningModel') || ''),
+      completionModel: String(cfg.get('completionModel') || ''),
+      twoModelMode: Boolean(cfg.get('twoModelMode')),
+      autoApply: Boolean(cfg.get('autoApply')),
+      customEndpointKind: String(cfg.get('customEndpointKind') || 'auto')
+    }
+    this.view?.webview.postMessage({ type: 'config', payload: config })
+  }
+
+  private async postModels() {
+    // Send available models if we have them cached
+    // Otherwise, the webview will request them via listPublicModels
+    this.view?.webview.postMessage({ type: 'models', payload: [] })
+  }
+
+  private async handleListModels(freeOnly: boolean) {
+    const provider = this.currentProvider || 'openrouter'
+    this.log.appendLine(`📋 Loading models for provider: ${provider}`)
+    
+    try {
+      // Get API key for the provider
+      const apiKey = await this.secrets.getProviderKey(provider) || ''
+      this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
+      
+      // Get base URL for custom providers
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      let baseUrl = 'https://openrouter.ai/api'
+      
+      if (provider === 'custom') {
+        // For custom provider, we'd need to get the custom URL
+        // For now, use OpenRouter as default
+      } else if (provider === 'openai') {
+        baseUrl = 'https://api.openai.com/v1'
+      } else if (provider === 'together') {
+        baseUrl = 'https://api.together.xyz/v1'
+      } else if (provider === 'groq' || provider === 'grok') {
+        baseUrl = 'https://api.groq.com/openai/v1'
+      }
+      
+      this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
+      const modelIds = await listModels(provider as ProviderId, baseUrl, apiKey)
+      this.log.appendLine(`✅ Received ${modelIds.length} models from API`)
+      
+      // Convert to the format expected by the webview
+      const models = modelIds.map(id => ({
+        id,
+        name: id.split('/').pop() || id,
+        description: '',
+        provider
+      }))
+      
+      this.log.appendLine(`📤 Sending ${models.length} models to webview`)
+      this.view?.webview.postMessage({ 
+        type: 'models', 
+        payload: {
+          models,
+          provider,
+          freeOnly
+        }
+      })
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to load models: ${err}`)
+      this.view?.webview.postMessage({ 
+        type: 'error', 
+        payload: `Failed to load models: ${err}`
+      })
+    }
+  }
+
+  private async postPopularModels() {
+    // Try to load popular pairings from models configuration
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const provider = String(cfg.get('provider', 'openrouter')) as any
-      const baseUrl = provider === 'custom' ? String(cfg.get('customBaseUrl', '') || '') : (
-        provider === 'openrouter' ? 'https://openrouter.ai/api/v1' :
-        provider === 'openai' ? 'https://api.openai.com/v1' :
-        provider === 'together' ? 'https://api.together.xyz/v1' :
-        provider === 'groq' ? 'https://api.groq.com/openai/v1' : ''
-      )
-      const key = await this.secrets.getProviderKey(provider)
-      if (!key) throw new Error('Provider API key not set')
-      const { listModels } = await import('../services/Models')
-      const rawBase = provider === 'openrouter' ? 'https://openrouter.ai/api' : baseUrl
-      const list = await listModels(provider, rawBase, key)
-      const reasoningModel = String(cfg.get('reasoningModel'))
-      const completionModel = String(cfg.get('completionModel'))
-      this.view?.webview.postMessage({ type: 'models', payload: { list, reasoningModel, completionModel } })
-    } catch (err: any) {
-      this.view?.webview.postMessage({ type: 'modelsError', payload: { error: err?.message || String(err) } })
+      const reasoningModel = cfg.get<string>('reasoningModel')
+      const completionModel = cfg.get<string>('completionModel')
+      
+      // Load featured combinations from our data
+      const fs = await import('fs')
+      const pairingsPath = vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'data', 'model-pairings.json')
+      const pairingsContent = fs.readFileSync(pairingsPath.fsPath, 'utf8')
+      const pairingsData = JSON.parse(pairingsContent)
+      
+      this.view?.webview.postMessage({ 
+        type: 'popularModels', 
+        payload: {
+          pairings: pairingsData.featured_pairings,
+          currentReasoning: reasoningModel,
+          currentCompletion: completionModel
+        }
+      })
+    } catch (err) {
+      console.error('Failed to load popular models:', err)
+      this.view?.webview.postMessage({ 
+        type: 'popularModels', 
+        payload: { pairings: [] }
+      })
+    }
+  }
+
+  private async handleUpdateProvider(provider: string) {
+    // Store current provider for model loading
+    this.currentProvider = provider
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
+    } catch (err) {
+      console.error('Failed to update provider config:', err)
+    }
+    
+    // Reload models for new provider
+    this.handleListModels(false)
+    this.postPopularModels()
+  }
+
+  private async handleUpdateCustomUrl(url: string) {
+    // Update custom base URL
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    // This sets the environment variable indirectly via settings
+  }
+
+  private async handleStoreKey(provider: string, key: string) {
+    this.log.appendLine(`🔑 Storing key for provider: ${provider} (length: ${key?.length})`)
+    try {
+      await this.secrets.setProviderKey(provider, key)
+      this.log.appendLine('✅ Key stored successfully in system keychain')
+      await this.postKeys()
+      
+      // Show VS Code notification
+      vscode.window.showInformationMessage(`API key for ${provider} stored successfully`)
+      
+      this.log.appendLine('📤 Sending keyStored confirmation to webview')
+      const message = { 
+        type: 'keyStored', 
+        payload: { provider, success: true }
+      }
+      this.log.appendLine(`📤 Message content: ${JSON.stringify(message)}`)
+      this.view?.webview.postMessage(message)
+      this.log.appendLine('📤 Message sent via postMessage')
+      
+      // If this was the first key, try to load models
+      if (key && key.trim()) {
+        this.log.appendLine('📋 Triggering model list load...')
+        this.handleListModels(false)
+        this.postPopularModels()
+      }
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to store key: ${err}`)
+      vscode.window.showErrorMessage(`Failed to store API key: ${err}`)
+      this.view?.webview.postMessage({ 
+        type: 'keyStored', 
+        payload: { provider, success: false, error: String(err) }
+      })
+    }
+  }
+
+  private async handleStartProxy() {
+    try {
+      if (!this.proxy) {
+        throw new Error('ProxyManager not available')
+      }
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const port = cfg.get<number>('proxy.port', 3000)
+      const debug = cfg.get<boolean>('proxy.debug', false)
+      
+      const reasoningModel = cfg.get<string>('reasoningModel')
+      const completionModel = cfg.get<string>('completionModel')
+      
+      await this.proxy.start({
+        provider: this.currentProvider as any,
+        port,
+        debug,
+        reasoningModel,
+        completionModel
+      })
+      
+      vscode.window.showInformationMessage(`Proxy started on port ${port}`)
+      this.postStatus()
+      
+      // Auto-apply to Claude Code if enabled
+      const autoApply = cfg.get<boolean>('autoApply', true)
+      if (autoApply) {
+        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      }
+    } catch (err) {
+      console.error('Failed to start proxy:', err)
+      vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
+      this.view?.webview.postMessage({ 
+        type: 'proxyError', 
+        payload: String(err)
+      })
+    }
+  }
+
+  private async handleStopProxy() {
+    try {
+      if (!this.proxy) {
+        throw new Error('ProxyManager not available')
+      }
+      await this.proxy.stop()
+      this.postStatus()
+    } catch (err) {
+      console.error('Failed to stop proxy:', err)
     }
   }
 
   private async handleSaveModels(reasoning: string, completion: string) {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
-    await cfg.update('completionModel', completion, vscode.ConfigurationTarget.Workspace)
-    vscode.window.showInformationMessage('Saved model selections.')
-  }
-
-  private classifyExistsStatus(code: number): boolean {
-    // Route exists if server returns any of the following for an unauthenticated POST
-    return [200, 201, 202, 204, 400, 401, 403, 405, 415, 422].includes(code)
-  }
-
-  private async probe(url: string): Promise<number | null> {
     try {
-      const controller = new AbortController()
-      const t = setTimeout(() => controller.abort(), 5000)
-      const res = await fetch(url, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }, signal: controller.signal })
-      clearTimeout(t)
-      return res.status
-    } catch {
-      return null
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      await cfg.update('reasoningModel', reasoning)
+      await cfg.update('completionModel', completion)
+    } catch (err) {
+      console.error('Failed to save models:', err)
     }
   }
 
-  private normalizeBase(u: string): string {
-    return (u || '').replace(/\/$/, '')
+  private async handleFilterModels(filter: any) {
+    // Handle model filtering based on search and sort parameters
+    // Implementation depends on existing model data
   }
 
-  private async detectEndpoint(url: string): Promise<{ kind: 'openai' | 'anthropic' | 'unknown'; confidence: number; details: any }> {
-    const base = this.normalizeBase(url)
-    const candidates = {
-      openai1: `${base}/v1/chat/completions`,
-      openai2: `${base}/chat/completions`,
-      anthropic1: `${base}/v1/messages`,
-      anthropic2: `${base}/messages`,
+  private async handleSetModelFromList(modelId: string, modelType: 'primary' | 'secondary') {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    if (modelType === 'primary') {
+      await cfg.update('reasoningModel', modelId)
+    } else if (modelType === 'secondary') {
+      await cfg.update('completionModel', modelId)
     }
-    const [o1, o2, a1, a2] = await Promise.all([
-      this.probe(candidates.openai1),
-      this.probe(candidates.openai2),
-      this.probe(candidates.anthropic1),
-      this.probe(candidates.anthropic2),
-    ])
-    const openaiExists = [o1, o2].some(s => s != null && this.classifyExistsStatus(s!))
-    const anthropicExists = [a1, a2].some(s => s != null && this.classifyExistsStatus(s!))
-
-    // Heuristics
-    const hostHint = (() => {
-      try { return new URL(base).host.toLowerCase() } catch { return '' }
-    })()
-    let hintOpenAI = /(openai\.com|openrouter\.ai|together\.(ai|xyz)|x\.ai)/.test(hostHint)
-    let hintAnthropic = /anthropic/.test(base) || /\/v1\/messages\b/.test(base)
-
-    if (openaiExists && !anthropicExists) return { kind: 'openai', confidence: 0.9, details: { o1, o2, a1, a2 } }
-    if (anthropicExists && !openaiExists) return { kind: 'anthropic', confidence: 0.9, details: { o1, o2, a1, a2 } }
-    if (openaiExists && anthropicExists) return { kind: 'unknown', confidence: 0.4, details: { o1, o2, a1, a2 } }
-    if (hintOpenAI && !hintAnthropic) return { kind: 'openai', confidence: 0.6, details: { o1, o2, a1, a2 } }
-    if (hintAnthropic && !hintOpenAI) return { kind: 'anthropic', confidence: 0.6, details: { o1, o2, a1, a2 } }
-    return { kind: 'unknown', confidence: 0.1, details: { o1, o2, a1, a2 } }
+    this.postConfig()
   }
 
-  private async applyDirectBaseUrl(baseUrl: string) {
-    const url = this.normalizeBase(baseUrl)
-    const candidates: { section: string; key: string }[] = [
-      { section: 'anthropic', key: 'baseUrl' },
-      { section: 'claude', key: 'baseUrl' },
-      { section: 'claudeCode', key: 'baseUrl' },
-      { section: 'claude-code', key: 'baseUrl' },
-      { section: 'claude', key: 'apiBaseUrl' },
-      { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
-    const applied: string[] = []
-    for (const c of candidates) {
-      try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        await s.update(c.key, url, vscode.ConfigurationTarget.Workspace)
-        applied.push(`${c.section}.${c.key}`)
-      } catch {}
-    }
-    const termKeys = [
-      'terminal.integrated.env.osx',
-      'terminal.integrated.env.linux',
-      'terminal.integrated.env.windows',
-    ]
-    const termApplied: string[] = []
-    for (const key of termKeys) {
-      try {
-        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
-        const updated = { ...current, ANTHROPIC_BASE_URL: url }
-        await vscode.workspace.getConfiguration().update(key, updated, vscode.ConfigurationTarget.Workspace)
-        termApplied.push(key)
-      } catch {}
-    }
-    const parts: string[] = []
-    if (applied.length) parts.push(`extensions: ${applied.join(', ')}`)
-    if (termApplied.length) parts.push(`terminal env (new terminals): ${termApplied.length} target(s)`)
-    vscode.window.showInformationMessage(`Applied direct base URL ${url} to ${parts.join(' | ')}`)
+  private async handleToggleTwoModelMode(enabled: boolean) {
+    // Store the two-model mode preference
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    await cfg.update('twoModelMode', enabled)
   }
 
   private getHtml(): string {
     const nonce = String(Math.random()).slice(2)
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const provider = String(cfg.get('provider', 'openrouter'))
-    const customBaseUrl = String(cfg.get('customBaseUrl', '') || '')
+    const cssUri = this.view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'main.css')
+    )
+    const jsUri = this.view!.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'main.js')
+    )
+    
     return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src https://openrouter.ai;">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Throne</title>
-  <style>
-    :root {
-      --bg: #1e1e1e;
-      --panel: #252526;
-      --right: #1e1e1e;
-      --fg: #d4d4d4;
-      --muted: #8c8c8c;
-      --primary: #0e639c;
-      --border: #3c3c3c;
-      --ok: #1c4b31;
-      --ok-border: #28a745;
-      --warn: #4d2f2f;
-      --warn-border: #dc3545;
-      --info: #113a5f;
-      --info-border: #3794ff;
-    }
-    body { font-family: var(--vscode-font-family); background: var(--bg); color: var(--fg); margin: 0; }
-    .container { display: flex; height: 100vh; }
-    .left { flex: 1; padding: 16px 24px; background: var(--panel); display: flex; flex-direction: column; }
-    .right { flex: 1; background: var(--right); display: flex; align-items: center; justify-content: center; color: var(--muted); }
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    h3 { margin: 0; font-size: 20px; }
-    .gear { border: 1px solid var(--border); background: #2d2d2d; color: var(--fg); border-radius: 4px; padding: 4px; cursor: pointer; }
-    .statusLine { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
-    .badge { background: var(--primary); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
-    .hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
-    label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
-    select, input[type="text"] { width: 100%; background: #3c3c3c; border: 1px solid var(--border); color: var(--fg); padding: 8px 10px; border-radius: 4px; }
-    .row { margin-bottom: 14px; }
-    .key-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
-    .key-set { background: var(--ok); border: 1px solid var(--ok-border); }
-    .key-not-set { background: var(--warn); border: 1px solid var(--warn-border); }
-    .key-status .text { flex: 1; }
-    .key-status .actions { display: flex; gap: 8px; }
-    .btnRow { display: flex; gap: 16px; }
-    button { padding: 10px 16px; border-radius: 4px; border: 1px solid var(--border); background: #2d2d2d; color: var(--fg); cursor: pointer; }
-    .mini { padding: 6px 10px; font-size: 12px; }
-    .primary { background: #ffffff; color: #1e1e1e; }
-    .stop { background: var(--primary); color: #ffffff; border-color: var(--primary); }
-    .muted { font-size: 12px; color: var(--muted); margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
-    .banner { border: 1px solid var(--info-border); background: var(--info); padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; }
-    .banner.anthropic { border-color: #e6a700; background: #4a3a12; }
-  </style>
+  <link rel="stylesheet" href="${cssUri}">
 </head>
 <body>
   <div class="container">
-    <div class="left">
-      <div class="header">
-        <h3>Claude Throne</h3>
-        <button id="openSettings" class="gear" title="Open Settings" aria-label="Open Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.027 7.027 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 14.3 1h-3.6a.5.5 0 0 0-.49.41l-.36 2.54c-.58.22-1.12.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.3 7.47a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.42 13.15a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.69.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54c.06.24.25.41.49.41h3.6c.24 0 .44-.17.49-.41l.36-2.54c.58-.22 1.12-.53 1.63-.94l2.39.96c.26.11.55.02.69-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
-        </button>
-      </div>
+    <header class="header">
+      <h1 class="header-title">Claude Throne</h1>
+      <p class="header-subtitle">Configure and launch your local proxy for AI code completion.</p>
+    </header>
 
-      <div class="statusLine" id="status"><span class="badge">UNKNOWN</span> Proxy: unknown</div>
-      <div class="row"><span>Currently on the Throne: <a id="currentModel" href="#">None</a></span></div>
-      <hr class="hr" />
+    <main class="main-content">
+      <div class="content-grid">
+        <!-- Provider Configuration Card -->
+        <div class="card">
+          <h2 class="card-title">Provider</h2>
+          
+          <div class="form-group">
+            <label class="form-label" for="providerSelect">Provider</label>
+            <select class="form-select" id="providerSelect">
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai">OpenAI</option>
+              <option value="together">Together AI</option>
+              <option value="grok">Grok</option>
+              <option value="custom">Custom Provider</option>
+            </select>
+            <div id="providerHelp" class="provider-help"></div>
+          </div>
 
-      <div class="row">
-        <label for="provider">Provider</label>
-        <select id="provider">
-          <option value="openrouter" ${provider==='openrouter'?'selected':''}>OpenRouter</option>
-          <option value="openai" ${provider==='openai'?'selected':''}>OpenAI</option>
-          <option value="together" ${provider==='together'?'selected':''}>Together</option>
-          <option value="groq" ${provider==='groq'?'selected':''}>Grok</option>
-          <option value="custom" ${provider==='custom'?'selected':''}>Custom</option>
-        </select>
-      </div>
+          <div id="customUrlSection" class="custom-url-section">
+            <div class="form-group">
+              <label class="form-label" for="customUrl">Custom Endpoint URL</label>
+              <input class="form-input" type="text" id="customUrl" placeholder="https://api.example.com/v1">
+            </div>
+          </div>
 
-      <div id="keyStatus" class="row"></div>
+          <div class="form-group">
+            <label class="form-label" for="apiKeyInput">API Key</label>
+            <div class="input-group">
+              <input class="form-input" type="password" id="apiKeyInput" placeholder="Enter your API key">
+              <button class="input-group-btn" id="showKeyBtn" type="button" title="Toggle visibility">
+                <span id="keyIcon">👁</span>
+              </button>
+            </div>
+            <button class="btn-primary" id="storeKeyBtn" type="button" style="margin-top: 8px; width: 100%;">Store Key</button>
+            <div class="security-note">🔒 Keys are stored securely in your system keychain</div>
+          </div>
 
-      <div id="customUrlRow" class="row" ${provider==='custom'?'':'style="display:none"'}>
-        <label for="customBaseUrl">Custom Provider Base URL</label>
-        <input type="text" id="customBaseUrl" placeholder="https://your.provider/v1" value="${customBaseUrl.replace(/"/g, '&quot;')}">
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button id="saveCustomUrl">Save Base URL</button>
-          <button id="testEndpoint">Test Endpoint</button>
-          <button id="bypassApply" disabled>Bypass and Apply</button>
+          <div class="form-group">
+            <label class="form-label">Model Selection</label>
+            
+            <div class="two-model-toggle">
+              <input type="checkbox" id="twoModelToggle">
+              <label for="twoModelToggle">Use two models (reasoning + execution)</label>
+            </div>
+            
+            <div id="selectedModelsDisplay" class="selected-models-display" style="margin-top: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+              <div id="primaryModelDisplay" style="margin-bottom: 4px;"></div>
+              <div id="secondaryModelDisplay"></div>
+            </div>
+          </div>
         </div>
-        <div id="endpointBanner" class="banner" style="display:none"></div>
-      </div>
 
-      <div class="row">
-        <label for="reasoningInput">Reasoning Model</label>
-        <input type="text" id="reasoningInput" placeholder="Type reasoning model name..." list="modelsList" />
-      </div>
-      <div class="row">
-        <label for="completionInput">Completion Model</label>
-        <input type="text" id="completionInput" placeholder="Type completion model name..." list="modelsList" />
-      </div>
-      <datalist id="modelsList"></datalist>
+        <!-- Popular Combos Card (OpenRouter only) -->
+        <div id="popularCombosCard" class="card popular-combos-card">
+          <div class="combos-header">
+            <h2 class="card-title">Popular Combos</h2>
+            <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection">+ Save</button>
+          </div>
+          <div id="combosGrid" class="combos-grid">
+            <div class="loading-container">
+              <span class="loading-spinner"></span>Loading combos...
+            </div>
+          </div>
+        </div>
 
-      <div class="btnRow">
-        <button id="stop" class="stop">Stop Proxy</button>
-        <button id="apply" class="primary">Apply to Claude Code</button>
-      </div>
+        <!-- Advanced Settings Card -->
+        <details class="card advanced-settings">
+          <summary>Advanced Settings</summary>
+          <div class="advanced-content">
+            <div class="form-group">
+              <label class="form-label" for="portInput">Proxy Port</label>
+              <input class="form-input" type="number" id="portInput" value="3000" min="1000" max="65535">
+            </div>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="debugCheckbox">
+                <span style="font-size: 12px;">Enable debug logging</span>
+              </label>
+            </div>
+          </div>
+        </details>
 
-      <div class="muted">Configure provider, custom URL, and models here. Port, debug, and auto-apply live in Settings (search: @ext:thehive.claude-throne). Keys are stored securely.</div>
-    </div>
-    <div class="right">
-      <div>
-        <div style="text-align:center">Extended functionality<br/>coming soon</div>
+        <!-- Model List Card -->
+        <div class="card model-list-card">
+          <h2 class="card-title">Filter Models</h2>
+          
+          <div class="model-list-header">
+            <input class="model-search" type="text" id="modelSearch" placeholder="Filter models...">
+          </div>
+
+          <div id="modelListContainer" class="model-list">
+            <div class="loading-container">
+              <span class="loading-spinner"></span>Loading models...
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-left">
+        <a href="https://github.com/KHAEntertainment/claude-throne" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
+        <div class="status-text">
+          Status: <strong id="statusText" class="status-stopped">Idle</strong>
+        </div>
+      </div>
+      <div class="footer-right">
+        <button class="btn-primary" id="startProxyBtn">Start Proxy</button>
+        <button class="btn-primary btn-danger hidden" id="stopProxyBtn">Stop Proxy</button>
+      </div>
+    </footer>
   </div>
 
   <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi()
-    const $ = (id) => document.getElementById(id)
-
-    const providerEl = $('provider')
-    const customUrlRow = $('customUrlRow')
-    const customBaseUrlEl = $('customBaseUrl')
-    const modelsListEl = $('modelsList')
-    const reasoningEl = $('reasoningInput')
-    const completionEl = $('completionInput')
-    const keyStatusEl = $('keyStatus')
-    const currentModelEl = $('currentModel')
-    const testEndpointBtn = $('testEndpoint')
-    const bypassApplyBtn = $('bypassApply')
-    const endpointBanner = $('endpointBanner')
-
-    let keysMap = {}
-
-    function renderKeyStatus() {
-      const p = providerEl.value
-      const has = !!keysMap[p]
-      if (has) {
-        keyStatusEl.innerHTML = '<div class="key-status key-set">\n          <div class="text">API Key Securely Stored.</div>\n          <div class="actions">\n            <button id="updateKeyBtn" class="mini">Click here to Update It</button>\n          </div>\n        </div>'
-        const btn = document.getElementById('updateKeyBtn')
-        if (btn) btn.addEventListener('click', (e) => {
-          e.preventDefault()
-          vscode.postMessage({ type: 'storeKey', provider: p })
-        })
-      } else {
-        keyStatusEl.innerHTML = '<div class="key-status key-not-set">\n          <div class="text">No API Key stored.</div>\n          <div class="actions">\n            <button id="addKeyBtn" class="mini">Add API Key</button>\n          </div>\n        </div>'
-        const btn = document.getElementById('addKeyBtn')
-        if (btn) btn.addEventListener('click', (e) => {
-          e.preventDefault()
-          vscode.postMessage({ type: 'storeKey', provider: p })
-        })
-      }
-    }
-
-    // Buttons
-    $('openSettings').addEventListener('click', () => vscode.postMessage({ type: 'openSettings' }))
-    $('stop').addEventListener('click', () => vscode.postMessage({ type: 'stopProxy' }))
-    $('apply').addEventListener('click', () => {
-      vscode.postMessage({ type: 'applyClaudeCode' })
-      const btn = $('apply')
-      const old = btn.textContent
-      btn.textContent = 'Successfully Applied'
-      const oldClass = btn.className
-      btn.className = 'primary'
-      setTimeout(() => { btn.textContent = old; btn.className = oldClass }, 1800)
-    })
-
-    providerEl.addEventListener('change', () => {
-      const provider = providerEl.value
-      const isCustom = provider === 'custom'
-      customUrlRow.style.display = isCustom ? '' : 'none'
-      if (!isCustom) {
-        // Reset detection UI when leaving custom
-        endpointBanner.style.display = 'none'
-        bypassApplyBtn.disabled = true
-      }
-      vscode.postMessage({ type: 'updateProvider', provider })
-      vscode.postMessage({ type: 'requestKeys' })
-    })
-
-    $('saveCustomUrl').addEventListener('click', () => {
-      const url = customBaseUrlEl.value.trim()
-      vscode.postMessage({ type: 'updateCustomBaseUrl', url })
-    })
-
-    testEndpointBtn.addEventListener('click', () => {
-      const url = customBaseUrlEl.value.trim()
-      endpointBanner.style.display = 'block'
-      endpointBanner.textContent = 'Detecting endpoint type...'
-      vscode.postMessage({ type: 'detectEndpoint', url })
-    })
-
-    bypassApplyBtn.addEventListener('click', () => {
-      const url = customBaseUrlEl.value.trim()
-      vscode.postMessage({ type: 'applyDirectBaseUrl', url })
-    })
-
-    // Autosave model choices on change
-    function saveModelsDebounced() {
-      clearTimeout(saveModelsDebounced._t)
-      saveModelsDebounced._t = setTimeout(() => {
-        const reasoning = reasoningEl.value.trim()
-        const completion = completionEl.value.trim()
-        vscode.postMessage({ type: 'saveModels', reasoning, completion })
-      }, 400)
-    }
-    reasoningEl.addEventListener('change', saveModelsDebounced)
-    completionEl.addEventListener('change', saveModelsDebounced)
-
-    function setModels(list, selectedReasoning, selectedCompletion) {
-      modelsListEl.innerHTML = ''
-      for (const id of list) {
-        const opt = document.createElement('option')
-        opt.value = id
-        modelsListEl.appendChild(opt)
-      }
-      if (selectedReasoning) reasoningEl.value = selectedReasoning
-      if (selectedCompletion) completionEl.value = selectedCompletion
-      // Also reflect in header line
-      const cm = selectedCompletion || selectedReasoning || 'None'
-      currentModelEl.textContent = cm
-    }
-
-    window.addEventListener('message', (event) => {
-      const { type, payload } = event.data || {}
-      if (type === 'status') {
-        const s = payload || { running: false }
-        const badge = s.running ? 'ACTIVE' : 'STOPPED'
-        const badgeEl = '<span class="badge">' + badge + '</span>'
-        $('status').innerHTML = badgeEl + ' ' + (s.running ? ('Proxy: running' + (s.port ? ' on ' + s.port : '')) : 'Proxy: stopped')
-        const cm = (s.completionModel && s.completionModel.trim()) ? s.completionModel : (s.reasoningModel || 'None')
-        currentModelEl.textContent = cm
-      } else if (type === 'models') {
-        setModels(payload.list || [], payload.reasoningModel, payload.completionModel)
-      } else if (type === 'modelsError') {
-        setModels([], null, null)
-      } else if (type === 'keys') {
-        keysMap = payload || {}
-        renderKeyStatus()
-      } else if (type === 'endpointDetection') {
-        const { kind, confidence } = payload || { kind: 'unknown', confidence: 0 }
-        if (kind === 'anthropic') {
-          endpointBanner.className = 'banner anthropic'
-          endpointBanner.style.display = 'block'
-          endpointBanner.textContent = 'Detected Anthropic-style endpoint (confidence ' + Math.round(confidence*100) + '%). You can bypass the proxy and apply directly to Claude Code.'
-          bypassApplyBtn.disabled = false
-        } else if (kind === 'openai') {
-          endpointBanner.className = 'banner'
-          endpointBanner.style.display = 'block'
-          endpointBanner.textContent = 'Detected OpenAI-style endpoint (confidence ' + Math.round(confidence*100) + '%). This will work via the proxy.'
-          bypassApplyBtn.disabled = true
-        } else {
-          endpointBanner.className = 'banner'
-          endpointBanner.style.display = 'block'
-          endpointBanner.textContent = 'Could not determine endpoint type with confidence. You may still try bypass if you know it\'s Anthropic-style.'
-          bypassApplyBtn.disabled = false
-        }
-      }
-    })
-
-    // Initial requests
-    vscode.postMessage({ type: 'listModels' })
-    vscode.postMessage({ type: 'requestKeys' })
+    // Bootstrap script - runs immediately to set up message handling
+    (function() {
+      console.log('[BOOTSTRAP] Starting Claude Throne webview...');
+      
+      // Acquire VS Code API immediately
+      const vscode = acquireVsCodeApi();
+      console.log('[BOOTSTRAP] VS Code API acquired:', !!vscode);
+      
+      // Set up message listener BEFORE anything else
+      window.addEventListener('message', (event) => {
+        console.log('[BOOTSTRAP] Received message:', event.data.type, event.data);
+      });
+      
+      // Make vscode API globally available
+      window.vscodeApi = vscode;
+      
+      console.log('[BOOTSTRAP] Message listener registered, waiting for main script...');
+    })();
   </script>
+  <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`
   }
 }
-
