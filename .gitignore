@@ -11,6 +11,9 @@ extensions/claude-throne/out/
 extensions/claude-throne/webview/dist/
 extensions/claude-throne/*.vsix
 
+# Archive and compiled artifacts
+.archive/
+
 # Python artifacts
 backends/python/ct_secretsd/__pycache__/
 backends/python/ct_secretsd/dist/

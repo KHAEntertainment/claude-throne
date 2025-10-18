@@ -1,4 +1,6 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
-  "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3"
+  "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
+  "claudeThrone.reasoningModel": "deepseek/deepseek-chat-v3.1:free",
+  "claudeThrone.completionModel": "qwen/qwen3-coder:free"
 }
