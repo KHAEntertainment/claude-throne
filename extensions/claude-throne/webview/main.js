@@ -111,6 +111,9 @@
     const stopBtn = document.getElementById('stopProxyBtn');
     stopBtn?.addEventListener('click', stopProxy);
 
+    const portInput = document.getElementById('portInput');
+    portInput?.addEventListener('input', onPortChange);
+
     // GitHub Link
     const repoLink = document.getElementById('repoLink');
     repoLink?.addEventListener('click', (e) => {
@@ -174,11 +177,6 @@
       updateTwoModelUI();
       updateProviderUI();
     }
-
-    // Request initial data
-    vscode.postMessage({ type: 'requestConfig' });
-            vscode.postMessage({ type: 'requestStatus' });
-            vscode.postMessage({ type: 'requestKeys' });
   }
 
   function saveState() {
@@ -305,8 +303,18 @@
   }
 
   function requestSaveCombo() {
-    console.log('[requestSaveCombo] TODO: Implement save combo dialog');
-    // TODO: Show dialog to name combo and choose scope (workspace/global)
+    const name = prompt('Enter a name for this model combo:');
+    if (!name || !name.trim()) {
+      return;
+    }
+    
+    console.log('[requestSaveCombo] Saving combo:', name);
+    vscode.postMessage({
+      type: 'saveCombo',
+      name: name.trim(),
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel
+    });
   }
 
   function handleCombosLoaded(payload) {
@@ -437,8 +445,19 @@
     if (state.modelsCache[state.provider]) {
       state.models = state.modelsCache[state.provider];
       renderModelList();
-      updateModelDropdowns();
       return;
+    }
+    
+    // Check if custom provider without URL
+    if (state.provider === 'custom') {
+      const customUrl = document.getElementById('customUrl')?.value;
+      if (!customUrl || !customUrl.trim()) {
+        const container = document.getElementById('modelListContainer');
+        if (container) {
+          container.innerHTML = '<div class="empty-state">Enter custom endpoint URL to load models</div>';
+        }
+        return;
+      }
     }
     
     // Show loading state
@@ -448,29 +467,8 @@
     }
 
     try {
-      // Fetch from OpenRouter API
-      const response = await fetch('https://openrouter.ai/api/v1/models');
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error?.message || 'Failed to load models');
-      }
-
-      let models = data.data || [];
-      
-      // Filter by provider if not OpenRouter
-      if (state.provider !== 'openrouter' && state.provider !== 'custom') {
-        const prefix = providers[state.provider]?.apiPrefix || '';
-        if (prefix) {
-          models = models.filter(m => m.id.startsWith(prefix));
-        }
-      }
-
-      // Cache models
-      state.models = models;
-      state.modelsCache[state.provider] = models;
-      
-      renderModelList();
+      // Request models from backend
+      vscode.postMessage({ type: 'requestModels', provider: state.provider });
     } catch (error) {
       console.error('Failed to load models:', error);
       if (container) {
@@ -610,6 +608,11 @@
     });
   }
 
+  function onPortChange(e) {
+    const port = e.target.value;
+    vscode.postMessage({ type: 'updatePort', port: parseInt(port, 10) });
+  }
+
   // Proxy Controls
   function startProxy() {
     vscode.postMessage({ type: 'startProxy' });
@@ -658,6 +661,11 @@
       updateProviderUI();
     }
 
+    if (config.port) {
+        state.port = config.port;
+        document.getElementById('portInput').value = config.port;
+    }
+
     if (config.reasoningModel) {
       state.primaryModel = config.reasoningModel;
     }
@@ -687,10 +695,12 @@
 
   function handleModelsLoaded(payload) {
     if (payload.models && Array.isArray(payload.models)) {
+      if (payload.models.length === 0) {
+        return;
+      }
       state.models = payload.models;
       state.modelsCache[state.provider] = payload.models;
       renderModelList();
-      updateModelDropdowns();
     }
   }
 

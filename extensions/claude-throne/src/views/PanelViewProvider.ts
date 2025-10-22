@@ -6,6 +6,7 @@ import { listModels, type ProviderId } from '../services/Models'
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
+  private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -47,92 +48,81 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             this.postModels()
             await this.postPopularModels()
             break
-            
           case 'requestStatus':
             this.postStatus()
             break
-            
           case 'requestKeys':
             await this.postKeys()
             break
-            
           case 'requestConfig':
             this.postConfig()
             break
-            
           case 'requestModels':
-            await this.postModels()
+            await this.handleListModels(false)
             break
-            
           case 'listPublicModels':
             await this.handleListModels(false)
             break
-            
           case 'listFreeModels':
             await this.handleListModels(true)
             break
-            
           case 'requestPopularModels':
             await this.postPopularModels()
             break
-            
           case 'updateProvider':
             await this.handleUpdateProvider(msg.provider)
             break
-            
           case 'updateCustomBaseUrl':
             await this.handleUpdateCustomUrl(msg.url)
+            if (this.currentProvider === 'custom') {
+              if (msg.url && msg.url.trim()) {
+                await this.handleListModels(false)
+              } else {
+                this.postModels()
+              }
+            }
             break
-            
           case 'storeKey':
             await this.handleStoreKey(msg.provider, msg.key)
             break
-            
           case 'startProxy':
             await this.handleStartProxy()
             break
-            
           case 'stopProxy':
             await this.handleStopProxy()
             break
-            
           case 'openSettings':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
-            
           case 'saveModels':
             await this.handleSaveModels(msg.reasoning, msg.completion)
             break
-            
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
             break
-            
           case 'toggleTwoModelMode':
             await this.handleToggleTwoModelMode(msg.enabled)
             break
-            
           case 'filterModels':
             await this.handleFilterModels(msg.filter)
             break
-            
           case 'openExternal':
-            await vscode.env.openExternal(vscode.Uri.parse(msg.url))
+            vscode.env.openExternal(vscode.Uri.parse(msg.url))
             break
-            
+          case 'updatePort':
+            await this.handleUpdatePort(msg.port)
+            break
+          case 'saveCombo':
+            await this.handleSaveCombo(msg.name, msg.primaryModel, msg.secondaryModel)
+            break
           default:
-            this.log.appendLine(`⚠️ Unknown message type: ${msg.type}`)
+            this.log.appendLine(`Unknown message type received: ${msg.type}`)
         }
-      } catch (err: any) {
-        this.log.appendLine(`❌ Error handling message: ${err?.message || String(err)}`)
-        vscode.window.showErrorMessage(err?.message || String(err))
-        this.view?.webview.postMessage({ 
-          type: 'error', 
-          payload: err?.message || String(err)
-        })
+      } catch (err) {
+        this.log.appendLine(`❌ Error handling message: ${err}`)
+        vscode.window.showErrorMessage(`Error in Claude Throne: ${err}`)
       }
-    })
-
+    });
     this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
   }
 
@@ -159,29 +149,66 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
 
-  private postConfig() {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const config = {
-      provider: 'openrouter',
-      customUrl: '',
-      reasoningModel: String(cfg.get('reasoningModel') || ''),
-      completionModel: String(cfg.get('completionModel') || ''),
-      twoModelMode: Boolean(cfg.get('twoModelMode')),
-      autoApply: Boolean(cfg.get('autoApply')),
-      customEndpointKind: String(cfg.get('customEndpointKind') || 'auto')
-    }
-    this.view?.webview.postMessage({ type: 'config', payload: config })
+  public postConfig() {
+    if (!this.view) return;
+    const config = vscode.workspace.getConfiguration('claudeThrone');
+    const provider = config.get('provider');
+    const reasoningModel = config.get('reasoningModel');
+    const completionModel = config.get('completionModel');
+    const twoModelMode = config.get('twoModelMode');
+    const port = config.get('proxy.port');
+    this.view.webview.postMessage({
+      type: 'config',
+      payload: { provider, reasoningModel, completionModel, twoModelMode, port }
+    });
   }
 
   private async postModels() {
-    // Send available models if we have them cached
-    // Otherwise, the webview will request them via listPublicModels
-    this.view?.webview.postMessage({ type: 'models', payload: [] })
+    const provider = this.currentProvider || 'openrouter'
+    const CACHE_TTL_MS = 5 * 60 * 1000
+    const cached = this.modelsCache.get(provider)
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.view?.webview.postMessage({ 
+        type: 'models', 
+        payload: { models: cached.models, provider } 
+      })
+    } else {
+      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+    }
   }
 
   private async handleListModels(freeOnly: boolean) {
     const provider = this.currentProvider || 'openrouter'
     this.log.appendLine(`📋 Loading models for provider: ${provider}`)
+    
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
+    if (provider === 'custom') {
+      const baseUrl = cfg.get<string>('customBaseUrl', '')
+      if (!baseUrl || !baseUrl.trim()) {
+        this.view?.webview.postMessage({ 
+          type: 'models', 
+          payload: { models: [], provider } 
+        })
+        return
+      }
+    }
+    
+    const CACHE_TTL_MS = 5 * 60 * 1000
+    const cached = this.modelsCache.get(provider)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.log.appendLine(`📦 Using cached models for ${provider}`)
+      this.view?.webview.postMessage({ 
+        type: 'models', 
+        payload: {
+          models: cached.models,
+          provider,
+          freeOnly
+        }
+      })
+      return
+    }
     
     try {
       // Get API key for the provider
@@ -189,12 +216,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
       // Get base URL for custom providers
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
       let baseUrl = 'https://openrouter.ai/api'
       
       if (provider === 'custom') {
-        // For custom provider, we'd need to get the custom URL
-        // For now, use OpenRouter as default
+        baseUrl = cfg.get<string>('customBaseUrl', '')
       } else if (provider === 'openai') {
         baseUrl = 'https://api.openai.com/v1'
       } else if (provider === 'together') {
@@ -214,6 +239,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         description: '',
         provider
       }))
+      
+      this.modelsCache.set(provider, { models, timestamp: Date.now() })
       
       this.log.appendLine(`📤 Sending ${models.length} models to webview`)
       this.view?.webview.postMessage({ 
@@ -266,22 +293,60 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleUpdateProvider(provider: string) {
     // Store current provider for model loading
     this.currentProvider = provider
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
     try {
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
       await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
     } catch (err) {
       console.error('Failed to update provider config:', err)
     }
     
     // Reload models for new provider
-    this.handleListModels(false)
+    if (provider === 'custom') {
+      const customBaseUrl = cfg.get<string>('customBaseUrl', '')
+      if (!customBaseUrl || !customBaseUrl.trim()) {
+        this.postModels()
+      } else {
+        this.handleListModels(false)
+      }
+    } else {
+      this.handleListModels(false)
+    }
     this.postPopularModels()
   }
 
   private async handleUpdateCustomUrl(url: string) {
-    // Update custom base URL
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    // This sets the environment variable indirectly via settings
+    await cfg.update('customBaseUrl', url, vscode.ConfigurationTarget.Workspace)
+  }
+
+  private async handleUpdatePort(port: number) {
+    await vscode.workspace.getConfiguration('claudeThrone').update('proxy.port', port, vscode.ConfigurationTarget.Workspace)
+    this.postConfig()
+  }
+
+  private async handleSaveCombo(name: string, primaryModel: string, secondaryModel: string) {
+    try {
+      const config = vscode.workspace.getConfiguration('claudeThrone')
+      const savedCombos = config.get<any[]>('savedCombos', [])
+      
+      const newCombo = {
+        name,
+        reasoning: primaryModel,
+        completion: secondaryModel
+      }
+      
+      const updatedCombos = [...savedCombos, newCombo]
+      await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
+      
+      vscode.window.showInformationMessage('Model combo saved successfully')
+      this.view?.webview.postMessage({ 
+        type: 'combosLoaded', 
+        payload: { combos: updatedCombos } 
+      })
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to save combo: ${err}`)
+      vscode.window.showErrorMessage(`Failed to save combo: ${err}`)
+    }
   }
 
   private async handleStoreKey(provider: string, key: string) {
@@ -363,7 +428,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         throw new Error('ProxyManager not available')
       }
       await this.proxy.stop()
+      
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const autoApply = cfg.get<boolean>('autoApply', true)
+      if (autoApply) {
+        await vscode.commands.executeCommand('claudeThrone.revertApply')
+      }
+      
       this.postStatus()
+      if (autoApply) {
+        vscode.window.showInformationMessage('Proxy stopped and Claude Code settings reverted')
+      }
     } catch (err) {
       console.error('Failed to stop proxy:', err)
     }
