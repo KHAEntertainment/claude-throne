@@ -33468,7 +33468,7 @@ fastify.get("/v1/models", async (request, reply) => {
 fastify.get("/healthz", async (request, reply) => {
   return {
     status: "ok",
-    version: "1.4.11",
+    version: "1.4.19",
     provider,
     baseUrl,
     models
@@ -33487,6 +33487,42 @@ fastify.get("/health", async (request, reply) => {
     timestamp: Date.now(),
     uptime: process.uptime()
   };
+});
+fastify.post("/v1/messages/count_tokens", async (request, reply) => {
+  try {
+    const { messages, system, tools } = request.body;
+    let totalTokens = 0;
+    if (system) {
+      const systemText = Array.isArray(system) ? system.map((s) => s.text || s.content || "").join(" ") : typeof system === "string" ? system : "";
+      totalTokens += Math.ceil(systemText.length / 4);
+    }
+    if (messages && Array.isArray(messages)) {
+      for (const msg of messages) {
+        if (typeof msg.content === "string") {
+          totalTokens += Math.ceil(msg.content.length / 4);
+        } else if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === "text" && block.text) {
+              totalTokens += Math.ceil(block.text.length / 4);
+            } else if (block.type === "tool_result" && block.content) {
+              totalTokens += Math.ceil(block.content.length / 4);
+            }
+          }
+        }
+      }
+    }
+    if (tools && Array.isArray(tools)) {
+      const toolsJson = JSON.stringify(tools);
+      totalTokens += Math.ceil(toolsJson.length / 4);
+    }
+    return {
+      input_tokens: totalTokens
+    };
+  } catch (err) {
+    console.error("[count_tokens error]", err);
+    reply.code(500);
+    return { error: { message: err.message, type: "internal_error" } };
+  }
 });
 fastify.post("/v1/debug/echo", async (request, reply) => {
   try {
@@ -33687,6 +33723,15 @@ fastify.post("/v1/messages", async (request, reply) => {
     };
     if (tools.length > 0) openaiPayload.tools = tools;
     debug("OpenAI payload:", openaiPayload);
+    if (tools.length > 1) {
+      console.log(`[Tool Info] ${tools.length} tools available`);
+      const problematicModels = ["glm-4.6", "glm-4.5", "deepseek"];
+      const hasKnownIssue = problematicModels.some((m) => selectedModel.includes(m));
+      if (hasKnownIssue) {
+        console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`);
+        console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`);
+      }
+    }
     const headers = {
       "Content-Type": "application/json",
       ...providerSpecificHeaders(provider)
@@ -33718,6 +33763,36 @@ fastify.post("/v1/messages", async (request, reply) => {
     console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
     if (!openaiResponse.ok) {
       const errorDetails = await openaiResponse.text();
+      let errorJson;
+      try {
+        errorJson = JSON.parse(errorDetails);
+      } catch {
+        errorJson = {
+          error: {
+            message: errorDetails,
+            type: "upstream_error"
+          }
+        };
+      }
+      console.error("[OpenRouter Error]", {
+        status: openaiResponse.status,
+        model: openaiPayload.model,
+        provider,
+        messageCount: messages.length,
+        toolCount: tools.length,
+        error: errorJson.error?.message || errorDetails.substring(0, 200)
+      });
+      if (openaiResponse.status === 400) {
+        console.error("[400 Bad Request Details]", {
+          possibleCauses: [
+            "Tool concurrency not supported by model",
+            "Invalid tool schema",
+            "Message format incompatibility",
+            "Context length exceeded"
+          ],
+          suggestion: "Try with fewer tools or different model"
+        });
+      }
       debug("OpenRouter error response:", {
         status: openaiResponse.status,
         statusText: openaiResponse.statusText,
@@ -33728,14 +33803,7 @@ fastify.post("/v1/messages", async (request, reply) => {
         errorBody: errorDetails
       });
       reply.code(openaiResponse.status);
-      try {
-        const errorJson = JSON.parse(errorDetails);
-        debug("Parsed error JSON:", errorJson);
-        return errorJson;
-      } catch {
-        debug("Error response was not valid JSON, returning string wrapper");
-        return { error: errorDetails };
-      }
+      return errorJson;
     }
     debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
     if (!openaiPayload.stream) {
@@ -33790,151 +33858,211 @@ fastify.post("/v1/messages", async (request, reply) => {
     let textBlockStarted = false;
     let encounteredToolCall = false;
     const toolCallAccumulators = {};
+    let chunkBuffer = "";
     const decoder = new import_util.TextDecoder("utf-8");
     const reader = openaiResponse.body.getReader();
     let done = false;
-    while (!done) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
-      if (value) {
-        const chunk = decoder.decode(value);
-        if (!firstChunkLogged && chunk.trim()) {
-          ttfbMs = Date.now() - requestStartMs;
-          debug("Streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
-          firstChunkLogged = true;
-        }
-        if (process.env.DEBUG_CHUNKS) {
-          debug("OpenAI response chunk:", chunk);
-        }
-        const lines = chunk.split("\n");
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed === "" || !trimmed.startsWith("data:")) continue;
-          const dataStr = trimmed.replace(/^data:\s*/, "");
-          if (dataStr === "[DONE]") {
-            const totalStreamMs = Date.now() - requestStartMs;
-            debug("Streaming completion timing:", {
-              totalStreamMs,
-              ttfbMs,
-              totalResponseTime: totalStreamMs,
-              serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
-            });
-            if (encounteredToolCall) {
-              for (const idx in toolCallAccumulators) {
+    try {
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+          const chunk = decoder.decode(value);
+          if (!firstChunkLogged && chunk.trim()) {
+            ttfbMs = Date.now() - requestStartMs;
+            debug("Streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
+            firstChunkLogged = true;
+          }
+          if (process.env.DEBUG_CHUNKS) {
+            debug("OpenAI response chunk:", chunk);
+          }
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed === "" || !trimmed.startsWith("data:")) continue;
+            const dataStr = trimmed.replace(/^data:\s*/, "");
+            if (dataStr === "[DONE]") {
+              if (chunkBuffer) {
+                debug("[Streaming] Attempting to parse buffered data on stream end");
+                try {
+                  const finalParsed = JSON.parse(chunkBuffer);
+                  if (finalParsed.choices?.[0]?.delta?.content) {
+                    accumulatedContent += finalParsed.choices[0].delta.content;
+                    if (textBlockStarted) {
+                      sendSSE(reply, "content_block_delta", {
+                        type: "content_block_delta",
+                        index: 0,
+                        delta: {
+                          type: "text_delta",
+                          text: finalParsed.choices[0].delta.content
+                        }
+                      });
+                    }
+                  }
+                } catch (err) {
+                  debug("[Streaming] Could not parse buffered data, discarding:", chunkBuffer.substring(0, 100));
+                }
+                chunkBuffer = "";
+              }
+              const totalStreamMs = Date.now() - requestStartMs;
+              debug("Streaming completion timing:", {
+                totalStreamMs,
+                ttfbMs,
+                totalResponseTime: totalStreamMs,
+                serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
+              });
+              if (encounteredToolCall) {
+                for (const idx in toolCallAccumulators) {
+                  sendSSE(reply, "content_block_stop", {
+                    type: "content_block_stop",
+                    index: parseInt(idx, 10)
+                  });
+                }
+              } else if (textBlockStarted) {
                 sendSSE(reply, "content_block_stop", {
                   type: "content_block_stop",
-                  index: parseInt(idx, 10)
+                  index: 0
                 });
               }
-            } else if (textBlockStarted) {
-              sendSSE(reply, "content_block_stop", {
-                type: "content_block_stop",
-                index: 0
+              sendSSE(reply, "message_delta", {
+                type: "message_delta",
+                delta: {
+                  stop_reason: encounteredToolCall ? "tool_use" : "end_turn",
+                  stop_sequence: null
+                },
+                usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
               });
+              sendSSE(reply, "message_stop", {
+                type: "message_stop"
+              });
+              reply.raw.end();
+              return;
             }
-            sendSSE(reply, "message_delta", {
-              type: "message_delta",
-              delta: {
-                stop_reason: encounteredToolCall ? "tool_use" : "end_turn",
-                stop_sequence: null
-              },
-              usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
-            });
-            sendSSE(reply, "message_stop", {
-              type: "message_stop"
-            });
-            clearTimeout(totalTimeout);
-            reply.raw.end();
-            return;
-          }
-          const parsed = JSON.parse(dataStr);
-          if (parsed.error) {
-            throw new Error(parsed.error.message);
-          }
-          sendSuccessMessage();
-          if (parsed.usage) {
-            usage = parsed.usage;
-          }
-          const delta = parsed.choices[0].delta;
-          if (delta && delta.tool_calls) {
-            for (const toolCall of delta.tool_calls) {
-              encounteredToolCall = true;
-              const idx = toolCall.index;
-              if (toolCallAccumulators[idx] === void 0) {
-                toolCallAccumulators[idx] = "";
+            let parsed;
+            try {
+              const attemptStr = chunkBuffer + dataStr;
+              parsed = JSON.parse(attemptStr);
+              chunkBuffer = "";
+            } catch (parseError) {
+              if (process.env.DEBUG) {
+                debug("[Streaming] Incomplete JSON chunk, buffering:", {
+                  error: parseError.message,
+                  position: parseError.message.match(/position (\d+)/)?.[1],
+                  chunkLength: dataStr.length,
+                  bufferLength: chunkBuffer.length
+                });
+              }
+              chunkBuffer += dataStr;
+              continue;
+            }
+            if (parsed.error) {
+              throw new Error(parsed.error.message);
+            }
+            sendSuccessMessage();
+            if (parsed.usage) {
+              usage = parsed.usage;
+            }
+            const delta = parsed.choices[0].delta;
+            if (delta && delta.tool_calls) {
+              for (const toolCall of delta.tool_calls) {
+                encounteredToolCall = true;
+                const idx = toolCall.index;
+                if (toolCallAccumulators[idx] === void 0) {
+                  toolCallAccumulators[idx] = "";
+                  sendSSE(reply, "content_block_start", {
+                    type: "content_block_start",
+                    index: idx,
+                    content_block: {
+                      type: "tool_use",
+                      id: toolCall.id,
+                      name: toolCall.function.name,
+                      input: {}
+                    }
+                  });
+                }
+                const newArgs = toolCall.function.arguments || "";
+                const oldArgs = toolCallAccumulators[idx];
+                if (newArgs.length > oldArgs.length) {
+                  const deltaText = newArgs.substring(oldArgs.length);
+                  sendSSE(reply, "content_block_delta", {
+                    type: "content_block_delta",
+                    index: idx,
+                    delta: {
+                      type: "input_json_delta",
+                      partial_json: deltaText
+                    }
+                  });
+                  toolCallAccumulators[idx] = newArgs;
+                }
+              }
+            } else if (delta && delta.content) {
+              if (!textBlockStarted) {
+                textBlockStarted = true;
                 sendSSE(reply, "content_block_start", {
                   type: "content_block_start",
-                  index: idx,
+                  index: 0,
                   content_block: {
-                    type: "tool_use",
-                    id: toolCall.id,
-                    name: toolCall.function.name,
-                    input: {}
+                    type: "text",
+                    text: ""
                   }
                 });
               }
-              const newArgs = toolCall.function.arguments || "";
-              const oldArgs = toolCallAccumulators[idx];
-              if (newArgs.length > oldArgs.length) {
-                const deltaText = newArgs.substring(oldArgs.length);
-                sendSSE(reply, "content_block_delta", {
-                  type: "content_block_delta",
-                  index: idx,
-                  delta: {
-                    type: "input_json_delta",
-                    partial_json: deltaText
+              accumulatedContent += delta.content;
+              sendSSE(reply, "content_block_delta", {
+                type: "content_block_delta",
+                index: 0,
+                delta: {
+                  type: "text_delta",
+                  text: delta.content
+                }
+              });
+            } else if (delta && delta.reasoning) {
+              if (!textBlockStarted) {
+                textBlockStarted = true;
+                sendSSE(reply, "content_block_start", {
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: {
+                    type: "text",
+                    text: ""
                   }
                 });
-                toolCallAccumulators[idx] = newArgs;
               }
-            }
-          } else if (delta && delta.content) {
-            if (!textBlockStarted) {
-              textBlockStarted = true;
-              sendSSE(reply, "content_block_start", {
-                type: "content_block_start",
+              accumulatedReasoning += delta.reasoning;
+              sendSSE(reply, "content_block_delta", {
+                type: "content_block_delta",
                 index: 0,
-                content_block: {
-                  type: "text",
-                  text: ""
+                delta: {
+                  type: "thinking_delta",
+                  thinking: delta.reasoning
                 }
               });
             }
-            accumulatedContent += delta.content;
-            sendSSE(reply, "content_block_delta", {
-              type: "content_block_delta",
-              index: 0,
-              delta: {
-                type: "text_delta",
-                text: delta.content
-              }
-            });
-          } else if (delta && delta.reasoning) {
-            if (!textBlockStarted) {
-              textBlockStarted = true;
-              sendSSE(reply, "content_block_start", {
-                type: "content_block_start",
-                index: 0,
-                content_block: {
-                  type: "text",
-                  text: ""
-                }
-              });
-            }
-            accumulatedReasoning += delta.reasoning;
-            sendSSE(reply, "content_block_delta", {
-              type: "content_block_delta",
-              index: 0,
-              delta: {
-                type: "thinking_delta",
-                thinking: delta.reasoning
-              }
-            });
           }
         }
       }
+      reply.raw.end();
+    } catch (streamError) {
+      console.error("[Error] Stream processing failed:", streamError);
+      if (!reply.raw.writableEnded) {
+        try {
+          sendSSE(reply, "error", {
+            type: "error",
+            error: {
+              type: "internal_error",
+              message: streamError.message
+            }
+          });
+          reply.raw.end();
+        } catch (sendError) {
+          console.error("[Error] Could not send error event:", sendError);
+          if (!reply.raw.writableEnded) {
+            reply.raw.end();
+          }
+        }
+      }
+      return;
     }
-    reply.raw.end();
   } catch (err) {
     console.error(err);
     reply.code(500);

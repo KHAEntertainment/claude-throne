@@ -96,7 +96,7 @@ fastify.get('/v1/models', async (request, reply) => {
 fastify.get('/healthz', async (request, reply) => {
     return {
         status: 'ok',
-        version: '1.4.11',
+        version: '1.4.19',
         provider,
         baseUrl,
         models,
@@ -117,6 +117,53 @@ fastify.get('/health', async (request, reply) => {
         uptime: process.uptime()
     }
 });
+
+fastify.post('/v1/messages/count_tokens', async (request, reply) => {
+  try {
+    const { messages, system, tools } = request.body
+    
+    let totalTokens = 0
+    
+    // Count system message
+    if (system) {
+      const systemText = Array.isArray(system) 
+        ? system.map(s => s.text || s.content || '').join(' ')
+        : (typeof system === 'string' ? system : '')
+      totalTokens += Math.ceil(systemText.length / 4)
+    }
+    
+    // Count messages
+    if (messages && Array.isArray(messages)) {
+      for (const msg of messages) {
+        if (typeof msg.content === 'string') {
+          totalTokens += Math.ceil(msg.content.length / 4)
+        } else if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === 'text' && block.text) {
+              totalTokens += Math.ceil(block.text.length / 4)
+            } else if (block.type === 'tool_result' && block.content) {
+              totalTokens += Math.ceil(block.content.length / 4)
+            }
+          }
+        }
+      }
+    }
+    
+    // Count tools (rough estimate)
+    if (tools && Array.isArray(tools)) {
+      const toolsJson = JSON.stringify(tools)
+      totalTokens += Math.ceil(toolsJson.length / 4)
+    }
+    
+    return {
+      input_tokens: totalTokens
+    }
+  } catch (err) {
+    console.error('[count_tokens error]', err)
+    reply.code(500)
+    return { error: { message: err.message, type: 'internal_error' } }
+  }
+})
 
 fastify.post('/v1/debug/echo', async (request, reply) => {
   try {
@@ -334,6 +381,20 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (tools.length > 0) openaiPayload.tools = tools
     debug('OpenAI payload:', openaiPayload)
 
+    // Tool concurrency detection
+    if (tools.length > 1) {
+      console.log(`[Tool Info] ${tools.length} tools available`)
+      
+      // Check if model is known to have issues with tool concurrency
+      const problematicModels = ['glm-4.6', 'glm-4.5', 'deepseek']
+      const hasKnownIssue = problematicModels.some(m => selectedModel.includes(m))
+      
+      if (hasKnownIssue) {
+        console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`)
+        console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`)
+      }
+    }
+
     // Build headers (let fetch handle connection management automatically)
     const headers = {
       'Content-Type': 'application/json',
@@ -377,6 +438,43 @@ fastify.post('/v1/messages', async (request, reply) => {
 
     if (!openaiResponse.ok) {
       const errorDetails = await openaiResponse.text()
+      
+      // Parse error response
+      let errorJson
+      try {
+        errorJson = JSON.parse(errorDetails)
+      } catch {
+        errorJson = { 
+          error: { 
+            message: errorDetails,
+            type: 'upstream_error'
+          } 
+        }
+      }
+      
+      // Enhanced logging for debugging
+      console.error('[OpenRouter Error]', {
+        status: openaiResponse.status,
+        model: openaiPayload.model,
+        provider,
+        messageCount: messages.length,
+        toolCount: tools.length,
+        error: errorJson.error?.message || errorDetails.substring(0, 200)
+      })
+      
+      // Specific handling for common errors
+      if (openaiResponse.status === 400) {
+        console.error('[400 Bad Request Details]', {
+          possibleCauses: [
+            'Tool concurrency not supported by model',
+            'Invalid tool schema',
+            'Message format incompatibility',
+            'Context length exceeded'
+          ],
+          suggestion: 'Try with fewer tools or different model'
+        })
+      }
+      
       debug('OpenRouter error response:', {
         status: openaiResponse.status,
         statusText: openaiResponse.statusText,
@@ -388,16 +486,7 @@ fastify.post('/v1/messages', async (request, reply) => {
       })
       
       reply.code(openaiResponse.status)
-      
-      // Attempt to parse error details as JSON
-      try {
-        const errorJson = JSON.parse(errorDetails)
-        debug('Parsed error JSON:', errorJson)
-        return errorJson
-      } catch {
-        debug('Error response was not valid JSON, returning string wrapper')
-        return { error: errorDetails }
-      }
+      return errorJson
     }
     
     debug('OpenRouter response timing:', { baseUrl, elapsedMs, status: openaiResponse.status })
@@ -510,36 +599,62 @@ fastify.post('/v1/messages', async (request, reply) => {
     let textBlockStarted = false
     let encounteredToolCall = false
     const toolCallAccumulators = {}  // key: tool call index, value: accumulated arguments string
+    let chunkBuffer = ''  // Buffer for incomplete JSON chunks
     const decoder = new TextDecoder('utf-8')
     const reader = openaiResponse.body.getReader()
     let done = false
 
-    while (!done) {
-      const { value, done: doneReading } = await reader.read()
-      done = doneReading
-      if (value) {
-        const chunk = decoder.decode(value)
-        
-        // Track first-byte timing
-        if (!firstChunkLogged && chunk.trim()) {
-          ttfbMs = Date.now() - requestStartMs
-          debug('Streaming first-byte timing:', { ttfbMs, chunkLength: chunk.length })
-          firstChunkLogged = true
-        }
-        
-        // Log chunks only if DEBUG_CHUNKS is enabled
-        if (process.env.DEBUG_CHUNKS) {
-          debug('OpenAI response chunk:', chunk)
-        }
-        // OpenAI streaming responses are typically sent as lines prefixed with "data: "
-        const lines = chunk.split('\n')
+    try {
+      while (!done) {
+        const { value, done: doneReading } = await reader.read()
+        done = doneReading
+        if (value) {
+          const chunk = decoder.decode(value)
+          
+          // Track first-byte timing
+          if (!firstChunkLogged && chunk.trim()) {
+            ttfbMs = Date.now() - requestStartMs
+            debug('Streaming first-byte timing:', { ttfbMs, chunkLength: chunk.length })
+            firstChunkLogged = true
+          }
+          
+          // Log chunks only if DEBUG_CHUNKS is enabled
+          if (process.env.DEBUG_CHUNKS) {
+            debug('OpenAI response chunk:', chunk)
+          }
+          // OpenAI streaming responses are typically sent as lines prefixed with "data: "
+          const lines = chunk.split('\n')
 
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed === '' || !trimmed.startsWith('data:')) continue
-          const dataStr = trimmed.replace(/^data:\s*/, '')
-          if (dataStr === '[DONE]') {
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (trimmed === '' || !trimmed.startsWith('data:')) continue
+            const dataStr = trimmed.replace(/^data:\s*/, '')
+            if (dataStr === '[DONE]') {
+              // Try to flush any buffered data before ending
+              if (chunkBuffer) {
+                debug('[Streaming] Attempting to parse buffered data on stream end')
+                try {
+                  const finalParsed = JSON.parse(chunkBuffer)
+                  // Process final chunk if it has content
+                  if (finalParsed.choices?.[0]?.delta?.content) {
+                    accumulatedContent += finalParsed.choices[0].delta.content
+                    if (textBlockStarted) {
+                      sendSSE(reply, 'content_block_delta', {
+                        type: 'content_block_delta',
+                        index: 0,
+                        delta: {
+                          type: 'text_delta',
+                          text: finalParsed.choices[0].delta.content
+                        }
+                      })
+                    }
+                  }
+                } catch (err) {
+                  debug('[Streaming] Could not parse buffered data, discarding:', chunkBuffer.substring(0, 100))
+                }
+                chunkBuffer = ''
+              }
             const totalStreamMs = Date.now() - requestStartMs
             debug('Streaming completion timing:', { 
               totalStreamMs, 
@@ -574,12 +689,31 @@ fastify.post('/v1/messages', async (request, reply) => {
             sendSSE(reply, 'message_stop', {
               type: 'message_stop'
             })
-            clearTimeout(totalTimeout) // Clear timeout on successful stream completion
             reply.raw.end()
             return
           }
 
-          const parsed = JSON.parse(dataStr)
+          // Try to parse JSON, buffer if incomplete
+          let parsed
+          try {
+            // Try buffered + new chunk first
+            const attemptStr = chunkBuffer + dataStr
+            parsed = JSON.parse(attemptStr)
+            chunkBuffer = '' // Success, clear buffer
+          } catch (parseError) {
+            // JSON incomplete - buffer and wait for next chunk
+            if (process.env.DEBUG) {
+              debug('[Streaming] Incomplete JSON chunk, buffering:', {
+                error: parseError.message,
+                position: parseError.message.match(/position (\d+)/)?.[1],
+                chunkLength: dataStr.length,
+                bufferLength: chunkBuffer.length
+              })
+            }
+            chunkBuffer += dataStr
+            continue // Skip to next line
+          }
+
           if (parsed.error) {
             throw new Error(parsed.error.message)
           }
@@ -667,8 +801,34 @@ fastify.post('/v1/messages', async (request, reply) => {
         }
       }
     }
-
+    
     reply.raw.end()
+  } catch (streamError) {
+    console.error('[Error] Stream processing failed:', streamError)
+    
+    // Send error event to client instead of crashing
+    if (!reply.raw.writableEnded) {
+      try {
+        sendSSE(reply, 'error', {
+          type: 'error',
+          error: {
+            type: 'internal_error',
+            message: streamError.message
+          }
+        })
+        reply.raw.end()
+      } catch (sendError) {
+        // If we can't send SSE, just end the response
+        console.error('[Error] Could not send error event:', sendError)
+        if (!reply.raw.writableEnded) {
+          reply.raw.end()
+        }
+      }
+    }
+    
+    // Don't re-throw - just log and close gracefully
+    return
+  }
   } catch (err) {
     console.error(err)
     reply.code(500)
