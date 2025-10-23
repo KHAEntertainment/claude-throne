@@ -445,24 +445,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
       
-      // Validate that models are configured
+      // Log model configuration (but don't block startup - proxy has fallback defaults)
       if (!reasoningModel || !completionModel) {
-        this.log.appendLine(`[handleStartProxy] WARNING: Models not configured`)
-        this.log.appendLine(`[handleStartProxy] - reasoningModel: ${reasoningModel || 'EMPTY'}`)
-        this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel || 'EMPTY'}`)
-        
-        const choice = await vscode.window.showWarningMessage(
-          'No models selected. Please select models from the list before starting the proxy.',
-          'Select Models',
-          'Start Anyway'
-        )
-        
-        if (choice === 'Select Models') {
-          // Just return - user needs to select models in the UI
-          return
-        }
-        // If "Start Anyway" or dismissed, continue but log warning
-        this.log.appendLine(`[handleStartProxy] User chose to start without models configured`)
+        this.log.appendLine(`[handleStartProxy] INFO: Models not configured, proxy will use fallback defaults`)
+        this.log.appendLine(`[handleStartProxy] - reasoningModel: ${reasoningModel || 'EMPTY (will use fallback)'}`)
+        this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel || 'EMPTY (will use fallback)'}`)
       }
       
       this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
