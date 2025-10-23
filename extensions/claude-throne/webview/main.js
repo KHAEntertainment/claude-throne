@@ -327,8 +327,53 @@
   }
 
   function showNotification(message, type = 'info') {
-    // For now, just log it - we could add a toast notification later
     console.log(`[${type.toUpperCase()}] ${message}`);
+    
+    // Create or update inline notification
+    let notificationEl = document.getElementById('inlineNotification');
+    if (!notificationEl) {
+      // Create notification element if it doesn't exist
+      const container = document.querySelector('.container');
+      if (container) {
+        notificationEl = document.createElement('div');
+        notificationEl.id = 'inlineNotification';
+        notificationEl.style.cssText = `
+          position: fixed;
+          top: 10px;
+          right: 10px;
+          padding: 8px 16px;
+          border-radius: 4px;
+          z-index: 1000;
+          transition: opacity 0.3s;
+          font-size: 13px;
+        `;
+        container.appendChild(notificationEl);
+      }
+    }
+    
+    if (notificationEl) {
+      // Set color based on type
+      const colors = {
+        'success': 'var(--vscode-testing-iconPassed)',
+        'error': 'var(--vscode-errorForeground)',
+        'info': 'var(--vscode-foreground)'
+      };
+      
+      notificationEl.textContent = message;
+      notificationEl.style.backgroundColor = 'var(--vscode-editor-background)';
+      notificationEl.style.color = colors[type] || colors.info;
+      notificationEl.style.border = `1px solid ${colors[type] || colors.info}`;
+      notificationEl.style.opacity = '1';
+      notificationEl.style.display = 'block';
+      
+      // Auto-hide after 3 seconds
+      setTimeout(() => {
+        notificationEl.style.opacity = '0';
+        setTimeout(() => {
+          notificationEl.style.display = 'none';
+        }, 300);
+      }, 3000);
+    }
   }
 
   function requestSaveCombo() {
@@ -338,6 +383,21 @@
     }
     
     console.log('[requestSaveCombo] Saving combo:', name);
+    
+    // Show saving state on button
+    const saveBtn = document.getElementById('saveComboBtn');
+    if (saveBtn) {
+      const originalText = saveBtn.textContent;
+      saveBtn.textContent = '✓ Saving...';
+      saveBtn.disabled = true;
+      
+      // Reset after a delay
+      setTimeout(() => {
+        saveBtn.textContent = originalText;
+        saveBtn.disabled = false;
+      }, 2000);
+    }
+    
     vscode.postMessage({
       type: 'saveCombo',
       name: name.trim(),
@@ -347,8 +407,27 @@
   }
 
   function handleCombosLoaded(payload) {
-    console.log('[handleCombosLoaded] TODO: Implement combos display');
-    // TODO: Display user-saved combos + featured combos
+    console.log('[handleCombosLoaded] Combos loaded:', payload);
+    
+    // Show success feedback when combo is saved
+    const saveBtn = document.getElementById('saveComboBtn');
+    if (saveBtn && saveBtn.textContent.includes('Saving')) {
+      saveBtn.textContent = '✓ Saved!';
+      saveBtn.style.backgroundColor = 'var(--vscode-testing-iconPassed)';
+      
+      // Also show inline notification
+      showNotification('Model combo saved successfully!', 'success');
+      
+      setTimeout(() => {
+        saveBtn.textContent = '+ Save Model Combo';
+        saveBtn.style.backgroundColor = '';
+      }, 2000);
+    }
+    
+    // Store the combos for later display
+    if (payload.combos) {
+      state.customCombos = payload.combos;
+    }
   }
 
   function handleKeysLoaded(keys) {
