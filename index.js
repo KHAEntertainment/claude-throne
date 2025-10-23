@@ -15,6 +15,63 @@ const models = {
   completion: process.env.COMPLETION_MODEL || model,
 }
 
+// Models that require XML tool calling (don't support native OpenAI tool format)
+const MODELS_REQUIRING_XML_TOOLS = new Set([
+  'inclusionai/ling-1t',
+  'z-ai/glm-4.6',
+  'z-ai/glm-4.5',
+  'deepseek-v2',
+  'deepseek-v3',
+])
+
+/**
+ * Check if a model requires XML tool calling instead of native OpenAI format
+ */
+function modelNeedsXMLTools(modelName) {
+  if (!modelName) return false
+  const lowerModel = modelName.toLowerCase()
+  for (const pattern of MODELS_REQUIRING_XML_TOOLS) {
+    if (lowerModel.includes(pattern.toLowerCase())) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Parse native OpenAI tool response format (for models that support it)
+ */
+function parseNativeToolResponse(openaiMessage) {
+  const blocks = []
+  
+  // Add text content if present
+  if (openaiMessage.content) {
+    blocks.push({
+      type: 'text',
+      text: openaiMessage.content
+    })
+  }
+  
+  // Add native tool calls if present
+  if (openaiMessage.tool_calls && openaiMessage.tool_calls.length > 0) {
+    openaiMessage.tool_calls.forEach(tc => {
+      try {
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.function.name,
+          input: JSON.parse(tc.function.arguments)
+        })
+      } catch (err) {
+        console.warn('[Tool Parse] Failed to parse native tool call:', err)
+      }
+    })
+  }
+  
+  // Return at least one block (empty text if nothing else)
+  return blocks.length > 0 ? blocks : [{type: 'text', text: ''}]
+}
+
 // Startup diagnostics
 console.log('[Startup] Claude Throne Proxy initializing...')
 console.log('[Startup] Configuration:')
@@ -236,8 +293,11 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
     const selectedModel = payload.model 
       || (payload.thinking ? models.reasoning : models.completion)
 
-    // Inject XML tool instructions into messages instead of using native tools parameter
-    const messagesWithXML = injectXMLToolInstructions(messages, tools)
+    // Conditionally inject XML tool instructions for models that need them
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const messagesWithXML = needsXMLTools
+      ? injectXMLToolInstructions(messages, tools)
+      : messages
     
     const openaiPayload = {
       model: selectedModel,
@@ -246,7 +306,11 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
-    // Note: Not using native tools parameter - XML instructions are in system message
+    
+    // Add native tools parameter for models that support it
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools
+    }
 
     const headers = {
       'Content-Type': 'application/json',
@@ -376,8 +440,11 @@ fastify.post('/v1/messages', async (request, reply) => {
       console.log(`[Model] Using requested model: ${selectedModel}`)
     }
 
-    // Inject XML tool instructions into messages instead of using native tools parameter
-    const messagesWithXML = injectXMLToolInstructions(messages, tools)
+    // Conditionally inject XML tool instructions for models that need them
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const messagesWithXML = needsXMLTools
+      ? injectXMLToolInstructions(messages, tools)
+      : messages
     
     const openaiPayload = {
       model: selectedModel,
@@ -386,20 +453,33 @@ fastify.post('/v1/messages', async (request, reply) => {
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
-    // Note: Not using native tools parameter - XML instructions are in system message
+    
+    // Add native tools parameter for models that support it
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools
+    }
+    
     debug('OpenAI payload:', openaiPayload)
 
-    // Tool concurrency detection
-    if (tools.length > 1) {
-      console.log(`[Tool Info] ${tools.length} tools available`)
+    // Tool mode logging and detection
+    if (tools.length > 0) {
+      if (needsXMLTools) {
+        console.log(`[Tool Mode] XML tool calling enabled for ${selectedModel}`)
+        console.log(`[Tool Info] ${tools.length} tools available (XML format)`)
+      } else {
+        console.log(`[Tool Mode] Native tool calling for ${selectedModel}`)
+        console.log(`[Tool Info] ${tools.length} tools available (native format)`)
+      }
       
-      // Check if model is known to have issues with tool concurrency
-      const problematicModels = ['glm-4.6', 'glm-4.5', 'deepseek']
-      const hasKnownIssue = problematicModels.some(m => selectedModel.includes(m))
-      
-      if (hasKnownIssue) {
-        console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`)
-        console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`)
+      // Warn about tool concurrency for models that may have issues
+      if (tools.length > 1 && needsXMLTools) {
+        const problematicModels = ['glm-4.6', 'glm-4.5', 'deepseek']
+        const hasKnownIssue = problematicModels.some(m => selectedModel.includes(m))
+        
+        if (hasKnownIssue) {
+          console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`)
+          console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`)
+        }
       }
     }
 
@@ -527,12 +607,20 @@ fastify.post('/v1/messages', async (request, reply) => {
       // Map finish_reason to anthropic stop_reason.
       const stopReason = mapStopReason(choice.finish_reason)
       
-      // Parse XML tool calls from response content instead of using native tool_calls
+      // Parse response based on tool mode (XML vs native)
       let contentBlocks = []
       try {
-        debug('Parsing content:', openaiMessage.content)
-        contentBlocks = parseAssistantMessage(openaiMessage.content || '')
-        debug('Parsed content blocks:', contentBlocks)
+        if (needsXMLTools) {
+          // Parse XML tool calls from response content
+          debug('Parsing XML content:', openaiMessage.content)
+          contentBlocks = parseAssistantMessage(openaiMessage.content || '')
+          debug('Parsed XML content blocks:', contentBlocks)
+        } else {
+          // Parse native OpenAI tool response format
+          debug('Parsing native tool response')
+          contentBlocks = parseNativeToolResponse(openaiMessage)
+          debug('Parsed native content blocks:', contentBlocks)
+        }
       } catch (parseError) {
         debug('Error parsing content:', parseError)
         // If parsing fails, create a simple text block with the raw content

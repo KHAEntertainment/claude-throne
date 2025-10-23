@@ -33664,6 +33664,47 @@ var models = {
   reasoning: process.env.REASONING_MODEL || model,
   completion: process.env.COMPLETION_MODEL || model
 };
+var MODELS_REQUIRING_XML_TOOLS = /* @__PURE__ */ new Set([
+  "inclusionai/ling-1t",
+  "z-ai/glm-4.6",
+  "z-ai/glm-4.5",
+  "deepseek-v2",
+  "deepseek-v3"
+]);
+function modelNeedsXMLTools(modelName) {
+  if (!modelName) return false;
+  const lowerModel = modelName.toLowerCase();
+  for (const pattern of MODELS_REQUIRING_XML_TOOLS) {
+    if (lowerModel.includes(pattern.toLowerCase())) {
+      return true;
+    }
+  }
+  return false;
+}
+function parseNativeToolResponse(openaiMessage) {
+  const blocks = [];
+  if (openaiMessage.content) {
+    blocks.push({
+      type: "text",
+      text: openaiMessage.content
+    });
+  }
+  if (openaiMessage.tool_calls && openaiMessage.tool_calls.length > 0) {
+    openaiMessage.tool_calls.forEach((tc) => {
+      try {
+        blocks.push({
+          type: "tool_use",
+          id: tc.id,
+          name: tc.function.name,
+          input: JSON.parse(tc.function.arguments)
+        });
+      } catch (err) {
+        console.warn("[Tool Parse] Failed to parse native tool call:", err);
+      }
+    });
+  }
+  return blocks.length > 0 ? blocks : [{ type: "text", text: "" }];
+}
 console.log("[Startup] Claude Throne Proxy initializing...");
 console.log("[Startup] Configuration:");
 console.log(`[Startup] - Provider: ${provider}`);
@@ -33846,7 +33887,8 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
       }
     }));
     const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
-    const messagesWithXML = injectXMLToolInstructions(messages, tools);
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel);
+    const messagesWithXML = needsXMLTools ? injectXMLToolInstructions(messages, tools) : messages;
     const openaiPayload = {
       model: selectedModel,
       messages: messagesWithXML,
@@ -33854,6 +33896,9 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
       stream: payload.stream === true
     };
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools;
+    }
     const headers = {
       "Content-Type": "application/json",
       ...providerSpecificHeaders(provider)
@@ -33980,7 +34025,8 @@ fastify.post("/v1/messages", async (request, reply) => {
     } else {
       console.log(`[Model] Using requested model: ${selectedModel}`);
     }
-    const messagesWithXML = injectXMLToolInstructions(messages, tools);
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel);
+    const messagesWithXML = needsXMLTools ? injectXMLToolInstructions(messages, tools) : messages;
     const openaiPayload = {
       model: selectedModel,
       messages: messagesWithXML,
@@ -33988,14 +34034,25 @@ fastify.post("/v1/messages", async (request, reply) => {
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
       stream: payload.stream === true
     };
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools;
+    }
     debug("OpenAI payload:", openaiPayload);
-    if (tools.length > 1) {
-      console.log(`[Tool Info] ${tools.length} tools available`);
-      const problematicModels = ["glm-4.6", "glm-4.5", "deepseek"];
-      const hasKnownIssue = problematicModels.some((m) => selectedModel.includes(m));
-      if (hasKnownIssue) {
-        console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`);
-        console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`);
+    if (tools.length > 0) {
+      if (needsXMLTools) {
+        console.log(`[Tool Mode] XML tool calling enabled for ${selectedModel}`);
+        console.log(`[Tool Info] ${tools.length} tools available (XML format)`);
+      } else {
+        console.log(`[Tool Mode] Native tool calling for ${selectedModel}`);
+        console.log(`[Tool Info] ${tools.length} tools available (native format)`);
+      }
+      if (tools.length > 1 && needsXMLTools) {
+        const problematicModels = ["glm-4.6", "glm-4.5", "deepseek"];
+        const hasKnownIssue = problematicModels.some((m) => selectedModel.includes(m));
+        if (hasKnownIssue) {
+          console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`);
+          console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`);
+        }
       }
     }
     const headers = {
@@ -34091,9 +34148,15 @@ fastify.post("/v1/messages", async (request, reply) => {
       const stopReason = mapStopReason(choice.finish_reason);
       let contentBlocks = [];
       try {
-        debug("Parsing content:", openaiMessage.content);
-        contentBlocks = parseAssistantMessage(openaiMessage.content || "");
-        debug("Parsed content blocks:", contentBlocks);
+        if (needsXMLTools) {
+          debug("Parsing XML content:", openaiMessage.content);
+          contentBlocks = parseAssistantMessage(openaiMessage.content || "");
+          debug("Parsed XML content blocks:", contentBlocks);
+        } else {
+          debug("Parsing native tool response");
+          contentBlocks = parseNativeToolResponse(openaiMessage);
+          debug("Parsed native content blocks:", contentBlocks);
+        }
       } catch (parseError) {
         debug("Error parsing content:", parseError);
         contentBlocks = [{
