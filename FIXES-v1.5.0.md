@@ -250,3 +250,83 @@ code --install-extension claude-throne-1.5.0.vsix
 ---
 
 **Bottom Line:** v1.5.0 brings **universal tool compatibility** to Claude Throne, making it work flawlessly with ALL OpenRouter models. 🎉
+
+---
+
+## 🔧 Critical Fix (Same Day)
+
+### Issue: Blank Outputs & XML Remnants
+
+**Problem Discovered:** Shortly after releasing v1.5.0, users reported:
+- ❌ Simple questions returned blank responses (⏺)
+- ❌ Tool responses had XML fragments mixed in: `<Task...`
+- ❌ Text content was being stripped out
+
+**Root Cause:** The regex-based `extractTextContent()` function was too aggressive:
+```javascript
+// BROKEN CODE
+const withoutToolXML = content.replace(/<\w+>[\s\S]*?<\/\w+>/g, '')
+```
+This removed **ALL** XML tag pairs, not just tools, destroying legitimate content.
+
+**Fix Applied:** Complete rewrite using character-by-character parsing:
+```javascript
+// FIXED CODE
+function parseAssistantMessage(content) {
+  const contentBlocks = []
+  let currentTextStart = 0
+  let i = 0
+  
+  while (i < content.length) {
+    const toolMatch = findToolTag(content, i)  // Only known tools
+    if (toolMatch) {
+      // Extract text BEFORE tool
+      if (i > currentTextStart) {
+        const text = content.substring(currentTextStart, i).trim()
+        if (text) contentBlocks.push({type: 'text', text})
+      }
+      // Parse tool block
+      const tool = parseToolBlock(content, toolMatch)
+      contentBlocks.push({type: 'tool_use', ...tool})
+      i = tool.endIndex
+      currentTextStart = tool.endIndex
+    } else {
+      i++
+    }
+  }
+  // Extract remaining text
+  if (currentTextStart < content.length) {
+    const text = content.substring(currentTextStart).trim()
+    if (text) contentBlocks.push({type: 'text', text})
+  }
+  return contentBlocks
+}
+```
+
+**Results:**
+- ✅ Simple questions now return text properly
+- ✅ No more blank outputs
+- ✅ No XML remnants in responses
+- ✅ Correct ordering: text → tool → text
+
+**Files Changed:**
+- `xml-tool-parser.js` - Complete rewrite (466 lines changed)
+- `extensions/claude-throne/bundled/proxy/index.cjs` - Rebuilt
+- `test-xml-parser.js` - Added test suite
+
+**Commit:** `d864abb` - "fix: rewrite XML parser with proper character-by-character parsing"
+
+---
+
+## 📊 Final Status
+
+**v1.5.0 is now STABLE and WORKING:**
+- ✅ Universal XML tool calling functional
+- ✅ Text content preserved correctly
+- ✅ No blank outputs
+- ✅ No XML remnants
+- ✅ All models supported
+- ✅ Ling-1T works with tools
+- ✅ Tests passing
+
+**Ready for Production Use!** 🎉
