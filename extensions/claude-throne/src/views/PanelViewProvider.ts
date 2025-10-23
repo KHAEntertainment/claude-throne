@@ -161,12 +161,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const completionModel = config.get('completionModel');
     const twoModelMode = config.get('twoModelMode', false);
     const port = config.get('proxy.port');
+    const customBaseUrl = config.get('customBaseUrl', '');
     
     this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}`);
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, reasoningModel, completionModel, twoModelMode, port }
+      payload: { provider, reasoningModel, completionModel, twoModelMode, port, customBaseUrl }
     });
   }
 
@@ -409,8 +410,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
       
+      // Read customBaseUrl for custom provider
+      const customBaseUrl = this.currentProvider === 'custom' 
+        ? cfg.get<string>('customBaseUrl', '')
+        : undefined
+      
       this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
       this.log.appendLine(`[handleStartProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
+      if (customBaseUrl) {
+        this.log.appendLine(`[handleStartProxy] Custom Base URL: ${customBaseUrl}`)
+      }
       this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
       await this.proxy.start({
@@ -418,7 +427,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         port,
         debug,
         reasoningModel,
-        completionModel
+        completionModel,
+        ...(this.currentProvider === 'custom' && { customBaseUrl })
       })
       
       const elapsed = Date.now() - startTime
@@ -593,11 +603,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           </div>
         </div>
 
+        <!-- Save Combo Button -->
+        <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection" style="margin-bottom: 16px;">+ Save Model Combo</button>
+
         <!-- Popular Combos Card (OpenRouter only) -->
         <div id="popularCombosCard" class="card popular-combos-card">
           <div class="combos-header">
             <h2 class="card-title">Popular Combos</h2>
-            <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection">+ Save</button>
           </div>
           <div id="combosGrid" class="combos-grid">
             <div class="loading-container">

@@ -186,9 +186,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
     
-    // Clear reasoning and completion models in configuration
+    // Clear reasoning and completion models in configuration at both Workspace and Global scopes
     await cfg.update('reasoningModel', '', vscode.ConfigurationTarget.Workspace);
     await cfg.update('completionModel', '', vscode.ConfigurationTarget.Workspace);
+    await cfg.update('reasoningModel', '', vscode.ConfigurationTarget.Global);
+    await cfg.update('completionModel', '', vscode.ConfigurationTarget.Global);
 
     // Restore base URL to Anthropic defaults in extension settings
     const candidates: { section: string; key: string }[] = [

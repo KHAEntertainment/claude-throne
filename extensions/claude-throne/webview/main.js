@@ -730,6 +730,14 @@
         document.getElementById('portInput').value = config.port;
     }
 
+    // Set customBaseUrl input value if present
+    if (config.customBaseUrl) {
+      const customUrlInput = document.getElementById('customUrl');
+      if (customUrlInput) {
+        customUrlInput.value = config.customBaseUrl;
+      }
+    }
+
     if (config.reasoningModel) {
       state.primaryModel = config.reasoningModel;
     }
