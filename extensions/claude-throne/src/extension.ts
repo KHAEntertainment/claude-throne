@@ -309,8 +309,10 @@ export function activate(context: vscode.ExtensionContext) {
       log.appendLine(`[startProxy] Proxy started in ${elapsed}ms`)
       vscode.window.showInformationMessage(`Claude-Throne: proxy started on port ${port}`)
 
-      const auto = cfg.get<boolean>('autoApply', true)
+      const auto = cfg.get<boolean>('autoApply', false)
       if (auto) {
+        // Wait for proxy to be fully ready before applying settings
+        await new Promise(resolve => setTimeout(resolve, 1000))
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
       }
     } catch (err: any) {
@@ -325,7 +327,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (not running)'}`)
 
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const auto = cfg.get<boolean>('autoApply', true)
+      const auto = cfg.get<boolean>('autoApply', false)
       if (auto) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }

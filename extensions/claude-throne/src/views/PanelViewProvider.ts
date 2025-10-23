@@ -468,8 +468,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.postStatus()
       
       // Auto-apply to Claude Code if enabled
-      const autoApply = cfg.get<boolean>('autoApply', true)
+      const autoApply = cfg.get<boolean>('autoApply', false)
       if (autoApply) {
+        // Wait a moment for proxy to fully initialize and start accepting connections
+        await new Promise(resolve => setTimeout(resolve, 1000))
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
       }
     } catch (err) {
@@ -526,7 +528,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await this.proxy.stop()
       
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const autoApply = cfg.get<boolean>('autoApply', true)
+      const autoApply = cfg.get<boolean>('autoApply', false)
       if (autoApply) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }

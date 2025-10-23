@@ -63,6 +63,31 @@ export class ProxyManager {
     });
   }
 
+  private async waitForPort(port: number, timeout: number = 3000): Promise<boolean> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      const isListening = await new Promise<boolean>(resolve => {
+        const testReq = http.get(`http://127.0.0.1:${port}/healthz`, res => {
+          resolve(res.statusCode === 200);
+        });
+        testReq.on('error', () => resolve(false));
+        testReq.setTimeout(100, () => {
+          testReq.destroy();
+          resolve(false);
+        });
+      });
+      
+      if (isListening) {
+        return true;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    return false;
+  }
+
   private async checkStaleInstance(port: number): Promise<boolean> {
     return new Promise(resolve => {
         const req = http.get(`http://127.0.0.1:${port}/healthz`, res => {
@@ -166,9 +191,14 @@ export class ProxyManager {
     const skipHealthCheck = cfg.get<boolean>('proxy.skipHealthCheck', false)
     
     if (skipHealthCheck) {
-      this.log.appendLine('[ProxyManager] Skipping health check (fast mode enabled)')
-      // Start monitoring anyway for crash detection
-      setTimeout(() => this.startHealthMonitoring(), 2000)
+      this.log.appendLine('[ProxyManager] Skipping detailed health check (fast mode enabled)')
+      // But still verify the port is at least listening
+      const isListening = await this.waitForPort(opts.port, 2000)
+      if (!isListening) {
+        this.log.appendLine(`[ProxyManager] Warning: Port ${opts.port} is not responding after 2 seconds`)
+        throw new Error(`Proxy started but port ${opts.port} is not listening`)
+      }
+      this.log.appendLine('[ProxyManager] Port is listening, proxy ready')
       return
     }
     
