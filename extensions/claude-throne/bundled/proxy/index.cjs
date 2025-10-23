@@ -33447,34 +33447,19 @@ fastify.get("/v1/models", async (request, reply) => {
   try {
     const headers = {
       "Content-Type": "application/json",
-      "Connection": "keep-alive",
       ...providerSpecificHeaders(provider)
     };
     if (key) headers["Authorization"] = `Bearer ${key}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5e3);
+    const resp = await fetch(`${baseUrl}/v1/models`, {
+      method: "GET",
+      headers
+    });
+    const text = await resp.text();
+    reply.code(resp.status);
     try {
-      const resp = await fetch(`${baseUrl}/v1/models`, {
-        method: "GET",
-        headers,
-        signal: controller.signal
-      });
-      clearTimeout(timeout);
-      const text = await resp.text();
-      reply.code(resp.status);
-      try {
-        reply.type("application/json").send(JSON.parse(text));
-      } catch {
-        reply.type("application/json").send({ error: text });
-      }
-    } catch (fetchErr) {
-      clearTimeout(timeout);
-      if (fetchErr.name === "AbortError") {
-        console.log("[Request] Models request timed out after 5 seconds");
-        reply.code(504).send({ error: "Request timed out after 5 seconds" });
-      } else {
-        throw fetchErr;
-      }
+      reply.type("application/json").send(JSON.parse(text));
+    } catch {
+      reply.type("application/json").send({ error: text });
     }
   } catch (err) {
     reply.code(500).send({ error: String(err?.message || err) });
@@ -33600,6 +33585,30 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
 });
 fastify.post("/v1/messages", async (request, reply) => {
   try {
+    let sendSuccessMessage = function() {
+      if (isSucceeded) return;
+      isSucceeded = true;
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      const messageId = "msg_" + Math.random().toString(36).substr(2, 24);
+      sendSSE(reply, "message_start", {
+        type: "message_start",
+        message: {
+          id: messageId,
+          type: "message",
+          role: "assistant",
+          model: openaiPayload.model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 }
+        }
+      });
+      sendSSE(reply, "ping", { type: "ping" });
+    };
     const payload = request.body;
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
@@ -33680,7 +33689,6 @@ fastify.post("/v1/messages", async (request, reply) => {
     debug("OpenAI payload:", openaiPayload);
     const headers = {
       "Content-Type": "application/json",
-      "Connection": "keep-alive",
       ...providerSpecificHeaders(provider)
     };
     if (key) {
@@ -33701,283 +33709,232 @@ fastify.post("/v1/messages", async (request, reply) => {
     console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`);
     console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`);
     console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || "default"}, Temperature: ${openaiPayload.temperature}`);
-    const controller = new AbortController();
-    const connectionTimeout = setTimeout(() => {
-      console.log("[Request] Connection timeout after 5 seconds");
-      controller.abort();
-    }, 5e3);
-    let totalTimeout;
-    try {
-      let sendSuccessMessage = function() {
-        if (isSucceeded) return;
-        isSucceeded = true;
-        reply.raw.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive"
-        });
-        const messageId = "msg_" + Math.random().toString(36).substr(2, 24);
-        sendSSE(reply, "message_start", {
-          type: "message_start",
-          message: {
-            id: messageId,
-            type: "message",
-            role: "assistant",
-            model: openaiPayload.model,
-            content: [],
-            stop_reason: null,
-            stop_sequence: null,
-            usage: { input_tokens: 0, output_tokens: 0 }
-          }
-        });
-        sendSSE(reply, "ping", { type: "ping" });
-      };
-      console.log(`[Timing] Sending request at ${(/* @__PURE__ */ new Date()).toISOString()}`);
-      const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(openaiPayload),
-        signal: controller.signal
+    const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(openaiPayload)
+    });
+    const elapsedMs = Date.now() - requestStartMs;
+    console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
+    if (!openaiResponse.ok) {
+      const errorDetails = await openaiResponse.text();
+      debug("OpenRouter error response:", {
+        status: openaiResponse.status,
+        statusText: openaiResponse.statusText,
+        baseUrl,
+        requestedModel: payload.model,
+        selectedModel: openaiPayload.model,
+        elapsedMs,
+        errorBody: errorDetails
       });
-      clearTimeout(connectionTimeout);
-      const connectionMs = Date.now() - requestStartMs;
-      console.log(`[Timing] Connection established in ${connectionMs}ms`);
-      totalTimeout = setTimeout(() => {
-        console.log("[Request] Total request timeout after 30 seconds");
-        controller.abort();
-      }, 3e4);
-      const elapsedMs = Date.now() - requestStartMs;
-      console.log(`[Timing] Response headers received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
-      if (!openaiResponse.ok) {
-        clearTimeout(totalTimeout);
-        const errorDetails = await openaiResponse.text();
-        debug("OpenRouter error response:", {
-          status: openaiResponse.status,
-          statusText: openaiResponse.statusText,
-          baseUrl,
-          requestedModel: payload.model,
-          selectedModel: openaiPayload.model,
-          elapsedMs,
-          errorBody: errorDetails
-        });
-        reply.code(openaiResponse.status);
-        try {
-          const errorJson = JSON.parse(errorDetails);
-          debug("Parsed error JSON:", errorJson);
-          return errorJson;
-        } catch {
-          debug("Error response was not valid JSON, returning string wrapper");
-          return { error: errorDetails };
-        }
-      }
-      debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
-      if (!openaiPayload.stream) {
-        const data = await openaiResponse.json();
-        clearTimeout(totalTimeout);
-        debug("OpenAI response:", data);
-        const inputTokens = data.usage?.prompt_tokens || 0;
-        const outputTokens = data.usage?.completion_tokens || 0;
-        const totalTokens = inputTokens + outputTokens;
-        console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`);
-        console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1e3)).toFixed(1)} tokens/sec)`);
-        if (data.error) {
-          throw new Error(data.error.message);
-        }
-        const choice = data.choices[0];
-        const openaiMessage = choice.message;
-        const stopReason = mapStopReason(choice.finish_reason);
-        const toolCalls = openaiMessage.tool_calls || [];
-        const messageId = data.id ? data.id.replace("chatcmpl", "msg") : "msg_" + Math.random().toString(36).substr(2, 24);
-        const anthropicResponse = {
-          content: [
-            {
-              text: openaiMessage.content,
-              type: "text"
-            },
-            ...toolCalls.map((toolCall) => ({
-              type: "tool_use",
-              id: toolCall.id,
-              name: toolCall.function.name,
-              input: JSON.parse(toolCall.function.arguments)
-            }))
-          ],
-          id: messageId,
-          model: openaiPayload.model,
-          role: openaiMessage.role,
-          stop_reason: stopReason,
-          stop_sequence: null,
-          type: "message",
-          usage: {
-            input_tokens: data.usage ? data.usage.prompt_tokens : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
-            output_tokens: data.usage ? data.usage.completion_tokens : safeWords(openaiMessage.content)
-          }
-        };
-        return anthropicResponse;
-      }
-      let isSucceeded = false;
-      let accumulatedContent = "";
-      let accumulatedReasoning = "";
-      let usage = null;
-      let textBlockStarted = false;
-      let encounteredToolCall = false;
-      const toolCallAccumulators = {};
-      const decoder = new import_util.TextDecoder("utf-8");
-      const reader = openaiResponse.body.getReader();
-      let done = false;
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-          const chunk = decoder.decode(value);
-          if (!firstChunkLogged && chunk.trim()) {
-            ttfbMs = Date.now() - requestStartMs;
-            debug("Streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
-            firstChunkLogged = true;
-          }
-          if (process.env.DEBUG_CHUNKS) {
-            debug("OpenAI response chunk:", chunk);
-          }
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed === "" || !trimmed.startsWith("data:")) continue;
-            const dataStr = trimmed.replace(/^data:\s*/, "");
-            if (dataStr === "[DONE]") {
-              const totalStreamMs = Date.now() - requestStartMs;
-              debug("Streaming completion timing:", {
-                totalStreamMs,
-                ttfbMs,
-                totalResponseTime: totalStreamMs,
-                serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
-              });
-              if (encounteredToolCall) {
-                for (const idx in toolCallAccumulators) {
-                  sendSSE(reply, "content_block_stop", {
-                    type: "content_block_stop",
-                    index: parseInt(idx, 10)
-                  });
-                }
-              } else if (textBlockStarted) {
-                sendSSE(reply, "content_block_stop", {
-                  type: "content_block_stop",
-                  index: 0
-                });
-              }
-              sendSSE(reply, "message_delta", {
-                type: "message_delta",
-                delta: {
-                  stop_reason: encounteredToolCall ? "tool_use" : "end_turn",
-                  stop_sequence: null
-                },
-                usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
-              });
-              sendSSE(reply, "message_stop", {
-                type: "message_stop"
-              });
-              clearTimeout(totalTimeout);
-              reply.raw.end();
-              return;
-            }
-            const parsed = JSON.parse(dataStr);
-            if (parsed.error) {
-              throw new Error(parsed.error.message);
-            }
-            sendSuccessMessage();
-            if (parsed.usage) {
-              usage = parsed.usage;
-            }
-            const delta = parsed.choices[0].delta;
-            if (delta && delta.tool_calls) {
-              for (const toolCall of delta.tool_calls) {
-                encounteredToolCall = true;
-                const idx = toolCall.index;
-                if (toolCallAccumulators[idx] === void 0) {
-                  toolCallAccumulators[idx] = "";
-                  sendSSE(reply, "content_block_start", {
-                    type: "content_block_start",
-                    index: idx,
-                    content_block: {
-                      type: "tool_use",
-                      id: toolCall.id,
-                      name: toolCall.function.name,
-                      input: {}
-                    }
-                  });
-                }
-                const newArgs = toolCall.function.arguments || "";
-                const oldArgs = toolCallAccumulators[idx];
-                if (newArgs.length > oldArgs.length) {
-                  const deltaText = newArgs.substring(oldArgs.length);
-                  sendSSE(reply, "content_block_delta", {
-                    type: "content_block_delta",
-                    index: idx,
-                    delta: {
-                      type: "input_json_delta",
-                      partial_json: deltaText
-                    }
-                  });
-                  toolCallAccumulators[idx] = newArgs;
-                }
-              }
-            } else if (delta && delta.content) {
-              if (!textBlockStarted) {
-                textBlockStarted = true;
-                sendSSE(reply, "content_block_start", {
-                  type: "content_block_start",
-                  index: 0,
-                  content_block: {
-                    type: "text",
-                    text: ""
-                  }
-                });
-              }
-              accumulatedContent += delta.content;
-              sendSSE(reply, "content_block_delta", {
-                type: "content_block_delta",
-                index: 0,
-                delta: {
-                  type: "text_delta",
-                  text: delta.content
-                }
-              });
-            } else if (delta && delta.reasoning) {
-              if (!textBlockStarted) {
-                textBlockStarted = true;
-                sendSSE(reply, "content_block_start", {
-                  type: "content_block_start",
-                  index: 0,
-                  content_block: {
-                    type: "text",
-                    text: ""
-                  }
-                });
-              }
-              accumulatedReasoning += delta.reasoning;
-              sendSSE(reply, "content_block_delta", {
-                type: "content_block_delta",
-                index: 0,
-                delta: {
-                  type: "thinking_delta",
-                  thinking: delta.reasoning
-                }
-              });
-            }
-          }
-        }
-      }
-      clearTimeout(totalTimeout);
-      reply.raw.end();
-    } catch (fetchErr) {
-      clearTimeout(connectionTimeout);
-      clearTimeout(totalTimeout);
-      if (fetchErr.name === "AbortError") {
-        console.log("[Request] Request aborted due to timeout");
-        reply.code(504);
-        return { error: "Request timed out" };
-      } else {
-        throw fetchErr;
+      reply.code(openaiResponse.status);
+      try {
+        const errorJson = JSON.parse(errorDetails);
+        debug("Parsed error JSON:", errorJson);
+        return errorJson;
+      } catch {
+        debug("Error response was not valid JSON, returning string wrapper");
+        return { error: errorDetails };
       }
     }
+    debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
+    if (!openaiPayload.stream) {
+      const data = await openaiResponse.json();
+      debug("OpenAI response:", data);
+      const inputTokens = data.usage?.prompt_tokens || 0;
+      const outputTokens = data.usage?.completion_tokens || 0;
+      const totalTokens = inputTokens + outputTokens;
+      console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`);
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1e3)).toFixed(1)} tokens/sec)`);
+      if (elapsedMs > 15e3) {
+        console.log(`[Info] Long response time is normal for reasoning models (thinking tokens, multi-step reasoning)`);
+      }
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+      const choice = data.choices[0];
+      const openaiMessage = choice.message;
+      const stopReason = mapStopReason(choice.finish_reason);
+      const toolCalls = openaiMessage.tool_calls || [];
+      const messageId = data.id ? data.id.replace("chatcmpl", "msg") : "msg_" + Math.random().toString(36).substr(2, 24);
+      const anthropicResponse = {
+        content: [
+          {
+            text: openaiMessage.content,
+            type: "text"
+          },
+          ...toolCalls.map((toolCall) => ({
+            type: "tool_use",
+            id: toolCall.id,
+            name: toolCall.function.name,
+            input: JSON.parse(toolCall.function.arguments)
+          }))
+        ],
+        id: messageId,
+        model: openaiPayload.model,
+        role: openaiMessage.role,
+        stop_reason: stopReason,
+        stop_sequence: null,
+        type: "message",
+        usage: {
+          input_tokens: data.usage ? data.usage.prompt_tokens : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
+          output_tokens: data.usage ? data.usage.completion_tokens : safeWords(openaiMessage.content)
+        }
+      };
+      return anthropicResponse;
+    }
+    let isSucceeded = false;
+    let accumulatedContent = "";
+    let accumulatedReasoning = "";
+    let usage = null;
+    let textBlockStarted = false;
+    let encounteredToolCall = false;
+    const toolCallAccumulators = {};
+    const decoder = new import_util.TextDecoder("utf-8");
+    const reader = openaiResponse.body.getReader();
+    let done = false;
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      done = doneReading;
+      if (value) {
+        const chunk = decoder.decode(value);
+        if (!firstChunkLogged && chunk.trim()) {
+          ttfbMs = Date.now() - requestStartMs;
+          debug("Streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
+          firstChunkLogged = true;
+        }
+        if (process.env.DEBUG_CHUNKS) {
+          debug("OpenAI response chunk:", chunk);
+        }
+        const lines = chunk.split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed === "" || !trimmed.startsWith("data:")) continue;
+          const dataStr = trimmed.replace(/^data:\s*/, "");
+          if (dataStr === "[DONE]") {
+            const totalStreamMs = Date.now() - requestStartMs;
+            debug("Streaming completion timing:", {
+              totalStreamMs,
+              ttfbMs,
+              totalResponseTime: totalStreamMs,
+              serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
+            });
+            if (encounteredToolCall) {
+              for (const idx in toolCallAccumulators) {
+                sendSSE(reply, "content_block_stop", {
+                  type: "content_block_stop",
+                  index: parseInt(idx, 10)
+                });
+              }
+            } else if (textBlockStarted) {
+              sendSSE(reply, "content_block_stop", {
+                type: "content_block_stop",
+                index: 0
+              });
+            }
+            sendSSE(reply, "message_delta", {
+              type: "message_delta",
+              delta: {
+                stop_reason: encounteredToolCall ? "tool_use" : "end_turn",
+                stop_sequence: null
+              },
+              usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
+            });
+            sendSSE(reply, "message_stop", {
+              type: "message_stop"
+            });
+            clearTimeout(totalTimeout);
+            reply.raw.end();
+            return;
+          }
+          const parsed = JSON.parse(dataStr);
+          if (parsed.error) {
+            throw new Error(parsed.error.message);
+          }
+          sendSuccessMessage();
+          if (parsed.usage) {
+            usage = parsed.usage;
+          }
+          const delta = parsed.choices[0].delta;
+          if (delta && delta.tool_calls) {
+            for (const toolCall of delta.tool_calls) {
+              encounteredToolCall = true;
+              const idx = toolCall.index;
+              if (toolCallAccumulators[idx] === void 0) {
+                toolCallAccumulators[idx] = "";
+                sendSSE(reply, "content_block_start", {
+                  type: "content_block_start",
+                  index: idx,
+                  content_block: {
+                    type: "tool_use",
+                    id: toolCall.id,
+                    name: toolCall.function.name,
+                    input: {}
+                  }
+                });
+              }
+              const newArgs = toolCall.function.arguments || "";
+              const oldArgs = toolCallAccumulators[idx];
+              if (newArgs.length > oldArgs.length) {
+                const deltaText = newArgs.substring(oldArgs.length);
+                sendSSE(reply, "content_block_delta", {
+                  type: "content_block_delta",
+                  index: idx,
+                  delta: {
+                    type: "input_json_delta",
+                    partial_json: deltaText
+                  }
+                });
+                toolCallAccumulators[idx] = newArgs;
+              }
+            }
+          } else if (delta && delta.content) {
+            if (!textBlockStarted) {
+              textBlockStarted = true;
+              sendSSE(reply, "content_block_start", {
+                type: "content_block_start",
+                index: 0,
+                content_block: {
+                  type: "text",
+                  text: ""
+                }
+              });
+            }
+            accumulatedContent += delta.content;
+            sendSSE(reply, "content_block_delta", {
+              type: "content_block_delta",
+              index: 0,
+              delta: {
+                type: "text_delta",
+                text: delta.content
+              }
+            });
+          } else if (delta && delta.reasoning) {
+            if (!textBlockStarted) {
+              textBlockStarted = true;
+              sendSSE(reply, "content_block_start", {
+                type: "content_block_start",
+                index: 0,
+                content_block: {
+                  type: "text",
+                  text: ""
+                }
+              });
+            }
+            accumulatedReasoning += delta.reasoning;
+            sendSSE(reply, "content_block_delta", {
+              type: "content_block_delta",
+              index: 0,
+              delta: {
+                type: "thinking_delta",
+                thinking: delta.reasoning
+              }
+            });
+          }
+        }
+      }
+    }
+    reply.raw.end();
   } catch (err) {
     console.error(err);
     reply.code(500);

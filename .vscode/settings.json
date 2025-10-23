@@ -1,19 +1,19 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "",
-  "claudeThrone.completionModel": "",
+  "claudeThrone.reasoningModel": "inclusionai/ring-1t",
+  "claudeThrone.completionModel": "inclusionai/ling-1t",
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
   "terminal.integrated.env.osx": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
   },
   "terminal.integrated.env.linux": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
   },
   "terminal.integrated.env.windows": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
   },
   "claudeThrone.provider": "openrouter"
 }

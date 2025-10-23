@@ -72,38 +72,21 @@ fastify.get('/v1/models', async (request, reply) => {
   try {
     const headers = {
       'Content-Type': 'application/json',
-      'Connection': 'keep-alive',
       ...providerSpecificHeaders(provider)
     }
     if (key) headers['Authorization'] = `Bearer ${key}`
 
-    // Add timeout with AbortController
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000) // 5 second timeout
-    
+    const resp = await fetch(`${baseUrl}/v1/models`, { 
+      method: 'GET', 
+      headers
+    })
+    const text = await resp.text()
+    reply.code(resp.status)
+    // Pass-through upstream JSON as-is; many clients expect OpenAI-style { data: [...] }
     try {
-      const resp = await fetch(`${baseUrl}/v1/models`, { 
-        method: 'GET', 
-        headers,
-        signal: controller.signal 
-      })
-      clearTimeout(timeout)
-      const text = await resp.text()
-      reply.code(resp.status)
-      // Pass-through upstream JSON as-is; many clients expect OpenAI-style { data: [...] }
-      try {
-        reply.type('application/json').send(JSON.parse(text))
-      } catch {
-        reply.type('application/json').send({ error: text })
-      }
-    } catch (fetchErr) {
-      clearTimeout(timeout)
-      if (fetchErr.name === 'AbortError') {
-        console.log('[Request] Models request timed out after 5 seconds')
-        reply.code(504).send({ error: 'Request timed out after 5 seconds' })
-      } else {
-        throw fetchErr
-      }
+      reply.type('application/json').send(JSON.parse(text))
+    } catch {
+      reply.type('application/json').send({ error: text })
     }
   } catch (err) {
     reply.code(500).send({ error: String(err?.message || err) })
@@ -351,10 +334,9 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (tools.length > 0) openaiPayload.tools = tools
     debug('OpenAI payload:', openaiPayload)
 
-    // Build headers with connection keep-alive
+    // Build headers (let fetch handle connection management automatically)
     const headers = {
       'Content-Type': 'application/json',
-      'Connection': 'keep-alive',
       ...providerSpecificHeaders(provider)
     }
 
@@ -381,42 +363,19 @@ fastify.post('/v1/messages', async (request, reply) => {
     console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`)
     console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || 'default'}, Temperature: ${openaiPayload.temperature}`)
     
-    // Add timeout with AbortController - 5s for connection, 30s total
-    const controller = new AbortController()
-    const connectionTimeout = setTimeout(() => {
-      console.log('[Request] Connection timeout after 5 seconds')
-      controller.abort()
-    }, 5000) // 5 second connection timeout
+    // No timeout - let reasoning models take the time they need
+    // System TCP timeout (75-120s) will handle truly hung connections
+    const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(openaiPayload)
+    });
     
-    let totalTimeout
+    const elapsedMs = Date.now() - requestStartMs
     
-    try {
-      console.log(`[Timing] Sending request at ${new Date().toISOString()}`)
-      const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(openaiPayload),
-        signal: controller.signal
-      });
-      
-      // Clear connection timeout once we get a response
-      clearTimeout(connectionTimeout)
-      
-      const connectionMs = Date.now() - requestStartMs
-      console.log(`[Timing] Connection established in ${connectionMs}ms`)
-      
-      // Set total timeout for the entire request (30 seconds)
-      totalTimeout = setTimeout(() => {
-        console.log('[Request] Total request timeout after 30 seconds')
-        controller.abort()
-      }, 30000)
-      
-      const elapsedMs = Date.now() - requestStartMs
-    
-    console.log(`[Timing] Response headers received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`)
+    console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`)
 
     if (!openaiResponse.ok) {
-      clearTimeout(totalTimeout) // Clear timeout on error
       const errorDetails = await openaiResponse.text()
       debug('OpenRouter error response:', {
         status: openaiResponse.status,
@@ -446,7 +405,6 @@ fastify.post('/v1/messages', async (request, reply) => {
     // If stream is not enabled, process the complete response.
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json()
-      clearTimeout(totalTimeout) // Clear timeout after successful response
       debug('OpenAI response:', data)
       
       // Log token usage and timing for non-streaming
@@ -455,6 +413,11 @@ fastify.post('/v1/messages', async (request, reply) => {
       const totalTokens = inputTokens + outputTokens
       console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`)
       console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1000)).toFixed(1)} tokens/sec)`)
+      
+      // Add context for slow responses (reasoning models)
+      if (elapsedMs > 15000) {
+        console.log(`[Info] Long response time is normal for reasoning models (thinking tokens, multi-step reasoning)`)
+      }
       
       if (data.error) {
         throw new Error(data.error.message)
@@ -705,19 +668,7 @@ fastify.post('/v1/messages', async (request, reply) => {
       }
     }
 
-    clearTimeout(totalTimeout) // Clear timeout if we reach here
     reply.raw.end()
-    } catch (fetchErr) {
-      clearTimeout(connectionTimeout)
-      clearTimeout(totalTimeout)
-      if (fetchErr.name === 'AbortError') {
-        console.log('[Request] Request aborted due to timeout')
-        reply.code(504)
-        return { error: 'Request timed out' }
-      } else {
-        throw fetchErr
-      }
-    }
   } catch (err) {
     console.error(err)
     reply.code(500)
