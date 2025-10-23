@@ -33389,6 +33389,198 @@ function removeUriFormat(schema) {
   return result;
 }
 
+// ../../xml-tool-formatter.js
+function generateXMLToolInstructions(tools) {
+  if (!tools || tools.length === 0) {
+    return "";
+  }
+  const toolInstructions = `====
+
+TOOL USE
+
+You have access to a set of tools that are executed upon the user's approval. You must use exactly one tool per message, and every assistant message must include a tool call. You use tools step-by-step to accomplish a given task, with each tool use informed by the result of the previous tool use.
+
+# Tool Use Formatting
+
+Tool uses are formatted using XML-style tags. The tool name itself becomes the XML tag name. Each parameter is enclosed within its own set of tags. Here's the structure:
+
+<actual_tool_name>
+<parameter1_name>value1</parameter1_name>
+<parameter2_name>value2</parameter2_name>
+...
+</actual_tool_name>
+
+Always use the actual tool name as the XML tag name for proper parsing and execution.
+
+Available tools:
+${tools.map((tool) => formatToolDocumentation(tool)).join("\n")}
+
+====`;
+  return toolInstructions;
+}
+function formatToolDocumentation(tool) {
+  const { name, description, parameters } = tool.function;
+  const properties = parameters?.properties || {};
+  const required = parameters?.required || [];
+  let doc = `## ${name}
+Description: ${description}
+
+Parameters:
+${Object.entries(properties).map(([paramName, schema]) => {
+    const isRequired = required.includes(paramName) ? " (required)" : " (optional)";
+    return `- ${paramName}${isRequired}: ${schema.description || "No description"}`;
+  }).join("\n")}
+
+Usage:
+<${name}>
+${Object.keys(properties).map(
+    (paramName) => `  <${paramName}>value</${paramName}>`
+  ).join("\n")}
+</${name}>`;
+  return doc;
+}
+function injectXMLToolInstructions(messages, tools) {
+  const xmlInstructions = generateXMLToolInstructions(tools);
+  if (!xmlInstructions) {
+    return messages;
+  }
+  const systemMessage = {
+    role: "system",
+    content: xmlInstructions
+  };
+  const existingSystemIndex = messages.findIndex((msg) => msg.role === "system");
+  if (existingSystemIndex === 0) {
+    const existingSystem = messages[0];
+    return [
+      {
+        ...existingSystem,
+        content: xmlInstructions + "\n\n" + existingSystem.content
+      },
+      ...messages.slice(1)
+    ];
+  } else if (existingSystemIndex > 0) {
+    return [
+      ...messages.slice(0, existingSystemIndex),
+      systemMessage,
+      ...messages.slice(existingSystemIndex)
+    ];
+  } else {
+    return [systemMessage, ...messages];
+  }
+}
+
+// ../../xml-tool-parser.js
+function parseXMLToolCalls(content) {
+  if (!content || typeof content !== "string") {
+    console.warn("parseXMLToolCalls: Invalid content received:", content);
+    return [];
+  }
+  const toolCalls = [];
+  const toolRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+  let match;
+  while ((match = toolRegex.exec(content)) !== null) {
+    const toolName = match[1];
+    const toolContent = match[2];
+    if (["div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "strong", "em", "br", "hr"].includes(toolName)) {
+      continue;
+    }
+    if (!isWellFormedXML(toolContent)) {
+      continue;
+    }
+    const params = {};
+    const paramRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+    let paramMatch;
+    while ((paramMatch = paramRegex.exec(toolContent)) !== null) {
+      const paramName = paramMatch[1];
+      const paramValue = paramMatch[2].trim();
+      if (paramName === "args" && paramValue.includes("<")) {
+        const nestedParams = {};
+        const nestedRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+        let nestedMatch;
+        while ((nestedMatch = nestedRegex.exec(paramValue)) !== null) {
+          nestedParams[nestedMatch[1]] = nestedMatch[2].trim();
+        }
+        params[paramName] = nestedParams;
+      } else {
+        params[paramName] = paramValue;
+      }
+    }
+    toolCalls.push({
+      id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: "function",
+      function: {
+        name: toolName,
+        arguments: JSON.stringify(params)
+      }
+    });
+  }
+  return toolCalls;
+}
+function isWellFormedXML(xmlContent) {
+  const stack = [];
+  const tagRegex = /<\/?(\w+)[^>]*>/g;
+  let match;
+  while ((match = tagRegex.exec(xmlContent)) !== null) {
+    const tag = match[0];
+    const tagName = match[1];
+    if (tag.startsWith("</")) {
+      if (stack.length === 0 || stack.pop() !== tagName) {
+        return false;
+      }
+    } else if (!tag.endsWith("/>")) {
+      stack.push(tagName);
+    }
+  }
+  return stack.length === 0;
+}
+function extractTextContent(content) {
+  if (!content || typeof content !== "string") {
+    console.warn("extractTextContent: Invalid content received:", content);
+    return "";
+  }
+  const withoutToolXML = content.replace(/<\w+>[\s\S]*?<\/\w+>/g, "");
+  return withoutToolXML.replace(/<[^>]*>/g, "").replace(/\n\s*\n/g, "\n\n").trim();
+}
+function parseAssistantMessage(content) {
+  if (!content || typeof content !== "string") {
+    console.warn("parseAssistantMessage: Invalid content received:", content);
+    return [{
+      type: "text",
+      text: ""
+    }];
+  }
+  try {
+    const toolCalls = parseXMLToolCalls(content);
+    const textContent = extractTextContent(content);
+    const contentBlocks = [];
+    if (textContent) {
+      contentBlocks.push({
+        type: "text",
+        text: textContent
+      });
+    }
+    toolCalls.forEach((toolCall) => {
+      try {
+        contentBlocks.push({
+          type: "tool_use",
+          id: toolCall.id,
+          name: toolCall.function.name,
+          input: JSON.parse(toolCall.function.arguments)
+        });
+      } catch (jsonError) {
+        console.warn("Error parsing tool call arguments:", jsonError, "toolCall:", toolCall);
+      }
+    });
+    return contentBlocks;
+  } catch (parseError) {
+    console.warn("Error parsing assistant message:", parseError, "content:", content);
+    return [{
+      type: "text",
+      text: content
+    }];
+  }
+}
+
 // ../../index.js
 var baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || "https://openrouter.ai/api";
 var provider = detectProvider(baseUrl);
@@ -33580,14 +33772,14 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
       }
     }));
     const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
+    const messagesWithXML = injectXMLToolInstructions(messages, tools);
     const openaiPayload = {
       model: selectedModel,
-      messages,
+      messages: messagesWithXML,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
       stream: payload.stream === true
     };
-    if (tools.length > 0) openaiPayload.tools = tools;
     const headers = {
       "Content-Type": "application/json",
       ...providerSpecificHeaders(provider)
@@ -33714,14 +33906,14 @@ fastify.post("/v1/messages", async (request, reply) => {
     } else {
       console.log(`[Model] Using requested model: ${selectedModel}`);
     }
+    const messagesWithXML = injectXMLToolInstructions(messages, tools);
     const openaiPayload = {
       model: selectedModel,
-      messages,
+      messages: messagesWithXML,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
       stream: payload.stream === true
     };
-    if (tools.length > 0) openaiPayload.tools = tools;
     debug("OpenAI payload:", openaiPayload);
     if (tools.length > 1) {
       console.log(`[Tool Info] ${tools.length} tools available`);
@@ -33809,11 +34001,11 @@ fastify.post("/v1/messages", async (request, reply) => {
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json();
       debug("OpenAI response:", data);
-      const inputTokens = data.usage?.prompt_tokens || 0;
-      const outputTokens = data.usage?.completion_tokens || 0;
-      const totalTokens = inputTokens + outputTokens;
-      console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`);
-      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1e3)).toFixed(1)} tokens/sec)`);
+      const logInputTokens = data.usage?.prompt_tokens || 0;
+      const logOutputTokens = data.usage?.completion_tokens || 0;
+      const logTotalTokens = logInputTokens + logOutputTokens;
+      console.log(`[Tokens] Input: ${logInputTokens}, Output: ${logOutputTokens}, Total: ${logTotalTokens}`);
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(logOutputTokens / (elapsedMs / 1e3)).toFixed(1)} tokens/sec)`);
       if (elapsedMs > 15e3) {
         console.log(`[Info] Long response time is normal for reasoning models (thinking tokens, multi-step reasoning)`);
       }
@@ -33823,30 +34015,39 @@ fastify.post("/v1/messages", async (request, reply) => {
       const choice = data.choices[0];
       const openaiMessage = choice.message;
       const stopReason = mapStopReason(choice.finish_reason);
-      const toolCalls = openaiMessage.tool_calls || [];
+      let contentBlocks = [];
+      try {
+        debug("Parsing content:", openaiMessage.content);
+        contentBlocks = parseAssistantMessage(openaiMessage.content || "");
+        debug("Parsed content blocks:", contentBlocks);
+      } catch (parseError) {
+        debug("Error parsing content:", parseError);
+        contentBlocks = [{
+          type: "text",
+          text: openaiMessage.content || ""
+        }];
+      }
+      if (!contentBlocks || contentBlocks.length === 0) {
+        debug("No content blocks found, creating default text block");
+        contentBlocks = [{
+          type: "text",
+          text: openaiMessage.content || ""
+        }];
+      }
       const messageId = data.id ? data.id.replace("chatcmpl", "msg") : "msg_" + Math.random().toString(36).substr(2, 24);
+      const inputTokens = data.usage?.prompt_tokens || messagesWithXML.reduce((acc, msg) => acc + safeWords(msg.content), 0);
+      const outputTokens = data.usage?.completion_tokens || safeWords(openaiMessage.content);
       const anthropicResponse = {
-        content: [
-          {
-            text: openaiMessage.content,
-            type: "text"
-          },
-          ...toolCalls.map((toolCall) => ({
-            type: "tool_use",
-            id: toolCall.id,
-            name: toolCall.function.name,
-            input: JSON.parse(toolCall.function.arguments)
-          }))
-        ],
+        content: contentBlocks,
         id: messageId,
         model: openaiPayload.model,
-        role: openaiMessage.role,
+        role: "assistant",
         stop_reason: stopReason,
         stop_sequence: null,
         type: "message",
         usage: {
-          input_tokens: data.usage ? data.usage.prompt_tokens : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
-          output_tokens: data.usage ? data.usage.completion_tokens : safeWords(openaiMessage.content)
+          input_tokens: inputTokens,
+          output_tokens: outputTokens
         }
       };
       return anthropicResponse;
@@ -33854,6 +34055,7 @@ fastify.post("/v1/messages", async (request, reply) => {
     let isSucceeded = false;
     let accumulatedContent = "";
     let accumulatedReasoning = "";
+    let fullContent = "";
     let usage = null;
     let textBlockStarted = false;
     let encounteredToolCall = false;
@@ -33996,6 +34198,8 @@ fastify.post("/v1/messages", async (request, reply) => {
                 }
               }
             } else if (delta && delta.content) {
+              accumulatedContent += delta.content;
+              fullContent += delta.content;
               if (!textBlockStarted) {
                 textBlockStarted = true;
                 sendSSE(reply, "content_block_start", {
@@ -34007,7 +34211,6 @@ fastify.post("/v1/messages", async (request, reply) => {
                   }
                 });
               }
-              accumulatedContent += delta.content;
               sendSSE(reply, "content_block_delta", {
                 type: "content_block_delta",
                 index: 0,

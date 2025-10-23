@@ -3,6 +3,8 @@ import Fastify from 'fastify'
 import { TextDecoder } from 'util'
 import { detectProvider, resolveApiKey, providerSpecificHeaders } from './key-resolver.js'
 import { normalizeContent, removeUriFormat } from './transform.js'
+import { injectXMLToolInstructions } from './xml-tool-formatter.js'
+import { parseAssistantMessage } from './xml-tool-parser.js'
 
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
 const provider = detectProvider(baseUrl)
@@ -234,14 +236,17 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
     const selectedModel = payload.model 
       || (payload.thinking ? models.reasoning : models.completion)
 
+    // Inject XML tool instructions into messages instead of using native tools parameter
+    const messagesWithXML = injectXMLToolInstructions(messages, tools)
+    
     const openaiPayload = {
       model: selectedModel,
-      messages,
+      messages: messagesWithXML,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
-    if (tools.length > 0) openaiPayload.tools = tools
+    // Note: Not using native tools parameter - XML instructions are in system message
 
     const headers = {
       'Content-Type': 'application/json',
@@ -371,14 +376,17 @@ fastify.post('/v1/messages', async (request, reply) => {
       console.log(`[Model] Using requested model: ${selectedModel}`)
     }
 
+    // Inject XML tool instructions into messages instead of using native tools parameter
+    const messagesWithXML = injectXMLToolInstructions(messages, tools)
+    
     const openaiPayload = {
       model: selectedModel,
-      messages,
+      messages: messagesWithXML,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
-    if (tools.length > 0) openaiPayload.tools = tools
+    // Note: Not using native tools parameter - XML instructions are in system message
     debug('OpenAI payload:', openaiPayload)
 
     // Tool concurrency detection
@@ -497,11 +505,11 @@ fastify.post('/v1/messages', async (request, reply) => {
       debug('OpenAI response:', data)
       
       // Log token usage and timing for non-streaming
-      const inputTokens = data.usage?.prompt_tokens || 0
-      const outputTokens = data.usage?.completion_tokens || 0
-      const totalTokens = inputTokens + outputTokens
-      console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`)
-      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1000)).toFixed(1)} tokens/sec)`)
+      const logInputTokens = data.usage?.prompt_tokens || 0
+      const logOutputTokens = data.usage?.completion_tokens || 0
+      const logTotalTokens = logInputTokens + logOutputTokens
+      console.log(`[Tokens] Input: ${logInputTokens}, Output: ${logOutputTokens}, Total: ${logTotalTokens}`)
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(logOutputTokens / (elapsedMs / 1000)).toFixed(1)} tokens/sec)`)
       
       // Add context for slow responses (reasoning models)
       if (elapsedMs > 15000) {
@@ -518,39 +526,54 @@ fastify.post('/v1/messages', async (request, reply) => {
 
       // Map finish_reason to anthropic stop_reason.
       const stopReason = mapStopReason(choice.finish_reason)
-      const toolCalls = openaiMessage.tool_calls || []
+      
+      // Parse XML tool calls from response content instead of using native tool_calls
+      let contentBlocks = []
+      try {
+        debug('Parsing content:', openaiMessage.content)
+        contentBlocks = parseAssistantMessage(openaiMessage.content || '')
+        debug('Parsed content blocks:', contentBlocks)
+      } catch (parseError) {
+        debug('Error parsing content:', parseError)
+        // If parsing fails, create a simple text block with the raw content
+        contentBlocks = [{
+          type: 'text',
+          text: openaiMessage.content || ''
+        }]
+      }
+
+      // Ensure we have at least one content block
+      if (!contentBlocks || contentBlocks.length === 0) {
+        debug('No content blocks found, creating default text block')
+        contentBlocks = [{
+          type: 'text',
+          text: openaiMessage.content || ''
+        }]
+      }
 
       // Create a message id; if available, replace prefix, otherwise generate one.
       const messageId = data.id
         ? data.id.replace('chatcmpl', 'msg')
         : 'msg_' + Math.random().toString(36).substr(2, 24)
 
+      // Safe usage calculation with fallbacks
+      const inputTokens = data.usage?.prompt_tokens || 
+        messagesWithXML.reduce((acc, msg) => acc + safeWords(msg.content), 0)
+      
+      const outputTokens = data.usage?.completion_tokens || 
+        safeWords(openaiMessage.content)
+
       const anthropicResponse = {
-        content: [
-          {
-            text: openaiMessage.content,
-            type: 'text'
-          },
-          ...toolCalls.map(toolCall => ({
-            type: 'tool_use',
-            id: toolCall.id,
-            name: toolCall.function.name,
-            input: JSON.parse(toolCall.function.arguments),
-          })),
-        ],
+        content: contentBlocks,
         id: messageId,
         model: openaiPayload.model,
-        role: openaiMessage.role,
+        role: 'assistant',
         stop_reason: stopReason,
         stop_sequence: null,
         type: 'message',
         usage: {
-          input_tokens: data.usage
-            ? data.usage.prompt_tokens
-            : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
-          output_tokens: data.usage
-            ? data.usage.completion_tokens
-            : safeWords(openaiMessage.content),
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
         }
       }
 
@@ -595,6 +618,7 @@ fastify.post('/v1/messages', async (request, reply) => {
     // Prepare for reading streamed data.
     let accumulatedContent = ''
     let accumulatedReasoning = ''
+    let fullContent = ''  // Accumulate full content for XML parsing at end
     let usage = null
     let textBlockStarted = false
     let encounteredToolCall = false
@@ -756,6 +780,10 @@ fastify.post('/v1/messages', async (request, reply) => {
               }
             }
           } else if (delta && delta.content) {
+            // Accumulate for both immediate sending and XML parsing at end
+            accumulatedContent += delta.content
+            fullContent += delta.content
+            
             if (!textBlockStarted) {
               textBlockStarted = true
               sendSSE(reply, 'content_block_start', {
@@ -767,7 +795,6 @@ fastify.post('/v1/messages', async (request, reply) => {
                 }
               })
             }
-            accumulatedContent += delta.content
             sendSSE(reply, 'content_block_delta', {
               type: 'content_block_delta',
               index: 0,
