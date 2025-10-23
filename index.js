@@ -93,7 +93,7 @@ fastify.get('/v1/models', async (request, reply) => {
 fastify.get('/healthz', async (request, reply) => {
     return {
         status: 'ok',
-        version: '1.4.9',
+        version: '1.4.10',
         provider,
         baseUrl,
         models,

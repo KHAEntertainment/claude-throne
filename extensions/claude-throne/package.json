@@ -3,7 +3,7 @@
   "displayName": "Claude Throne",
   "publisher": "thehive",
   "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -118,6 +118,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Enable DEBUG=1 for the bundled proxy. Other configuration (provider, custom URL, models) is now handled in the Claude Throne panel (View → Claude Throne)."
+        },
+        "claudeThrone.proxy.skipHealthCheck": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Skip health check during proxy startup for instant initialization. Enable if experiencing startup delays."
         },
         "claudeThrone.autoApply": {
           "type": "boolean",

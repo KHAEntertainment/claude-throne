@@ -56,7 +56,7 @@ export class ProxyManager {
         });
       });
       req.on('error', () => resolve(false));
-      req.setTimeout(2000, () => {
+      req.setTimeout(500, () => { // Reduced from 2000ms for faster response
         req.destroy();
         resolve(false);
       });
@@ -85,7 +85,7 @@ export class ProxyManager {
             });
         });
         req.on('error', () => resolve(false));
-        req.setTimeout(1000, () => {
+        req.setTimeout(500, () => { // Reduced from 1000ms for faster check
             req.destroy();
             resolve(false);
         });
@@ -161,16 +161,35 @@ export class ProxyManager {
 
     this.currentPort = opts.port
     
-    // Wait for proxy to be ready
+    // Check if we should skip health check for faster startup
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const skipHealthCheck = cfg.get<boolean>('proxy.skipHealthCheck', false)
+    
+    if (skipHealthCheck) {
+      this.log.appendLine('[ProxyManager] Skipping health check (fast mode enabled)')
+      // Start monitoring anyway for crash detection
+      setTimeout(() => this.startHealthMonitoring(), 2000)
+      return
+    }
+    
+    // Try health check immediately first (no delay)
+    if (await this.checkHealth()) {
+      const readyElapsed = Date.now() - startTime
+      this.log.appendLine(`[ProxyManager] Proxy ready immediately (${readyElapsed}ms)`)
+      this.startHealthMonitoring()
+      return
+    }
+    
+    // Only retry with delays if the immediate check failed
     let retries = 0
     const maxRetries = 10
+    const retryDelay = 200 // Reduced from 500ms
+    
     while (retries < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, retryDelay))
       if (await this.checkHealth()) {
         const readyElapsed = Date.now() - startTime
         this.log.appendLine(`[ProxyManager] Proxy ready after ${readyElapsed}ms`)
-        
-        // Start periodic health checks
         this.startHealthMonitoring()
         return
       }
