@@ -61,6 +61,21 @@ async function updateClaudeSettings(workspaceDir: string, newEnv: Record<string,
     }
 }
 
+function isAnthropicEndpoint(url: string): boolean {
+  if (!url) return false;
+  
+  // Patterns that indicate an Anthropic endpoint
+  const patterns = [
+    /anthropic\.com/i,
+    /\/anthropic$/i,
+    /\/api\/anthropic/i,
+    /claude\.ai/i,
+    /bedrock.*anthropic/i
+  ];
+  
+  return patterns.some(pattern => pattern.test(url));
+}
+
 async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string; haiku: string } | null> {
   try {
     const response = await request('https://api.anthropic.com/v1/models', {

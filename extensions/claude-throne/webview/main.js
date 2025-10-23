@@ -14,6 +14,14 @@
     secondaryModel: '',
     models: [],
     modelsCache: {},
+    // Provider-specific model storage
+    modelsByProvider: {
+      openrouter: { primary: '', secondary: '' },
+      openai: { primary: '', secondary: '' },
+      together: { primary: '', secondary: '' },
+      grok: { primary: '', secondary: '' },
+      custom: { primary: '', secondary: '' }
+    },
     proxyRunning: false,
     port: 3000,
     customCombos: [],
@@ -158,6 +166,9 @@
       case 'proxyError':
         showError(message.payload);
         break;
+      case 'modelsError':
+        handleModelsError(message.payload);
+        break;
       case 'combosLoaded':
         handleCombosLoaded(message.payload);
         break;
@@ -185,15 +196,30 @@
 
   // Provider handling
     function onProviderChange(e) {
+    // Save current models for the old provider
+    if (state.provider && state.modelsByProvider[state.provider]) {
+      state.modelsByProvider[state.provider].primary = state.primaryModel;
+      state.modelsByProvider[state.provider].secondary = state.secondaryModel;
+    }
+    
     // Clear the specific provider's cache before changing
     delete state.modelsCache[state.provider];
     
-    state.provider = e.target.value;
+    const newProvider = e.target.value;
+    state.provider = newProvider;
     state.models = [];
-    state.primaryModel = '';
-    state.secondaryModel = '';
+    
+    // Restore models for the new provider
+    if (state.modelsByProvider[newProvider]) {
+      state.primaryModel = state.modelsByProvider[newProvider].primary || '';
+      state.secondaryModel = state.modelsByProvider[newProvider].secondary || '';
+    } else {
+      state.primaryModel = '';
+      state.secondaryModel = '';
+    }
     
     updateProviderUI();
+    updateSelectedModelsDisplay();
     loadModels();
     saveState();
 
@@ -401,6 +427,10 @@
   function setModelFromList(modelId, type) {
     if (type === 'primary') {
       state.primaryModel = modelId;
+      // Save to provider-specific storage
+      if (state.modelsByProvider[state.provider]) {
+        state.modelsByProvider[state.provider].primary = modelId;
+      }
       vscode.postMessage({
         type: 'saveModels',
         reasoning: modelId,
@@ -408,6 +438,10 @@
       });
     } else if (type === 'secondary') {
       state.secondaryModel = modelId;
+      // Save to provider-specific storage
+      if (state.modelsByProvider[state.provider]) {
+        state.modelsByProvider[state.provider].secondary = modelId;
+      }
       vscode.postMessage({
         type: 'saveModels',
         reasoning: state.primaryModel,
@@ -776,6 +810,58 @@
       
       // Update save combo button visibility after models are loaded
       updateSaveComboButton();
+    }
+  }
+
+  function handleModelsError(payload) {
+    const container = document.getElementById('modelListContainer');
+    if (!container) return;
+    
+    // Show error with manual entry option for custom provider
+    if (payload.canManuallyEnter) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
+          <div style="margin-top: 16px;">
+            <p>Enter model IDs manually (comma-separated):</p>
+            <input type="text" id="manualModelInput" placeholder="e.g., gpt-4, claude-3-opus" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border);" />
+            <button id="addManualModelBtn" style="margin-top: 8px; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Models</button>
+          </div>
+        </div>
+      `;
+      
+      // Add event listeners for manual entry
+      const addBtn = container.querySelector('#addManualModelBtn');
+      const input = container.querySelector('#manualModelInput');
+      
+      if (addBtn && input) {
+        const addModels = () => {
+          const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
+          if (modelNames.length > 0) {
+            const newModels = modelNames.map(name => ({
+              id: name,
+              name: name,
+              provider: state.provider
+            }));
+            
+            state.models = [...state.models, ...newModels];
+            state.modelsCache[state.provider] = state.models;
+            renderModelList();
+            input.value = '';
+          }
+        };
+        
+        addBtn.addEventListener('click', addModels);
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') addModels();
+        });
+      }
+    } else {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
+        </div>
+      `;
     }
   }
 

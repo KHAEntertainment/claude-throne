@@ -259,11 +259,29 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           freeOnly
         }
       })
-    } catch (err) {
+    } catch (err: any) {
       this.log.appendLine(`❌ Failed to load models: ${err}`)
+      
+      // Send specific error for timeout or connection issues
+      let errorMessage = `Failed to load models: ${err}`
+      let errorType = 'generic'
+      
+      if (err.message?.includes('timed out')) {
+        errorType = 'timeout'
+        errorMessage = 'Model list request timed out. You can enter model IDs manually.'
+      } else if (err.message?.includes('ECONNREFUSED') || err.message?.includes('ENOTFOUND')) {
+        errorType = 'connection'
+        errorMessage = 'Could not connect to the API endpoint. Please check your URL and enter model IDs manually.'
+      }
+      
       this.view?.webview.postMessage({ 
-        type: 'error', 
-        payload: `Failed to load models: ${err}`
+        type: 'modelsError', 
+        payload: {
+          provider,
+          error: errorMessage,
+          errorType,
+          canManuallyEnter: provider === 'custom'
+        }
       })
     }
   }
@@ -398,22 +416,34 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleStartProxy() {
     try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const customBaseUrl = this.currentProvider === 'custom' 
+        ? cfg.get<string>('customBaseUrl', '')
+        : undefined
+      
+      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
+      if (this.currentProvider === 'custom' && customBaseUrl && this.isAnthropicEndpoint(customBaseUrl)) {
+        this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
+        this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
+        
+        // Apply the Anthropic URL directly without starting proxy
+        await this.applyAnthropicUrlDirectly(customBaseUrl)
+        
+        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
+        this.postStatus()
+        return
+      }
+      
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
       }
       const startTime = Date.now()
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const port = cfg.get<number>('proxy.port', 3000)
       const debug = cfg.get<boolean>('proxy.debug', false)
       const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
-      
-      // Read customBaseUrl for custom provider
-      const customBaseUrl = this.currentProvider === 'custom' 
-        ? cfg.get<string>('customBaseUrl', '')
-        : undefined
       
       this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
       this.log.appendLine(`[handleStartProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
@@ -450,6 +480,41 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         type: 'proxyError', 
         payload: String(err)
       })
+    }
+  }
+
+  private isAnthropicEndpoint(url: string): boolean {
+    if (!url) return false
+    const patterns = [
+      /anthropic\.com/i,
+      /\/anthropic$/i,
+      /\/api\/anthropic/i,
+      /claude\.ai/i,
+      /bedrock.*anthropic/i
+    ]
+    return patterns.some(pattern => pattern.test(url))
+  }
+
+  private async applyAnthropicUrlDirectly(url: string) {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const scopeStr = cfg.get<string>('applyScope', 'workspace')
+    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+    
+    // Apply to known Claude/Anthropic extension settings
+    const candidates: { section: string; key: string }[] = [
+      { section: 'anthropic', key: 'baseUrl' },
+      { section: 'claude', key: 'baseUrl' },
+      { section: 'claudeCode', key: 'baseUrl' },
+      { section: 'claude-code', key: 'baseUrl' },
+      { section: 'claude', key: 'apiBaseUrl' },
+      { section: 'claudeCode', key: 'apiBaseUrl' },
+    ]
+    
+    for (const c of candidates) {
+      try {
+        const s = vscode.workspace.getConfiguration(c.section)
+        await s.update(c.key, url, scope)
+      } catch {}
     }
   }
 

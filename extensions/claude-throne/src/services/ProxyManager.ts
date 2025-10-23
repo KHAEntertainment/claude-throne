@@ -21,6 +21,7 @@ export class ProxyManager {
   private currentPort: number | undefined;
   private onStatusChangedEmitter = new vscode.EventEmitter<ProxyStatus>();
   public onStatusChanged = this.onStatusChangedEmitter.event;
+  private healthCheckTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -30,6 +31,36 @@ export class ProxyManager {
 
   public getStatus(): ProxyStatus {
     return { running: !!this.proc && !this.proc.killed, port: this.currentPort, pid: this.proc?.pid };
+  }
+
+  public async checkHealth(): Promise<boolean> {
+    if (!this.currentPort || !this.proc || this.proc.killed) {
+      return false;
+    }
+
+    return new Promise(resolve => {
+      const req = http.get(`http://127.0.0.1:${this.currentPort}/health`, res => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              const json = JSON.parse(data);
+              resolve(json && json.status === 'healthy');
+            } catch {
+              resolve(false);
+            }
+          } else {
+            resolve(false);
+          }
+        });
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(2000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
   }
 
   private async checkStaleInstance(port: number): Promise<boolean> {
@@ -130,11 +161,50 @@ export class ProxyManager {
 
     this.currentPort = opts.port
     
-    const readyElapsed = Date.now() - startTime
-    this.log.appendLine(`[ProxyManager] Proxy spawn completed in ${readyElapsed}ms`)
+    // Wait for proxy to be ready
+    let retries = 0
+    const maxRetries = 10
+    while (retries < maxRetries) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+      if (await this.checkHealth()) {
+        const readyElapsed = Date.now() - startTime
+        this.log.appendLine(`[ProxyManager] Proxy ready after ${readyElapsed}ms`)
+        
+        // Start periodic health checks
+        this.startHealthMonitoring()
+        return
+      }
+      retries++
+    }
+    
+    // If we get here, proxy didn't start properly
+    const failedElapsed = Date.now() - startTime
+    this.log.appendLine(`[ProxyManager] Proxy failed to start after ${failedElapsed}ms`)
+    throw new Error('Proxy started but health check failed. Check the output for errors.')
+  }
+
+  private startHealthMonitoring() {
+    this.stopHealthMonitoring()
+    
+    // Check health every 30 seconds
+    this.healthCheckTimer = setInterval(async () => {
+      const isHealthy = await this.checkHealth()
+      if (!isHealthy && this.proc && !this.proc.killed) {
+        this.log.appendLine('[ProxyManager] Health check failed - proxy may have crashed')
+        this.onStatusChangedEmitter.fire({ running: false })
+      }
+    }, 30000)
+  }
+
+  private stopHealthMonitoring() {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer)
+      this.healthCheckTimer = null
+    }
   }
 
   async stop(): Promise<boolean> {
+    this.stopHealthMonitoring()
     if (!this.proc) return false
     try {
       this.proc.kill('SIGTERM')

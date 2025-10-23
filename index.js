@@ -93,10 +93,25 @@ fastify.get('/v1/models', async (request, reply) => {
 fastify.get('/healthz', async (request, reply) => {
     return {
         status: 'ok',
-        version: '1.4.5', // TODO: read from package.json
+        version: '1.4.9',
         provider,
         baseUrl,
         models,
+    }
+})
+
+fastify.get('/health', async (request, reply) => {
+    return {
+        status: 'healthy',
+        provider,
+        baseUrl,
+        hasApiKey: !!key,
+        models: {
+            reasoning: models.reasoning || 'not set',
+            completion: models.completion || 'not set'
+        },
+        timestamp: Date.now(),
+        uptime: process.uptime()
     }
 });
 
