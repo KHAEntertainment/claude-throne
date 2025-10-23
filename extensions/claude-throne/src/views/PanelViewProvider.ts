@@ -554,10 +554,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, completion=${completion}, twoModelMode=${twoModelMode}`)
       
-      await cfg.update('reasoningModel', reasoning)
-      await cfg.update('completionModel', completion)
+      // Explicitly save to Workspace configuration to ensure persistence
+      await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('completionModel', completion, vscode.ConfigurationTarget.Workspace)
       
-      this.log.appendLine(`[handleSaveModels] Models saved successfully`)
+      this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config`)
+      
+      // Immediately send updated config back to webview to confirm save
+      this.postConfig()
     } catch (err) {
       this.log.appendLine(`[handleSaveModels] Error: ${err}`)
       console.error('Failed to save models:', err)
@@ -572,9 +576,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSetModelFromList(modelId: string, modelType: 'primary' | 'secondary') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     if (modelType === 'primary') {
-      await cfg.update('reasoningModel', modelId)
+      await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved primary model: ${modelId}`)
     } else if (modelType === 'secondary') {
-      await cfg.update('completionModel', modelId)
+      await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved secondary model: ${modelId}`)
     }
     this.postConfig()
   }

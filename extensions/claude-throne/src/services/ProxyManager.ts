@@ -139,6 +139,23 @@ export class ProxyManager {
     const nodeBin = process.execPath;
     const entry = this.ctx.asAbsolutePath(path.join('bundled', 'proxy', 'index.cjs'))
 
+    // Read saved models from VS Code configuration if not explicitly provided
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    if (!opts.reasoningModel) {
+      const savedReasoningModel = cfg.get<string>('reasoningModel')
+      if (savedReasoningModel) {
+        opts.reasoningModel = savedReasoningModel
+        this.log.appendLine(`[ProxyManager] Loaded saved reasoning model from config: ${savedReasoningModel}`)
+      }
+    }
+    if (!opts.completionModel) {
+      const savedCompletionModel = cfg.get<string>('completionModel')
+      if (savedCompletionModel) {
+        opts.completionModel = savedCompletionModel
+        this.log.appendLine(`[ProxyManager] Loaded saved completion model from config: ${savedCompletionModel}`)
+      }
+    }
+
     // Build provider env
     const env = await this.buildEnvForProvider(opts)
     
@@ -147,8 +164,8 @@ export class ProxyManager {
     this.log.appendLine(`[ProxyManager] - Provider: ${opts.provider}`)
     this.log.appendLine(`[ProxyManager] - Port: ${opts.port}`)
     this.log.appendLine(`[ProxyManager] - Debug: ${opts.debug || false}`)
-    this.log.appendLine(`[ProxyManager] - Reasoning Model: ${opts.reasoningModel || 'not set'}`)
-    this.log.appendLine(`[ProxyManager] - Completion Model: ${opts.completionModel || 'not set'}`)
+    this.log.appendLine(`[ProxyManager] - Reasoning Model: ${opts.reasoningModel || 'not set'} ${opts.reasoningModel && cfg.get<string>('reasoningModel') === opts.reasoningModel ? '(from config)' : ''}`)
+    this.log.appendLine(`[ProxyManager] - Completion Model: ${opts.completionModel || 'not set'} ${opts.completionModel && cfg.get<string>('completionModel') === opts.completionModel ? '(from config)' : ''}`)
     this.log.appendLine(`[ProxyManager] - Custom Base URL: ${opts.customBaseUrl || 'none'}`)
     
     // Log environment variable keys (without exposing sensitive values)
@@ -187,8 +204,8 @@ export class ProxyManager {
     this.currentPort = opts.port
     
     // Check if we should skip health check for faster startup
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const skipHealthCheck = cfg.get<boolean>('proxy.skipHealthCheck', false)
+    const healthCfg = vscode.workspace.getConfiguration('claudeThrone')
+    const skipHealthCheck = healthCfg.get<boolean>('proxy.skipHealthCheck', false)
     
     if (skipHealthCheck) {
       this.log.appendLine('[ProxyManager] Skipping detailed health check (fast mode enabled)')
@@ -268,6 +285,7 @@ export class ProxyManager {
     const base: NodeJS.ProcessEnv = { ...process.env }
     base.PORT = String(opts.port)
     if (opts.debug) base.DEBUG = '1'
+    // Only set model env vars if they have actual values (don't override with empty strings)
     if (opts.reasoningModel) base.REASONING_MODEL = opts.reasoningModel
     if (opts.completionModel) base.COMPLETION_MODEL = opts.completionModel
 
