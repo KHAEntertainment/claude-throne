@@ -3,7 +3,7 @@
   "displayName": "Claude Throne",
   "publisher": "thehive",
   "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -187,6 +187,42 @@
           },
           "scope": "window",
           "markdownDescription": "User-saved model combinations for quick access."
+        },
+        "claudeThrone.provider": {
+          "type": "string",
+          "default": "openrouter",
+          "enum": [
+            "openrouter",
+            "openai",
+            "together",
+            "grok",
+            "custom"
+          ],
+          "scope": "window",
+          "markdownDescription": "AI provider to use for model routing."
+        },
+        "claudeThrone.customBaseUrl": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Custom endpoint URL for custom provider (OpenAI-compatible API)."
+        },
+        "claudeThrone.anthropicDefaults": {
+          "type": "object",
+          "default": {},
+          "properties": {
+            "opus": {
+              "type": "string"
+            },
+            "sonnet": {
+              "type": "string"
+            },
+            "haiku": {
+              "type": "string"
+            }
+          },
+          "scope": "application",
+          "markdownDescription": "Cached Anthropic default models (internal use)."
         },
         "claudeThrone.customEndpointOverrides": {
           "type": "object",

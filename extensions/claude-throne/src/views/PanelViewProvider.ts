@@ -13,7 +13,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     private readonly secrets: SecretsService,
     private readonly proxy: ProxyManager | null,
     private readonly log: vscode.OutputChannel,
-  ) {}
+  ) {
+    // Initialize provider from configuration
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    this.currentProvider = cfg.get<string>('provider', 'openrouter')
+  }
 
   async reveal() {
     if (this.view) {
@@ -135,7 +139,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async postKeys() {
-    const providers = ['openrouter','openai','together','groq','custom']
+    const providers = ['openrouter','openai','together','grok','custom']
     const map: Record<string, boolean> = {}
     for (const p of providers) {
       try {
@@ -155,8 +159,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const provider = config.get('provider');
     const reasoningModel = config.get('reasoningModel');
     const completionModel = config.get('completionModel');
-    const twoModelMode = config.get('twoModelMode');
+    const twoModelMode = config.get('twoModelMode', false);
     const port = config.get('proxy.port');
+    
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}`);
+    
     this.view.webview.postMessage({
       type: 'config',
       payload: { provider, reasoningModel, completionModel, twoModelMode, port }
@@ -291,10 +298,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleUpdateProvider(provider: string) {
+    // Clear the cache for the old provider before changing
+    this.modelsCache.delete(this.currentProvider)
+    
     // Store current provider for model loading
     this.currentProvider = provider
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     try {
+      await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
       await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
     } catch (err) {
       console.error('Failed to update provider config:', err)
@@ -389,12 +400,18 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
       }
+      const startTime = Date.now()
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const port = cfg.get<number>('proxy.port', 3000)
       const debug = cfg.get<boolean>('proxy.debug', false)
+      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
+      
+      this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleStartProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
+      this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
       await this.proxy.start({
         provider: this.currentProvider as any,
@@ -403,6 +420,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         reasoningModel,
         completionModel
       })
+      
+      const elapsed = Date.now() - startTime
+      this.log.appendLine(`[handleStartProxy] Proxy started successfully in ${elapsed}ms`)
       
       vscode.window.showInformationMessage(`Proxy started on port ${port}`)
       this.postStatus()
@@ -413,6 +433,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
       }
     } catch (err) {
+      this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
       vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
       this.view?.webview.postMessage({ 
@@ -435,7 +456,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
       
+      // Clear models cache and refresh webview config after stopping
+      this.modelsCache.clear()
+      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      this.postConfig()
       this.postStatus()
+      
       if (autoApply) {
         vscode.window.showInformationMessage('Proxy stopped and Claude Code settings reverted')
       }
@@ -447,9 +473,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveModels(reasoning: string, completion: string) {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
+      
+      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, completion=${completion}, twoModelMode=${twoModelMode}`)
+      
       await cfg.update('reasoningModel', reasoning)
       await cfg.update('completionModel', completion)
+      
+      this.log.appendLine(`[handleSaveModels] Models saved successfully`)
     } catch (err) {
+      this.log.appendLine(`[handleSaveModels] Error: ${err}`)
       console.error('Failed to save models:', err)
     }
   }
@@ -472,7 +505,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleToggleTwoModelMode(enabled: boolean) {
     // Store the two-model mode preference
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const reasoningModel = cfg.get<string>('reasoningModel')
+    const completionModel = cfg.get<string>('completionModel')
+    
+    this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
+    this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
+    
     await cfg.update('twoModelMode', enabled)
+    
+    this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
 
   private getHtml(): string {
@@ -488,7 +529,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src https://openrouter.ai;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src ${this.view!.webview.cspSource} https:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Throne</title>
   <link rel="stylesheet" href="${cssUri}">

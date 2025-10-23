@@ -14,9 +14,13 @@ export interface ProxyStartOptions {
 
 export interface ProxyStatus { running: boolean; port?: number; pid?: number }
 
+import * as http from 'http';
+
 export class ProxyManager {
-  private proc: cp.ChildProcess | null = null
-  private currentPort: number | undefined
+  private proc: cp.ChildProcess | null = null;
+  private currentPort: number | undefined;
+  private onStatusChangedEmitter = new vscode.EventEmitter<ProxyStatus>();
+  public onStatusChanged = this.onStatusChangedEmitter.event;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -24,31 +28,100 @@ export class ProxyManager {
     private readonly secrets: SecretsService,
   ) {}
 
-  getStatus(): ProxyStatus {
-    return { running: !!this.proc && !this.proc.killed, port: this.currentPort, pid: this.proc?.pid }
+  public getStatus(): ProxyStatus {
+    return { running: !!this.proc && !this.proc.killed, port: this.currentPort, pid: this.proc?.pid };
+  }
+
+  private async checkStaleInstance(port: number): Promise<boolean> {
+    return new Promise(resolve => {
+        const req = http.get(`http://127.0.0.1:${port}/healthz`, res => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                // Check if response is 200 and has expected health check shape
+                if (res.statusCode === 200) {
+                    try {
+                        const json = JSON.parse(data);
+                        // If we get a valid health check response, consider it a stale proxy
+                        resolve(json && json.status === 'ok');
+                    } catch {
+                        // If we can't parse JSON, treat as non-health check response
+                        resolve(false);
+                    }
+                } else {
+                    resolve(false);
+                }
+            });
+        });
+        req.on('error', () => resolve(false));
+        req.setTimeout(1000, () => {
+            req.destroy();
+            resolve(false);
+        });
+    });
   }
 
   async start(opts: ProxyStartOptions): Promise<void> {
     if (this.proc && !this.proc.killed) {
-      this.log.appendLine('[proxy] already running')
-      return
+      this.log.appendLine('[proxy] already running');
+      return;
     }
 
-    const nodeBin = process.execPath
+    const isStale = await this.checkStaleInstance(opts.port);
+    if (isStale) {
+        const choice = await vscode.window.showWarningMessage(
+            `Another process is already running on port ${opts.port}.`,
+            'Start Anyway',
+            'Cancel'
+        );
+        if (choice !== 'Start Anyway') {
+            return;
+        }
+    }
+
+    const startTime = Date.now()
+    const nodeBin = process.execPath;
     const entry = this.ctx.asAbsolutePath(path.join('bundled', 'proxy', 'index.cjs'))
 
     // Build provider env
     const env = await this.buildEnvForProvider(opts)
+    
+    // Log configuration for diagnostics
+    this.log.appendLine(`[ProxyManager] Starting proxy with configuration:`)
+    this.log.appendLine(`[ProxyManager] - Provider: ${opts.provider}`)
+    this.log.appendLine(`[ProxyManager] - Port: ${opts.port}`)
+    this.log.appendLine(`[ProxyManager] - Debug: ${opts.debug || false}`)
+    this.log.appendLine(`[ProxyManager] - Reasoning Model: ${opts.reasoningModel || 'not set'}`)
+    this.log.appendLine(`[ProxyManager] - Completion Model: ${opts.completionModel || 'not set'}`)
+    this.log.appendLine(`[ProxyManager] - Custom Base URL: ${opts.customBaseUrl || 'none'}`)
+    
+    // Log environment variable keys (without exposing sensitive values)
+    const envKeys = Object.keys(env).filter(k => k.includes('API_KEY') || k.includes('MODEL') || k.includes('BASE_URL'))
+    this.log.appendLine(`[ProxyManager] - Environment variables set: ${envKeys.join(', ')}`)
 
     this.log.appendLine(`[proxy] starting via ${nodeBin} ${entry} on port ${opts.port}`)
-    this.proc = cp.spawn(nodeBin, [entry], {
+    this.proc = cp.spawn(nodeBin, [entry, '--port', String(opts.port)], {
       env,
       stdio: 'pipe',
       detached: false,
     })
+    
+    const pid = this.proc.pid
+    this.log.appendLine(`[ProxyManager] Proxy process spawned with PID: ${pid}`)
 
-    this.proc.stdout?.on('data', (b) => this.log.appendLine(`[proxy] ${b.toString().trimEnd()}`))
+    let firstOutput = true
+    this.proc.stdout?.on('data', (b) => {
+      const output = b.toString().trimEnd()
+      if (firstOutput) {
+        const elapsed = Date.now() - startTime
+        this.log.appendLine(`[ProxyManager] First stdout received after ${elapsed}ms`)
+        firstOutput = false
+      }
+      this.log.appendLine(`[proxy] ${output}`)
+    })
+    
     this.proc.stderr?.on('data', (b) => this.log.appendLine(`[proxy:err] ${b.toString().trimEnd()}`))
+    
     this.proc.on('exit', (code, signal) => {
       this.log.appendLine(`[proxy] exited code=${code} signal=${signal}`)
       this.proc = null
@@ -56,6 +129,9 @@ export class ProxyManager {
     })
 
     this.currentPort = opts.port
+    
+    const readyElapsed = Date.now() - startTime
+    this.log.appendLine(`[ProxyManager] Proxy spawn completed in ${readyElapsed}ms`)
   }
 
   async stop(): Promise<boolean> {

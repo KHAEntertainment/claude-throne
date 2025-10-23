@@ -325,11 +325,17 @@ var require_error = __commonJS({
     function toString() {
       return `${this.name} [${this.code}]: ${this.message}`;
     }
+    var FastifyGenericErrorSymbol = Symbol.for("fastify-error-generic");
     function createError(code, message, statusCode = 500, Base = Error, captureStackTrace = createError.captureStackTrace) {
+      const shouldCreateFastifyGenericError = code === FastifyGenericErrorSymbol;
+      if (shouldCreateFastifyGenericError) {
+        code = "FST_ERR";
+      }
       if (!code) throw new Error("Fastify error code must not be empty");
       if (!message) throw new Error("Fastify error message must not be empty");
       code = code.toUpperCase();
       !statusCode && (statusCode = void 0);
+      const FastifySpecificErrorSymbol = Symbol.for(`fastify-error ${code}`);
       function FastifyError(...args) {
         if (!new.target) {
           return new FastifyError(...args);
@@ -350,14 +356,47 @@ var require_error = __commonJS({
           enumerable: false,
           writable: true,
           configurable: true
+        },
+        [FastifyGenericErrorSymbol]: {
+          value: true,
+          enumerable: false,
+          writable: false,
+          configurable: false
+        },
+        [FastifySpecificErrorSymbol]: {
+          value: true,
+          enumerable: false,
+          writable: false,
+          configurable: false
         }
       });
+      if (shouldCreateFastifyGenericError) {
+        Object.defineProperty(FastifyError, Symbol.hasInstance, {
+          value(instance) {
+            return instance && instance[FastifyGenericErrorSymbol];
+          },
+          configurable: false,
+          writable: false,
+          enumerable: false
+        });
+      } else {
+        Object.defineProperty(FastifyError, Symbol.hasInstance, {
+          value(instance) {
+            return instance && instance[FastifySpecificErrorSymbol];
+          },
+          configurable: false,
+          writable: false,
+          enumerable: false
+        });
+      }
       FastifyError.prototype[Symbol.toStringTag] = "Error";
       FastifyError.prototype.toString = toString;
       return FastifyError;
     }
     createError.captureStackTrace = true;
+    var FastifyErrorConstructor = createError(FastifyGenericErrorSymbol, "Fastify Error", 500, Error);
     module2.exports = createError;
+    module2.exports.FastifyError = FastifyErrorConstructor;
     module2.exports.default = createError;
     module2.exports.createError = createError;
   }
@@ -1413,6 +1452,7 @@ var require_symbols2 = __commonJS({
       kPluginNameChain: Symbol("fastify.pluginNameChain"),
       kRouteContext: Symbol("fastify.context"),
       kGenReqId: Symbol("fastify.genReqId"),
+      kHttp2ServerSessions: Symbol("fastify.http2ServerSessions"),
       // Schema
       kSchemaController: Symbol("fastify.schemaController"),
       kSchemaHeaders: Symbol("headers-schema"),
@@ -1452,12 +1492,116 @@ var require_symbols2 = __commonJS({
       // This symbol is only meant to be used for fastify tests and should not be used for any other purpose
       kTestInternals: Symbol("fastify.testInternals"),
       kErrorHandler: Symbol("fastify.errorHandler"),
+      kErrorHandlerAlreadySet: Symbol("fastify.errorHandlerAlreadySet"),
       kChildLoggerFactory: Symbol("fastify.childLoggerFactory"),
       kHasBeenDecorated: Symbol("fastify.hasBeenDecorated"),
       kKeepAliveConnections: Symbol("fastify.keepAliveConnections"),
       kRouteByFastify: Symbol("fastify.routeByFastify")
     };
     module2.exports = keys;
+  }
+});
+
+// ../../node_modules/process-warning/index.js
+var require_process_warning = __commonJS({
+  "../../node_modules/process-warning/index.js"(exports2, module2) {
+    "use strict";
+    var { format } = require("node:util");
+    function createDeprecation(params) {
+      return createWarning({ ...params, name: "DeprecationWarning" });
+    }
+    function createWarning({ name, code, message, unlimited = false } = {}) {
+      if (!name) throw new Error("Warning name must not be empty");
+      if (!code) throw new Error("Warning code must not be empty");
+      if (!message) throw new Error("Warning message must not be empty");
+      if (typeof unlimited !== "boolean") throw new Error("Warning opts.unlimited must be a boolean");
+      code = code.toUpperCase();
+      let warningContainer = {
+        [name]: function(a, b, c) {
+          if (warning.emitted === true && warning.unlimited !== true) {
+            return;
+          }
+          warning.emitted = true;
+          process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
+        }
+      };
+      if (unlimited) {
+        warningContainer = {
+          [name]: function(a, b, c) {
+            warning.emitted = true;
+            process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
+          }
+        };
+      }
+      const warning = warningContainer[name];
+      warning.emitted = false;
+      warning.message = message;
+      warning.unlimited = unlimited;
+      warning.code = code;
+      warning.format = function(a, b, c) {
+        let formatted;
+        if (a && b && c) {
+          formatted = format(message, a, b, c);
+        } else if (a && b) {
+          formatted = format(message, a, b);
+        } else if (a) {
+          formatted = format(message, a);
+        } else {
+          formatted = message;
+        }
+        return formatted;
+      };
+      return warning;
+    }
+    var out = { createWarning, createDeprecation };
+    module2.exports = out;
+    module2.exports.default = out;
+    module2.exports.processWarning = out;
+  }
+});
+
+// ../../node_modules/fastify/lib/warnings.js
+var require_warnings = __commonJS({
+  "../../node_modules/fastify/lib/warnings.js"(exports2, module2) {
+    "use strict";
+    var { createWarning } = require_process_warning();
+    var FSTWRN001 = createWarning({
+      name: "FastifyWarning",
+      code: "FSTWRN001",
+      message: "The %s schema for %s: %s is missing. This may indicate the schema is not well specified.",
+      unlimited: true
+    });
+    var FSTWRN003 = createWarning({
+      name: "FastifyWarning",
+      code: "FSTWRN003",
+      message: "The %s mixes async and callback styles that may lead to unhandled rejections. Please use only one of them.",
+      unlimited: true
+    });
+    var FSTWRN004 = createWarning({
+      name: "FastifyWarning",
+      code: "FSTWRN004",
+      message: "It seems that you are overriding an errorHandler in the same scope, which can lead to subtle bugs.",
+      unlimited: true
+    });
+    var FSTSEC001 = createWarning({
+      name: "FastifySecurity",
+      code: "FSTSEC001",
+      message: 'You are using /%s/ Content-Type which may be vulnerable to CORS attack. Please make sure your RegExp start with "^" or include ";?" to proper detection of the essence MIME type.',
+      unlimited: true
+    });
+    var FSTDEP022 = createWarning({
+      name: "FastifyWarning",
+      code: "FSTDEP022",
+      message: 'The router options for %s property access is deprecated. Please use "options.routerOptions" instead for accessing router options. The router options will be removed in `fastify@6`.',
+      unlimited: true
+    });
+    module2.exports = {
+      FSTWRN001,
+      FSTWRN003,
+      FSTWRN004,
+      FSTSEC001,
+      FSTDEP022
+    };
   }
 });
 
@@ -1528,6 +1672,12 @@ var require_errors2 = __commonJS({
         500,
         TypeError
       ),
+      FST_ERR_ERROR_HANDLER_ALREADY_SET: createError(
+        "FST_ERR_ERROR_HANDLER_ALREADY_SET",
+        "Error Handler already set in this scope. Set 'allowErrorHandlerOverride: true' to allow overriding.",
+        500,
+        TypeError
+      ),
       /**
        * ContentTypeParser
       */
@@ -1581,6 +1731,11 @@ var require_errors2 = __commonJS({
         "Body cannot be empty when content-type is set to 'application/json'",
         400
       ),
+      FST_ERR_CTP_INVALID_JSON_BODY: createError(
+        "FST_ERR_CTP_INVALID_JSON_BODY",
+        "Body is not valid JSON but content-type is set to 'application/json'",
+        400
+      ),
       FST_ERR_CTP_INSTANCE_ALREADY_STARTED: createError(
         "FST_ERR_CTP_INSTANCE_ALREADY_STARTED",
         'Cannot call "%s" when fastify instance is already started!',
@@ -1610,6 +1765,10 @@ var require_errors2 = __commonJS({
       FST_ERR_DEC_REFERENCE_TYPE: createError(
         "FST_ERR_DEC_REFERENCE_TYPE",
         "The decorator '%s' of type '%s' is a reference type. Use the { getter, setter } interface instead."
+      ),
+      FST_ERR_DEC_UNDECLARED: createError(
+        "FST_ERR_DEC_UNDECLARED",
+        "No decorator '%s' has been declared on %s."
       ),
       /**
        * hooks
@@ -1774,13 +1933,6 @@ var require_errors2 = __commonJS({
       FST_ERR_SCH_RESPONSE_SCHEMA_NOT_NESTED_2XX: createError(
         "FST_ERR_SCH_RESPONSE_SCHEMA_NOT_NESTED_2XX",
         'response schemas should be nested under a valid status code, e.g { 2xx: { type: "object" } }'
-      ),
-      /**
-       * http2
-       */
-      FST_ERR_HTTP2_INVALID_VERSION: createError(
-        "FST_ERR_HTTP2_INVALID_VERSION",
-        "HTTP2 is available only from node >= 8.8.1"
       ),
       /**
        * initialConfig
@@ -2303,22 +2455,48 @@ var require_hooks = __commonJS({
   }
 });
 
+// ../../node_modules/fastify/lib/promise.js
+var require_promise = __commonJS({
+  "../../node_modules/fastify/lib/promise.js"(exports2, module2) {
+    "use strict";
+    var { kTestInternals } = require_symbols2();
+    function withResolvers() {
+      let res, rej;
+      const promise = new Promise((resolve, reject) => {
+        res = resolve;
+        rej = reject;
+      });
+      return { promise, resolve: res, reject: rej };
+    }
+    module2.exports = {
+      // TODO(20.x): remove when node@20 is not supported
+      withResolvers: typeof Promise.withResolvers === "function" ? Promise.withResolvers.bind(Promise) : withResolvers,
+      // Tested using the kTestInternals
+      [kTestInternals]: {
+        withResolvers
+      }
+    };
+  }
+});
+
 // ../../node_modules/fastify/lib/server.js
 var require_server = __commonJS({
   "../../node_modules/fastify/lib/server.js"(exports2, module2) {
     "use strict";
     var http = require("node:http");
     var https = require("node:https");
+    var http2 = require("node:http2");
     var dns = require("node:dns");
     var os = require("node:os");
-    var { kState, kOptions, kServerBindings } = require_symbols2();
+    var { kState, kOptions, kServerBindings, kHttp2ServerSessions } = require_symbols2();
+    var { FSTWRN003 } = require_warnings();
     var { onListenHookRunner } = require_hooks();
     var {
-      FST_ERR_HTTP2_INVALID_VERSION,
       FST_ERR_REOPENED_CLOSE_SERVER,
       FST_ERR_REOPENED_SERVER,
       FST_ERR_LISTEN_OPTIONS_INVALID
     } = require_errors2();
+    var PonyPromise = require_promise();
     module2.exports.createServer = createServer;
     function defaultResolveServerListeningText(address) {
       return `Server listening at ${address}`;
@@ -2327,16 +2505,21 @@ var require_server = __commonJS({
       const server = getServerInstance(options, httpHandler);
       function listen(listenOptions = { port: 0, host: "localhost" }, cb = void 0) {
         if (typeof cb === "function") {
+          if (cb.constructor.name === "AsyncFunction") {
+            FSTWRN003("listen method");
+          }
           listenOptions.cb = cb;
         }
         if (listenOptions.signal) {
           if (typeof listenOptions.signal.on !== "function" && typeof listenOptions.signal.addEventListener !== "function") {
             throw new FST_ERR_LISTEN_OPTIONS_INVALID("Invalid options.signal");
           }
-          if (listenOptions.signal.aborted) {
-            this.close();
+          this[kState].aborted = listenOptions.signal.aborted;
+          if (this[kState].aborted) {
+            return this.close();
           } else {
             const onAborted = () => {
+              this[kState].aborted = true;
               this.close();
             };
             listenOptions.signal.addEventListener("abort", onAborted, { once: true });
@@ -2377,18 +2560,18 @@ var require_server = __commonJS({
         if (cb === void 0) {
           const listening = listenPromise.call(this, server, listenOptions);
           return listening.then((address) => {
-            return new Promise((resolve, reject) => {
-              if (host === "localhost") {
-                multipleBindings.call(this, server, httpHandler, options, listenOptions, () => {
-                  this[kState].listening = true;
-                  resolve(address);
-                  onListenHookRunner(this);
-                });
-              } else {
+            const { promise, resolve } = PonyPromise.withResolvers();
+            if (host === "localhost") {
+              multipleBindings.call(this, server, httpHandler, options, listenOptions, () => {
+                this[kState].listening = true;
                 resolve(address);
                 onListenHookRunner(this);
-              }
-            });
+              });
+            } else {
+              resolve(address);
+              onListenHookRunner(this);
+            }
+            return promise;
           });
         }
         this.ready(listenCallback.call(this, server, listenOptions));
@@ -2398,7 +2581,7 @@ var require_server = __commonJS({
     function multipleBindings(mainServer, httpHandler, serverOpts, listenOptions, onListen) {
       this[kState].listening = false;
       dns.lookup(listenOptions.host, { all: true }, (dnsErr, addresses) => {
-        if (dnsErr) {
+        if (dnsErr || this[kState].aborted) {
           onListen();
           return;
         }
@@ -2429,6 +2612,9 @@ var require_server = __commonJS({
                 });
                 if (typeof secondaryServer.closeAllConnections === "function" && serverOpts.forceCloseConnections === true) {
                   secondaryServer.closeAllConnections();
+                }
+                if (typeof secondaryServer.closeHttp2Sessions === "function") {
+                  secondaryServer.closeHttp2Sessions();
                 }
               };
               secondaryServer.on("upgrade", mainServer.emit.bind(mainServer, "upgrade"));
@@ -2467,7 +2653,8 @@ var require_server = __commonJS({
         if (err != null) return listenOptions.cb(err);
         if (this[kState].listening && this[kState].closing) {
           return listenOptions.cb(new FST_ERR_REOPENED_CLOSE_SERVER(), null);
-        } else if (this[kState].listening) {
+        }
+        if (this[kState].listening) {
           return listenOptions.cb(new FST_ERR_REOPENED_SERVER(), null);
         }
         server.once("error", wrap);
@@ -2481,66 +2668,55 @@ var require_server = __commonJS({
     function listenPromise(server, listenOptions) {
       if (this[kState].listening && this[kState].closing) {
         return Promise.reject(new FST_ERR_REOPENED_CLOSE_SERVER());
-      } else if (this[kState].listening) {
+      }
+      if (this[kState].listening) {
         return Promise.reject(new FST_ERR_REOPENED_SERVER());
       }
       return this.ready().then(() => {
-        let errEventHandler;
-        let listeningEventHandler;
+        if (this[kState].aborted) return;
+        const { promise, resolve, reject } = PonyPromise.withResolvers();
+        const errEventHandler = (err) => {
+          cleanup();
+          this[kState].listening = false;
+          reject(err);
+        };
+        const listeningEventHandler = () => {
+          cleanup();
+          this[kState].listening = true;
+          resolve(logServerAddress.call(this, server, listenOptions.listenTextResolver || defaultResolveServerListeningText));
+        };
         function cleanup() {
           server.removeListener("error", errEventHandler);
           server.removeListener("listening", listeningEventHandler);
         }
-        const errEvent = new Promise((resolve, reject) => {
-          errEventHandler = (err) => {
-            cleanup();
-            this[kState].listening = false;
-            reject(err);
-          };
-          server.once("error", errEventHandler);
-        });
-        const listeningEvent = new Promise((resolve, reject) => {
-          listeningEventHandler = () => {
-            cleanup();
-            this[kState].listening = true;
-            resolve(logServerAddress.call(this, server, listenOptions.listenTextResolver || defaultResolveServerListeningText));
-          };
-          server.once("listening", listeningEventHandler);
-        });
+        server.once("error", errEventHandler);
+        server.once("listening", listeningEventHandler);
         server.listen(listenOptions);
-        return Promise.race([
-          errEvent,
-          // e.g invalid port range error is always emitted before the server listening
-          listeningEvent
-        ]);
+        return promise;
       });
     }
     function getServerInstance(options, httpHandler) {
-      let server = null;
-      const httpsOptions = options.https === true ? {} : options.https;
       if (options.serverFactory) {
-        server = options.serverFactory(httpHandler, options);
-      } else if (options.http2) {
-        if (typeof httpsOptions === "object") {
-          server = http2().createSecureServer(httpsOptions, httpHandler);
-        } else {
-          server = http2().createServer(httpHandler);
-        }
-        server.on("session", sessionTimeout(options.http2SessionTimeout));
-      } else {
-        if (httpsOptions) {
-          server = https.createServer(httpsOptions, httpHandler);
-        } else {
-          server = http.createServer(options.http, httpHandler);
-        }
-        server.keepAliveTimeout = options.keepAliveTimeout;
-        server.requestTimeout = options.requestTimeout;
-        if (options.maxRequestsPerSocket > 0) {
-          server.maxRequestsPerSocket = options.maxRequestsPerSocket;
-        }
+        return options.serverFactory(httpHandler, options);
       }
-      if (!options.serverFactory) {
-        server.setTimeout(options.connectionTimeout);
+      const httpsOptions = options.https === true ? {} : options.https;
+      if (options.http2) {
+        const server2 = typeof httpsOptions === "object" ? http2.createSecureServer(httpsOptions, httpHandler) : http2.createServer(options.http, httpHandler);
+        server2.on("session", (session) => session.setTimeout(options.http2SessionTimeout, () => {
+          session.close();
+        }));
+        if (options.forceCloseConnections === true) {
+          server2.closeHttp2Sessions = createCloseHttp2SessionsByHttp2Server(server2);
+        }
+        server2.setTimeout(options.connectionTimeout);
+        return server2;
+      }
+      const server = httpsOptions ? https.createServer(httpsOptions, httpHandler) : http.createServer(options.http, httpHandler);
+      server.keepAliveTimeout = options.keepAliveTimeout;
+      server.requestTimeout = options.requestTimeout;
+      server.setTimeout(options.connectionTimeout);
+      if (options.maxRequestsPerSocket > 0) {
+        server.maxRequestsPerSocket = options.maxRequestsPerSocket;
       }
       return server;
     }
@@ -2574,103 +2750,33 @@ var require_server = __commonJS({
       }
       return addresses[0];
     }
-    function http2() {
-      try {
-        return require("node:http2");
-      } catch (err) {
-        throw new FST_ERR_HTTP2_INVALID_VERSION();
-      }
-    }
-    function sessionTimeout(timeout) {
-      return function(session) {
-        session.setTimeout(timeout, close);
-      };
-    }
-    function close() {
-      this.close();
-    }
-  }
-});
-
-// ../../node_modules/process-warning/index.js
-var require_process_warning = __commonJS({
-  "../../node_modules/process-warning/index.js"(exports2, module2) {
-    "use strict";
-    var { format } = require("node:util");
-    function createDeprecation(params) {
-      return createWarning({ ...params, name: "DeprecationWarning" });
-    }
-    function createWarning({ name, code, message, unlimited = false } = {}) {
-      if (!name) throw new Error("Warning name must not be empty");
-      if (!code) throw new Error("Warning code must not be empty");
-      if (!message) throw new Error("Warning message must not be empty");
-      if (typeof unlimited !== "boolean") throw new Error("Warning opts.unlimited must be a boolean");
-      code = code.toUpperCase();
-      let warningContainer = {
-        [name]: function(a, b, c) {
-          if (warning.emitted === true && warning.unlimited !== true) {
-            return;
+    function createCloseHttp2SessionsByHttp2Server(http2Server) {
+      http2Server[kHttp2ServerSessions] = /* @__PURE__ */ new Set();
+      http2Server.on("session", function(session) {
+        session.once("connect", function() {
+          http2Server[kHttp2ServerSessions].add(session);
+        });
+        session.once("close", function() {
+          http2Server[kHttp2ServerSessions].delete(session);
+        });
+        session.once("frameError", function(type, code, streamId) {
+          if (streamId === 0) {
+            http2Server[kHttp2ServerSessions].delete(session);
           }
-          warning.emitted = true;
-          process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
+        });
+        session.once("goaway", function() {
+          http2Server[kHttp2ServerSessions].delete(session);
+        });
+      });
+      return function closeHttp2Sessions() {
+        if (http2Server[kHttp2ServerSessions].size === 0) {
+          return;
+        }
+        for (const session of http2Server[kHttp2ServerSessions]) {
+          session.close();
         }
       };
-      if (unlimited) {
-        warningContainer = {
-          [name]: function(a, b, c) {
-            warning.emitted = true;
-            process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
-          }
-        };
-      }
-      const warning = warningContainer[name];
-      warning.emitted = false;
-      warning.message = message;
-      warning.unlimited = unlimited;
-      warning.code = code;
-      warning.format = function(a, b, c) {
-        let formatted;
-        if (a && b && c) {
-          formatted = format(message, a, b, c);
-        } else if (a && b) {
-          formatted = format(message, a, b);
-        } else if (a) {
-          formatted = format(message, a);
-        } else {
-          formatted = message;
-        }
-        return formatted;
-      };
-      return warning;
     }
-    var out = { createWarning, createDeprecation };
-    module2.exports = out;
-    module2.exports.default = out;
-    module2.exports.processWarning = out;
-  }
-});
-
-// ../../node_modules/fastify/lib/warnings.js
-var require_warnings = __commonJS({
-  "../../node_modules/fastify/lib/warnings.js"(exports2, module2) {
-    "use strict";
-    var { createWarning } = require_process_warning();
-    var FSTWRN001 = createWarning({
-      name: "FastifyWarning",
-      code: "FSTWRN001",
-      message: "The %s schema for %s: %s is missing. This may indicate the schema is not well specified.",
-      unlimited: true
-    });
-    var FSTSEC001 = createWarning({
-      name: "FastifySecurity",
-      code: "FSTSEC001",
-      message: 'You are using /%s/ Content-Type which may be vulnerable to CORS attack. Please make sure your RegExp start with "^" or include ";?" to proper detection of the essence MIME type.',
-      unlimited: true
-    });
-    module2.exports = {
-      FSTWRN001,
-      FSTSEC001
-    };
   }
 });
 
@@ -2781,7 +2887,7 @@ var require_validation = __commonJS({
     function validateParam(validatorFunction, request, paramName) {
       const isUndefined = request[paramName] === void 0;
       const ret = validatorFunction && validatorFunction(isUndefined ? null : request[paramName]);
-      if (ret?.then) {
+      if (ret && typeof ret.then === "function") {
         return ret.then((res) => {
           return answer(res);
         }).catch((err) => {
@@ -2813,7 +2919,7 @@ var require_validation = __commonJS({
         if (typeof context[bodySchema] === "function") {
           validatorFunction = context[bodySchema];
         } else if (context[bodySchema]) {
-          const contentType = request.headers["content-type"]?.split(";", 1)[0];
+          const contentType = getEssenceMediaType(request.headers["content-type"]);
           const contentSchema = context[bodySchema][contentType];
           if (contentSchema) {
             validatorFunction = contentSchema;
@@ -2894,6 +3000,10 @@ var require_validation = __commonJS({
       error.validationContext = dataVar;
       return error;
     }
+    function getEssenceMediaType(header) {
+      if (!header) return "";
+      return header.split(/[ ;]/, 1)[0].trim().toLowerCase();
+    }
     module2.exports = {
       symbols: { bodySchema, querystringSchema, responseSchema, paramsSchema, headersSchema },
       compileSchemasForValidation,
@@ -2923,7 +3033,9 @@ var require_wrapThenable = __commonJS({
           channels.asyncStart.publish(store);
         }
         try {
-          if (payload !== void 0 || reply.sent === false && reply.raw.headersSent === false && reply.request.raw.aborted === false) {
+          if (payload !== void 0 || //
+          reply.sent === false && //
+          reply.raw.headersSent === false && reply.request.raw.aborted === false && reply.request.socket && !reply.request.socket.destroyed) {
             try {
               reply.send(payload);
             } catch (err) {
@@ -2984,30 +3096,26 @@ var require_handleRequest = __commonJS({
         reply.send(err);
         return;
       }
-      const method = request.raw.method;
-      const headers = request.headers;
-      const context = request[kRouteContext];
+      const method = request.method;
       if (this[kSupportedHTTPMethods].bodyless.has(method)) {
         handler(request, reply);
         return;
       }
       if (this[kSupportedHTTPMethods].bodywith.has(method)) {
+        const headers = request.headers;
         const contentType = headers["content-type"];
-        const contentLength = headers["content-length"];
-        const transferEncoding = headers["transfer-encoding"];
         if (contentType === void 0) {
-          if ((contentLength === void 0 || contentLength === "0") && transferEncoding === void 0) {
-            handler(request, reply);
-          } else {
-            context.contentTypeParser.run("", handler, request, reply);
-          }
-        } else {
-          if (contentLength === void 0 && transferEncoding === void 0 && method === "OPTIONS") {
+          const contentLength = headers["content-length"];
+          const transferEncoding = headers["transfer-encoding"];
+          const isEmptyBody = transferEncoding === void 0 && (contentLength === void 0 || contentLength === "0");
+          if (isEmptyBody) {
             handler(request, reply);
             return;
           }
-          context.contentTypeParser.run(contentType, handler, request, reply);
+          request[kRouteContext].contentTypeParser.run("", handler, request, reply);
+          return;
         }
+        request[kRouteContext].contentTypeParser.run(contentType, handler, request, reply);
         return;
       }
       handler(request, reply);
@@ -3543,541 +3651,436 @@ var require_caller = __commonJS({
   }
 });
 
-// ../../node_modules/fast-redact/lib/validator.js
-var require_validator = __commonJS({
-  "../../node_modules/fast-redact/lib/validator.js"(exports2, module2) {
+// ../../node_modules/@pinojs/redact/index.js
+var require_redact = __commonJS({
+  "../../node_modules/@pinojs/redact/index.js"(exports2, module2) {
     "use strict";
-    module2.exports = validator;
-    function validator(opts = {}) {
-      const {
-        ERR_PATHS_MUST_BE_STRINGS = () => "fast-redact - Paths must be (non-empty) strings",
-        ERR_INVALID_PATH = (s) => `fast-redact \u2013 Invalid path (${s})`
-      } = opts;
-      return function validate({ paths }) {
-        paths.forEach((s) => {
-          if (typeof s !== "string") {
-            throw Error(ERR_PATHS_MUST_BE_STRINGS());
+    function deepClone(obj) {
+      if (obj === null || typeof obj !== "object") {
+        return obj;
+      }
+      if (obj instanceof Date) {
+        return new Date(obj.getTime());
+      }
+      if (obj instanceof Array) {
+        const cloned = [];
+        for (let i = 0; i < obj.length; i++) {
+          cloned[i] = deepClone(obj[i]);
+        }
+        return cloned;
+      }
+      if (typeof obj === "object") {
+        const cloned = Object.create(Object.getPrototypeOf(obj));
+        for (const key2 in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, key2)) {
+            cloned[key2] = deepClone(obj[key2]);
           }
-          try {
-            if (/〇/.test(s)) throw Error();
-            const expr = (s[0] === "[" ? "" : ".") + s.replace(/^\*/, "\u3007").replace(/\.\*/g, ".\u3007").replace(/\[\*\]/g, "[\u3007]");
-            if (/\n|\r|;/.test(expr)) throw Error();
-            if (/\/\*/.test(expr)) throw Error();
-            Function(`
-            'use strict'
-            const o = new Proxy({}, { get: () => o, set: () => { throw Error() } });
-            const \u3007 = null;
-            o${expr}
-            if ([o${expr}].length !== 1) throw Error()`)();
-          } catch (e) {
-            throw Error(ERR_INVALID_PATH(s));
-          }
-        });
-      };
+        }
+        return cloned;
+      }
+      return obj;
     }
-  }
-});
-
-// ../../node_modules/fast-redact/lib/rx.js
-var require_rx = __commonJS({
-  "../../node_modules/fast-redact/lib/rx.js"(exports2, module2) {
-    "use strict";
-    module2.exports = /[^.[\]]+|\[((?:.)*?)\]/g;
-  }
-});
-
-// ../../node_modules/fast-redact/lib/parse.js
-var require_parse = __commonJS({
-  "../../node_modules/fast-redact/lib/parse.js"(exports2, module2) {
-    "use strict";
-    var rx = require_rx();
-    module2.exports = parse;
-    function parse({ paths }) {
-      const wildcards = [];
-      var wcLen = 0;
-      const secret = paths.reduce(function(o, strPath, ix) {
-        var path = strPath.match(rx).map((p) => p.replace(/'|"|`/g, ""));
-        const leadingBracket = strPath[0] === "[";
-        path = path.map((p) => {
-          if (p[0] === "[") return p.substr(1, p.length - 2);
-          else return p;
-        });
-        const star = path.indexOf("*");
-        if (star > -1) {
-          const before = path.slice(0, star);
-          const beforeStr = before.join(".");
-          const after = path.slice(star + 1, path.length);
-          const nested = after.length > 0;
-          wcLen++;
-          wildcards.push({
-            before,
-            beforeStr,
-            after,
-            nested
-          });
+    function parsePath(path) {
+      const parts = [];
+      let current = "";
+      let inBrackets = false;
+      let inQuotes = false;
+      let quoteChar = "";
+      for (let i = 0; i < path.length; i++) {
+        const char = path[i];
+        if (!inBrackets && char === ".") {
+          if (current) {
+            parts.push(current);
+            current = "";
+          }
+        } else if (char === "[") {
+          if (current) {
+            parts.push(current);
+            current = "";
+          }
+          inBrackets = true;
+        } else if (char === "]" && inBrackets) {
+          parts.push(current);
+          current = "";
+          inBrackets = false;
+          inQuotes = false;
+        } else if ((char === '"' || char === "'") && inBrackets) {
+          if (!inQuotes) {
+            inQuotes = true;
+            quoteChar = char;
+          } else if (char === quoteChar) {
+            inQuotes = false;
+            quoteChar = "";
+          } else {
+            current += char;
+          }
         } else {
-          o[strPath] = {
-            path,
-            val: void 0,
-            precensored: false,
-            circle: "",
-            escPath: JSON.stringify(strPath),
-            leadingBracket
-          };
-        }
-        return o;
-      }, {});
-      return { wildcards, wcLen, secret };
-    }
-  }
-});
-
-// ../../node_modules/fast-redact/lib/redactor.js
-var require_redactor = __commonJS({
-  "../../node_modules/fast-redact/lib/redactor.js"(exports2, module2) {
-    "use strict";
-    var rx = require_rx();
-    module2.exports = redactor;
-    function redactor({ secret, serialize, wcLen, strict, isCensorFct, censorFctTakesPath }, state) {
-      const redact = Function("o", `
-    if (typeof o !== 'object' || o == null) {
-      ${strictImpl(strict, serialize)}
-    }
-    const { censor, secret } = this
-    const originalSecret = {}
-    const secretKeys = Object.keys(secret)
-    for (var i = 0; i < secretKeys.length; i++) {
-      originalSecret[secretKeys[i]] = secret[secretKeys[i]]
-    }
-
-    ${redactTmpl(secret, isCensorFct, censorFctTakesPath)}
-    this.compileRestore()
-    ${dynamicRedactTmpl(wcLen > 0, isCensorFct, censorFctTakesPath)}
-    this.secret = originalSecret
-    ${resultTmpl(serialize)}
-  `).bind(state);
-      redact.state = state;
-      if (serialize === false) {
-        redact.restore = (o) => state.restore(o);
-      }
-      return redact;
-    }
-    function redactTmpl(secret, isCensorFct, censorFctTakesPath) {
-      return Object.keys(secret).map((path) => {
-        const { escPath, leadingBracket, path: arrPath } = secret[path];
-        const skip = leadingBracket ? 1 : 0;
-        const delim = leadingBracket ? "" : ".";
-        const hops = [];
-        var match;
-        while ((match = rx.exec(path)) !== null) {
-          const [, ix] = match;
-          const { index, input } = match;
-          if (index > skip) hops.push(input.substring(0, index - (ix ? 0 : 1)));
-        }
-        var existence = hops.map((p) => `o${delim}${p}`).join(" && ");
-        if (existence.length === 0) existence += `o${delim}${path} != null`;
-        else existence += ` && o${delim}${path} != null`;
-        const circularDetection = `
-      switch (true) {
-        ${hops.reverse().map((p) => `
-          case o${delim}${p} === censor:
-            secret[${escPath}].circle = ${JSON.stringify(p)}
-            break
-        `).join("\n")}
-      }
-    `;
-        const censorArgs = censorFctTakesPath ? `val, ${JSON.stringify(arrPath)}` : `val`;
-        return `
-      if (${existence}) {
-        const val = o${delim}${path}
-        if (val === censor) {
-          secret[${escPath}].precensored = true
-        } else {
-          secret[${escPath}].val = val
-          o${delim}${path} = ${isCensorFct ? `censor(${censorArgs})` : "censor"}
-          ${circularDetection}
+          current += char;
         }
       }
-    `;
-      }).join("\n");
-    }
-    function dynamicRedactTmpl(hasWildcards, isCensorFct, censorFctTakesPath) {
-      return hasWildcards === true ? `
-    {
-      const { wildcards, wcLen, groupRedact, nestedRedact } = this
-      for (var i = 0; i < wcLen; i++) {
-        const { before, beforeStr, after, nested } = wildcards[i]
-        if (nested === true) {
-          secret[beforeStr] = secret[beforeStr] || []
-          nestedRedact(secret[beforeStr], o, before, after, censor, ${isCensorFct}, ${censorFctTakesPath})
-        } else secret[beforeStr] = groupRedact(o, before, censor, ${isCensorFct}, ${censorFctTakesPath})
+      if (current) {
+        parts.push(current);
       }
+      return parts;
     }
-  ` : "";
-    }
-    function resultTmpl(serialize) {
-      return serialize === false ? `return o` : `
-    var s = this.serialize(o)
-    this.restore(o)
-    return s
-  `;
-    }
-    function strictImpl(strict, serialize) {
-      return strict === true ? `throw Error('fast-redact: primitives cannot be redacted')` : serialize === false ? `return o` : `return this.serialize(o)`;
-    }
-  }
-});
-
-// ../../node_modules/fast-redact/lib/modifiers.js
-var require_modifiers = __commonJS({
-  "../../node_modules/fast-redact/lib/modifiers.js"(exports2, module2) {
-    "use strict";
-    module2.exports = {
-      groupRedact,
-      groupRestore,
-      nestedRedact,
-      nestedRestore
-    };
-    function groupRestore({ keys, values, target }) {
-      if (target == null || typeof target === "string") return;
-      const length = keys.length;
-      for (var i = 0; i < length; i++) {
-        const k = keys[i];
-        target[k] = values[i];
-      }
-    }
-    function groupRedact(o, path, censor, isCensorFct, censorFctTakesPath) {
-      const target = get(o, path);
-      if (target == null || typeof target === "string") return { keys: null, values: null, target, flat: true };
-      const keys = Object.keys(target);
-      const keysLength = keys.length;
-      const pathLength = path.length;
-      const pathWithKey = censorFctTakesPath ? [...path] : void 0;
-      const values = new Array(keysLength);
-      for (var i = 0; i < keysLength; i++) {
-        const key2 = keys[i];
-        values[i] = target[key2];
-        if (censorFctTakesPath) {
-          pathWithKey[pathLength] = key2;
-          target[key2] = censor(target[key2], pathWithKey);
-        } else if (isCensorFct) {
-          target[key2] = censor(target[key2]);
-        } else {
-          target[key2] = censor;
+    function setValue(obj, parts, value) {
+      let current = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const key2 = parts[i];
+        if (typeof current !== "object" || current === null || !(key2 in current)) {
+          return false;
         }
-      }
-      return { keys, values, target, flat: true };
-    }
-    function nestedRestore(instructions) {
-      for (let i = 0; i < instructions.length; i++) {
-        const { target, path, value } = instructions[i];
-        let current = target;
-        for (let i2 = path.length - 1; i2 > 0; i2--) {
-          current = current[path[i2]];
+        if (typeof current[key2] !== "object" || current[key2] === null) {
+          return false;
         }
-        current[path[0]] = value;
+        current = current[key2];
       }
-    }
-    function nestedRedact(store, o, path, ns, censor, isCensorFct, censorFctTakesPath) {
-      const target = get(o, path);
-      if (target == null) return;
-      const keys = Object.keys(target);
-      const keysLength = keys.length;
-      for (var i = 0; i < keysLength; i++) {
-        const key2 = keys[i];
-        specialSet(store, target, key2, path, ns, censor, isCensorFct, censorFctTakesPath);
-      }
-      return store;
-    }
-    function has(obj, prop) {
-      return obj !== void 0 && obj !== null ? "hasOwn" in Object ? Object.hasOwn(obj, prop) : Object.prototype.hasOwnProperty.call(obj, prop) : false;
-    }
-    function specialSet(store, o, k, path, afterPath, censor, isCensorFct, censorFctTakesPath) {
-      const afterPathLen = afterPath.length;
-      const lastPathIndex = afterPathLen - 1;
-      const originalKey = k;
-      var i = -1;
-      var n;
-      var nv;
-      var ov;
-      var oov = null;
-      var wc = null;
-      var kIsWc;
-      var wcov;
-      var consecutive = false;
-      var level = 0;
-      var depth = 0;
-      var redactPathCurrent = tree();
-      ov = n = o[k];
-      if (typeof n !== "object") return;
-      while (n != null && ++i < afterPathLen) {
-        depth += 1;
-        k = afterPath[i];
-        oov = ov;
-        if (k !== "*" && !wc && !(typeof n === "object" && k in n)) {
-          break;
-        }
-        if (k === "*") {
-          if (wc === "*") {
-            consecutive = true;
+      const lastKey = parts[parts.length - 1];
+      if (lastKey === "*") {
+        if (Array.isArray(current)) {
+          for (let i = 0; i < current.length; i++) {
+            current[i] = value;
           }
-          wc = k;
-          if (i !== lastPathIndex) {
-            continue;
+        } else if (typeof current === "object" && current !== null) {
+          for (const key2 in current) {
+            if (Object.prototype.hasOwnProperty.call(current, key2)) {
+              current[key2] = value;
+            }
           }
         }
-        if (wc) {
-          const wcKeys = Object.keys(n);
-          for (var j = 0; j < wcKeys.length; j++) {
-            const wck = wcKeys[j];
-            wcov = n[wck];
-            kIsWc = k === "*";
-            if (consecutive) {
-              redactPathCurrent = node(redactPathCurrent, wck, depth);
-              level = i;
-              ov = iterateNthLevel(wcov, level - 1, k, path, afterPath, censor, isCensorFct, censorFctTakesPath, originalKey, n, nv, ov, kIsWc, wck, i, lastPathIndex, redactPathCurrent, store, o[originalKey], depth + 1);
-            } else {
-              if (kIsWc || typeof wcov === "object" && wcov !== null && k in wcov) {
-                if (kIsWc) {
-                  ov = wcov;
-                } else {
-                  ov = wcov[k];
-                }
-                nv = i !== lastPathIndex ? ov : isCensorFct ? censorFctTakesPath ? censor(ov, [...path, originalKey, ...afterPath]) : censor(ov) : censor;
-                if (kIsWc) {
-                  const rv = restoreInstr(node(redactPathCurrent, wck, depth), ov, o[originalKey]);
-                  store.push(rv);
-                  n[wck] = nv;
-                } else {
-                  if (wcov[k] === nv) {
-                  } else if (nv === void 0 && censor !== void 0 || has(wcov, k) && nv === ov) {
-                    redactPathCurrent = node(redactPathCurrent, wck, depth);
-                  } else {
-                    redactPathCurrent = node(redactPathCurrent, wck, depth);
-                    const rv = restoreInstr(node(redactPathCurrent, k, depth + 1), ov, o[originalKey]);
-                    store.push(rv);
-                    wcov[k] = nv;
-                  }
-                }
+      } else {
+        if (typeof current === "object" && current !== null && lastKey in current && Object.prototype.hasOwnProperty.call(current, lastKey)) {
+          current[lastKey] = value;
+        }
+      }
+      return true;
+    }
+    function removeKey(obj, parts) {
+      let current = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const key2 = parts[i];
+        if (typeof current !== "object" || current === null || !(key2 in current)) {
+          return false;
+        }
+        if (typeof current[key2] !== "object" || current[key2] === null) {
+          return false;
+        }
+        current = current[key2];
+      }
+      const lastKey = parts[parts.length - 1];
+      if (lastKey === "*") {
+        if (Array.isArray(current)) {
+          for (let i = 0; i < current.length; i++) {
+            current[i] = void 0;
+          }
+        } else if (typeof current === "object" && current !== null) {
+          for (const key2 in current) {
+            if (Object.prototype.hasOwnProperty.call(current, key2)) {
+              delete current[key2];
+            }
+          }
+        }
+      } else {
+        if (typeof current === "object" && current !== null && lastKey in current && Object.prototype.hasOwnProperty.call(current, lastKey)) {
+          delete current[lastKey];
+        }
+      }
+      return true;
+    }
+    var PATH_NOT_FOUND = Symbol("PATH_NOT_FOUND");
+    function getValueIfExists(obj, parts) {
+      let current = obj;
+      for (const part of parts) {
+        if (current === null || current === void 0) {
+          return PATH_NOT_FOUND;
+        }
+        if (typeof current !== "object" || current === null) {
+          return PATH_NOT_FOUND;
+        }
+        if (!(part in current)) {
+          return PATH_NOT_FOUND;
+        }
+        current = current[part];
+      }
+      return current;
+    }
+    function getValue(obj, parts) {
+      let current = obj;
+      for (const part of parts) {
+        if (current === null || current === void 0) {
+          return void 0;
+        }
+        if (typeof current !== "object" || current === null) {
+          return void 0;
+        }
+        current = current[part];
+      }
+      return current;
+    }
+    function redactPaths(obj, paths, censor, remove = false) {
+      for (const path of paths) {
+        const parts = parsePath(path);
+        if (parts.includes("*")) {
+          redactWildcardPath(obj, parts, censor, path, remove);
+        } else {
+          if (remove) {
+            removeKey(obj, parts);
+          } else {
+            const value = getValueIfExists(obj, parts);
+            if (value === PATH_NOT_FOUND) {
+              continue;
+            }
+            const actualCensor = typeof censor === "function" ? censor(value, parts) : censor;
+            setValue(obj, parts, actualCensor);
+          }
+        }
+      }
+    }
+    function redactWildcardPath(obj, parts, censor, originalPath, remove = false) {
+      const wildcardIndex = parts.indexOf("*");
+      if (wildcardIndex === parts.length - 1) {
+        const parentParts = parts.slice(0, -1);
+        let current = obj;
+        for (const part of parentParts) {
+          if (current === null || current === void 0) return;
+          if (typeof current !== "object" || current === null) return;
+          current = current[part];
+        }
+        if (Array.isArray(current)) {
+          if (remove) {
+            for (let i = 0; i < current.length; i++) {
+              current[i] = void 0;
+            }
+          } else {
+            for (let i = 0; i < current.length; i++) {
+              const indexPath = [...parentParts, i.toString()];
+              const actualCensor = typeof censor === "function" ? censor(current[i], indexPath) : censor;
+              current[i] = actualCensor;
+            }
+          }
+        } else if (typeof current === "object" && current !== null) {
+          if (remove) {
+            const keysToDelete = [];
+            for (const key2 in current) {
+              if (Object.prototype.hasOwnProperty.call(current, key2)) {
+                keysToDelete.push(key2);
               }
             }
+            for (const key2 of keysToDelete) {
+              delete current[key2];
+            }
+          } else {
+            for (const key2 in current) {
+              const keyPath = [...parentParts, key2];
+              const actualCensor = typeof censor === "function" ? censor(current[key2], keyPath) : censor;
+              current[key2] = actualCensor;
+            }
           }
-          wc = null;
+        }
+      } else {
+        redactIntermediateWildcard(obj, parts, censor, wildcardIndex, originalPath, remove);
+      }
+    }
+    function redactIntermediateWildcard(obj, parts, censor, wildcardIndex, originalPath, remove = false) {
+      const beforeWildcard = parts.slice(0, wildcardIndex);
+      const afterWildcard = parts.slice(wildcardIndex + 1);
+      const pathArray = [];
+      function traverse(current, pathLength) {
+        if (pathLength === beforeWildcard.length) {
+          if (Array.isArray(current)) {
+            for (let i = 0; i < current.length; i++) {
+              pathArray[pathLength] = i.toString();
+              traverse(current[i], pathLength + 1);
+            }
+          } else if (typeof current === "object" && current !== null) {
+            for (const key2 in current) {
+              pathArray[pathLength] = key2;
+              traverse(current[key2], pathLength + 1);
+            }
+          }
+        } else if (pathLength < beforeWildcard.length) {
+          const nextKey = beforeWildcard[pathLength];
+          if (current && typeof current === "object" && current !== null && nextKey in current) {
+            pathArray[pathLength] = nextKey;
+            traverse(current[nextKey], pathLength + 1);
+          }
         } else {
-          ov = n[k];
-          redactPathCurrent = node(redactPathCurrent, k, depth);
-          nv = i !== lastPathIndex ? ov : isCensorFct ? censorFctTakesPath ? censor(ov, [...path, originalKey, ...afterPath]) : censor(ov) : censor;
-          if (has(n, k) && nv === ov || nv === void 0 && censor !== void 0) {
+          if (afterWildcard.includes("*")) {
+            const wrappedCensor = typeof censor === "function" ? (value, path) => {
+              const fullPath = [...pathArray.slice(0, pathLength), ...path];
+              return censor(value, fullPath);
+            } : censor;
+            redactWildcardPath(current, afterWildcard, wrappedCensor, originalPath, remove);
           } else {
-            const rv = restoreInstr(redactPathCurrent, ov, o[originalKey]);
-            store.push(rv);
-            n[k] = nv;
-          }
-          n = n[k];
-        }
-        if (typeof n !== "object") break;
-        if (ov === oov || typeof ov === "undefined") {
-        }
-      }
-    }
-    function get(o, p) {
-      var i = -1;
-      var l = p.length;
-      var n = o;
-      while (n != null && ++i < l) {
-        n = n[p[i]];
-      }
-      return n;
-    }
-    function iterateNthLevel(wcov, level, k, path, afterPath, censor, isCensorFct, censorFctTakesPath, originalKey, n, nv, ov, kIsWc, wck, i, lastPathIndex, redactPathCurrent, store, parent, depth) {
-      if (level === 0) {
-        if (kIsWc || typeof wcov === "object" && wcov !== null && k in wcov) {
-          if (kIsWc) {
-            ov = wcov;
-          } else {
-            ov = wcov[k];
-          }
-          nv = i !== lastPathIndex ? ov : isCensorFct ? censorFctTakesPath ? censor(ov, [...path, originalKey, ...afterPath]) : censor(ov) : censor;
-          if (kIsWc) {
-            const rv = restoreInstr(redactPathCurrent, ov, parent);
-            store.push(rv);
-            n[wck] = nv;
-          } else {
-            if (wcov[k] === nv) {
-            } else if (nv === void 0 && censor !== void 0 || has(wcov, k) && nv === ov) {
+            if (remove) {
+              removeKey(current, afterWildcard);
             } else {
-              const rv = restoreInstr(node(redactPathCurrent, k, depth + 1), ov, parent);
-              store.push(rv);
-              wcov[k] = nv;
+              const actualCensor = typeof censor === "function" ? censor(getValue(current, afterWildcard), [...pathArray.slice(0, pathLength), ...afterWildcard]) : censor;
+              setValue(current, afterWildcard, actualCensor);
             }
           }
         }
       }
-      for (const key2 in wcov) {
-        if (typeof wcov[key2] === "object") {
-          redactPathCurrent = node(redactPathCurrent, key2, depth);
-          iterateNthLevel(wcov[key2], level - 1, k, path, afterPath, censor, isCensorFct, censorFctTakesPath, originalKey, n, nv, ov, kIsWc, wck, i, lastPathIndex, redactPathCurrent, store, parent, depth + 1);
+      if (beforeWildcard.length === 0) {
+        traverse(obj, 0);
+      } else {
+        let current = obj;
+        for (let i = 0; i < beforeWildcard.length; i++) {
+          const part = beforeWildcard[i];
+          if (current === null || current === void 0) return;
+          if (typeof current !== "object" || current === null) return;
+          current = current[part];
+          pathArray[i] = part;
+        }
+        if (current !== null && current !== void 0) {
+          traverse(current, beforeWildcard.length);
         }
       }
     }
-    function tree() {
-      return { parent: null, key: null, children: [], depth: 0 };
-    }
-    function node(parent, key2, depth) {
-      if (parent.depth === depth) {
-        return node(parent.parent, key2, depth);
+    function buildPathStructure(pathsToClone) {
+      if (pathsToClone.length === 0) {
+        return null;
       }
-      var child = {
-        parent,
-        key: key2,
-        depth,
-        children: []
-      };
-      parent.children.push(child);
-      return child;
-    }
-    function restoreInstr(node2, value, target) {
-      let current = node2;
-      const path = [];
-      do {
-        path.push(current.key);
-        current = current.parent;
-      } while (current.parent != null);
-      return { path, value, target };
-    }
-  }
-});
-
-// ../../node_modules/fast-redact/lib/restorer.js
-var require_restorer = __commonJS({
-  "../../node_modules/fast-redact/lib/restorer.js"(exports2, module2) {
-    "use strict";
-    var { groupRestore, nestedRestore } = require_modifiers();
-    module2.exports = restorer;
-    function restorer() {
-      return function compileRestore() {
-        if (this.restore) {
-          this.restore.state.secret = this.secret;
-          return;
+      const pathStructure = /* @__PURE__ */ new Map();
+      for (const path of pathsToClone) {
+        const parts = parsePath(path);
+        let current = pathStructure;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          if (!current.has(part)) {
+            current.set(part, /* @__PURE__ */ new Map());
+          }
+          current = current.get(part);
         }
-        const { secret, wcLen } = this;
-        const paths = Object.keys(secret);
-        const resetters = resetTmpl(secret, paths);
-        const hasWildcards = wcLen > 0;
-        const state = hasWildcards ? { secret, groupRestore, nestedRestore } : { secret };
-        this.restore = Function(
-          "o",
-          restoreTmpl(resetters, paths, hasWildcards)
-        ).bind(state);
-        this.restore.state = state;
-      };
-    }
-    function resetTmpl(secret, paths) {
-      return paths.map((path) => {
-        const { circle, escPath, leadingBracket } = secret[path];
-        const delim = leadingBracket ? "" : ".";
-        const reset = circle ? `o.${circle} = secret[${escPath}].val` : `o${delim}${path} = secret[${escPath}].val`;
-        const clear = `secret[${escPath}].val = undefined`;
-        return `
-      if (secret[${escPath}].val !== undefined) {
-        try { ${reset} } catch (e) {}
-        ${clear}
       }
-    `;
-      }).join("");
+      return pathStructure;
     }
-    function restoreTmpl(resetters, paths, hasWildcards) {
-      const dynamicReset = hasWildcards === true ? `
-    const keys = Object.keys(secret)
-    const len = keys.length
-    for (var i = len - 1; i >= ${paths.length}; i--) {
-      const k = keys[i]
-      const o = secret[k]
-      if (o) {
-        if (o.flat === true) this.groupRestore(o)
-        else this.nestedRestore(o)
-        secret[k] = null
+    function selectiveClone(obj, pathStructure) {
+      if (!pathStructure) {
+        return obj;
+      }
+      function cloneSelectively(source, pathMap, depth = 0) {
+        if (!pathMap || pathMap.size === 0) {
+          return source;
+        }
+        if (source === null || typeof source !== "object") {
+          return source;
+        }
+        if (source instanceof Date) {
+          return new Date(source.getTime());
+        }
+        if (Array.isArray(source)) {
+          const cloned2 = [];
+          for (let i = 0; i < source.length; i++) {
+            const indexStr = i.toString();
+            if (pathMap.has(indexStr) || pathMap.has("*")) {
+              cloned2[i] = cloneSelectively(source[i], pathMap.get(indexStr) || pathMap.get("*"));
+            } else {
+              cloned2[i] = source[i];
+            }
+          }
+          return cloned2;
+        }
+        const cloned = Object.create(Object.getPrototypeOf(source));
+        for (const key2 in source) {
+          if (Object.prototype.hasOwnProperty.call(source, key2)) {
+            if (pathMap.has(key2) || pathMap.has("*")) {
+              cloned[key2] = cloneSelectively(source[key2], pathMap.get(key2) || pathMap.get("*"));
+            } else {
+              cloned[key2] = source[key2];
+            }
+          }
+        }
+        return cloned;
+      }
+      return cloneSelectively(obj, pathStructure);
+    }
+    function validatePath(path) {
+      if (typeof path !== "string") {
+        throw new Error("Paths must be (non-empty) strings");
+      }
+      if (path === "") {
+        throw new Error("Invalid redaction path ()");
+      }
+      if (path.includes("..")) {
+        throw new Error(`Invalid redaction path (${path})`);
+      }
+      if (path.includes(",")) {
+        throw new Error(`Invalid redaction path (${path})`);
+      }
+      let bracketCount = 0;
+      let inQuotes = false;
+      let quoteChar = "";
+      for (let i = 0; i < path.length; i++) {
+        const char = path[i];
+        if ((char === '"' || char === "'") && bracketCount > 0) {
+          if (!inQuotes) {
+            inQuotes = true;
+            quoteChar = char;
+          } else if (char === quoteChar) {
+            inQuotes = false;
+            quoteChar = "";
+          }
+        } else if (char === "[" && !inQuotes) {
+          bracketCount++;
+        } else if (char === "]" && !inQuotes) {
+          bracketCount--;
+          if (bracketCount < 0) {
+            throw new Error(`Invalid redaction path (${path})`);
+          }
+        }
+      }
+      if (bracketCount !== 0) {
+        throw new Error(`Invalid redaction path (${path})`);
       }
     }
-  ` : "";
-      return `
-    const secret = this.secret
-    ${dynamicReset}
-    ${resetters}
-    return o
-  `;
+    function validatePaths(paths) {
+      if (!Array.isArray(paths)) {
+        throw new TypeError("paths must be an array");
+      }
+      for (const path of paths) {
+        validatePath(path);
+      }
     }
-  }
-});
-
-// ../../node_modules/fast-redact/lib/state.js
-var require_state = __commonJS({
-  "../../node_modules/fast-redact/lib/state.js"(exports2, module2) {
-    "use strict";
-    module2.exports = state;
-    function state(o) {
+    function slowRedact(options = {}) {
       const {
-        secret,
-        censor,
-        compileRestore,
-        serialize,
-        groupRedact,
-        nestedRedact,
-        wildcards,
-        wcLen
-      } = o;
-      const builder = [{ secret, censor, compileRestore }];
-      if (serialize !== false) builder.push({ serialize });
-      if (wcLen > 0) builder.push({ groupRedact, nestedRedact, wildcards, wcLen });
-      return Object.assign(...builder);
+        paths = [],
+        censor = "[REDACTED]",
+        serialize = JSON.stringify,
+        strict = true,
+        remove = false
+      } = options;
+      validatePaths(paths);
+      const pathStructure = buildPathStructure(paths);
+      return function redact(obj) {
+        if (strict && (obj === null || typeof obj !== "object")) {
+          if (obj === null || obj === void 0) {
+            return serialize ? serialize(obj) : obj;
+          }
+          if (typeof obj !== "object") {
+            return serialize ? serialize(obj) : obj;
+          }
+        }
+        const cloned = selectiveClone(obj, pathStructure);
+        const original = obj;
+        let actualCensor = censor;
+        if (typeof censor === "function") {
+          actualCensor = censor;
+        }
+        redactPaths(cloned, paths, actualCensor, remove);
+        if (serialize === false) {
+          cloned.restore = function() {
+            return deepClone(original);
+          };
+          return cloned;
+        }
+        if (typeof serialize === "function") {
+          return serialize(cloned);
+        }
+        return JSON.stringify(cloned);
+      };
     }
-  }
-});
-
-// ../../node_modules/fast-redact/index.js
-var require_fast_redact = __commonJS({
-  "../../node_modules/fast-redact/index.js"(exports2, module2) {
-    "use strict";
-    var validator = require_validator();
-    var parse = require_parse();
-    var redactor = require_redactor();
-    var restorer = require_restorer();
-    var { groupRedact, nestedRedact } = require_modifiers();
-    var state = require_state();
-    var rx = require_rx();
-    var validate = validator();
-    var noop = (o) => o;
-    noop.restore = noop;
-    var DEFAULT_CENSOR = "[REDACTED]";
-    fastRedact.rx = rx;
-    fastRedact.validator = validator;
-    module2.exports = fastRedact;
-    function fastRedact(opts = {}) {
-      const paths = Array.from(new Set(opts.paths || []));
-      const serialize = "serialize" in opts ? opts.serialize === false ? opts.serialize : typeof opts.serialize === "function" ? opts.serialize : JSON.stringify : JSON.stringify;
-      const remove = opts.remove;
-      if (remove === true && serialize !== JSON.stringify) {
-        throw Error("fast-redact \u2013 remove option may only be set when serializer is JSON.stringify");
-      }
-      const censor = remove === true ? void 0 : "censor" in opts ? opts.censor : DEFAULT_CENSOR;
-      const isCensorFct = typeof censor === "function";
-      const censorFctTakesPath = isCensorFct && censor.length > 1;
-      if (paths.length === 0) return serialize || noop;
-      validate({ paths, serialize, censor });
-      const { wildcards, wcLen, secret } = parse({ paths, censor });
-      const compileRestore = restorer();
-      const strict = "strict" in opts ? opts.strict : true;
-      return redactor({ secret, wcLen, serialize, strict, isCensorFct, censorFctTakesPath }, state({
-        secret,
-        censor,
-        compileRestore,
-        serialize,
-        groupRedact,
-        nestedRedact,
-        wildcards,
-        wcLen
-      }));
-    }
+    module2.exports = slowRedact;
   }
 });
 
@@ -4156,17 +4159,13 @@ var require_symbols3 = __commonJS({
 var require_redaction = __commonJS({
   "../../node_modules/pino/lib/redaction.js"(exports2, module2) {
     "use strict";
-    var fastRedact = require_fast_redact();
+    var Redact = require_redact();
     var { redactFmtSym, wildcardFirstSym } = require_symbols3();
-    var { rx, validator } = fastRedact;
-    var validate = validator({
-      ERR_PATHS_MUST_BE_STRINGS: () => "pino \u2013 redacted paths must be strings",
-      ERR_INVALID_PATH: (s) => `pino \u2013 redact paths array contains an invalid path (${s})`
-    });
+    var rx = /[^.[\]]+|\[([^[\]]*?)\]/g;
     var CENSOR = "[Redacted]";
     var strict = false;
     function redaction(opts, serialize) {
-      const { paths, censor } = handle(opts);
+      const { paths, censor, remove } = handle(opts);
       const shape = paths.reduce((o, str) => {
         rx.lastIndex = 0;
         const first = rx.exec(str);
@@ -4199,7 +4198,7 @@ var require_redaction = __commonJS({
         return o;
       }, {});
       const result = {
-        [redactFmtSym]: fastRedact({ paths, censor, serialize, strict })
+        [redactFmtSym]: Redact({ paths, censor, serialize, strict, remove })
       };
       const topCensor = (...args) => {
         return typeof censor === "function" ? serialize(censor(...args)) : serialize(censor);
@@ -4211,11 +4210,12 @@ var require_redaction = __commonJS({
           const wrappedCensor = typeof censor === "function" ? (value, path) => {
             return censor(value, [k, ...path]);
           } : censor;
-          o[k] = fastRedact({
+          o[k] = Redact({
             paths: shape[k],
             censor: wrappedCensor,
             serialize,
-            strict
+            strict,
+            remove
           });
         }
         return o;
@@ -4224,7 +4224,6 @@ var require_redaction = __commonJS({
     function handle(opts) {
       if (Array.isArray(opts)) {
         opts = { paths: opts, censor: CENSOR };
-        validate(opts);
         return opts;
       }
       let { paths, censor = CENSOR, remove } = opts;
@@ -4232,8 +4231,7 @@ var require_redaction = __commonJS({
         throw Error("pino \u2013 redact must contain an array of strings");
       }
       if (remove === true) censor = void 0;
-      validate({ paths, censor });
-      return { paths, censor };
+      return { paths, censor, remove };
     }
     module2.exports = redaction;
   }
@@ -4247,7 +4245,26 @@ var require_time = __commonJS({
     var epochTime = () => `,"time":${Date.now()}`;
     var unixTime = () => `,"time":${Math.round(Date.now() / 1e3)}`;
     var isoTime = () => `,"time":"${new Date(Date.now()).toISOString()}"`;
-    module2.exports = { nullTime, epochTime, unixTime, isoTime };
+    var NS_PER_MS = 1000000n;
+    var NS_PER_SEC = 1000000000n;
+    var startWallTimeNs = BigInt(Date.now()) * NS_PER_MS;
+    var startHrTime = process.hrtime.bigint();
+    var isoTimeNano = () => {
+      const elapsedNs = process.hrtime.bigint() - startHrTime;
+      const currentTimeNs = startWallTimeNs + elapsedNs;
+      const secondsSinceEpoch = currentTimeNs / NS_PER_SEC;
+      const nanosWithinSecond = currentTimeNs % NS_PER_SEC;
+      const msSinceEpoch = Number(secondsSinceEpoch * 1000n + nanosWithinSecond / 1000000n);
+      const date = new Date(msSinceEpoch);
+      const year = date.getUTCFullYear();
+      const month = (date.getUTCMonth() + 1).toString().padStart(2, "0");
+      const day = date.getUTCDate().toString().padStart(2, "0");
+      const hours = date.getUTCHours().toString().padStart(2, "0");
+      const minutes = date.getUTCMinutes().toString().padStart(2, "0");
+      const seconds = date.getUTCSeconds().toString().padStart(2, "0");
+      return `,"time":"${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${nanosWithinSecond.toString().padStart(9, "0")}Z"`;
+    };
+    module2.exports = { nullTime, epochTime, unixTime, isoTime, isoTimeNano };
   }
 });
 
@@ -5763,6 +5780,7 @@ var require_transport = __commonJS({
 var require_tools = __commonJS({
   "../../node_modules/pino/lib/tools.js"(exports2, module2) {
     "use strict";
+    var diagChan = require("node:diagnostics_channel");
     var format = require_quick_format_unescaped();
     var { mapHttpRequest, mapHttpResponse } = require_pino_std_serializers();
     var SonicBoom = require_sonic_boom();
@@ -5787,6 +5805,17 @@ var require_tools = __commonJS({
     } = require_symbols3();
     var { isMainThread } = require("worker_threads");
     var transport = require_transport();
+    var asJsonChan;
+    if (typeof diagChan.tracingChannel === "function") {
+      asJsonChan = diagChan.tracingChannel("pino_asJson");
+    } else {
+      asJsonChan = {
+        hasSubscribers: false,
+        traceSync(fn, store, thisArg, ...args) {
+          return fn.call(thisArg, ...args);
+        }
+      };
+    }
     function noop() {
     }
     function genLog(level, hook) {
@@ -5849,6 +5878,13 @@ var require_tools = __commonJS({
       return point < 32 ? JSON.stringify(str) : '"' + result + '"';
     }
     function asJson(obj, msg, num, time) {
+      if (asJsonChan.hasSubscribers === false) {
+        return _asJson.call(this, obj, msg, num, time);
+      }
+      const store = { instance: this, arguments };
+      return asJsonChan.traceSync(_asJson, store, this, obj, msg, num, time);
+    }
+    function _asJson(obj, msg, num, time) {
       const stringify2 = this[stringifySym];
       const stringifySafe = this[stringifySafeSym];
       const stringifiers = this[stringifiersSym];
@@ -5939,7 +5975,7 @@ var require_tools = __commonJS({
       bindings = formatter(bindings);
       for (const key2 in bindings) {
         value = bindings[key2];
-        const valid = key2 !== "level" && key2 !== "serializers" && key2 !== "formatters" && key2 !== "customLevels" && bindings.hasOwnProperty(key2) && value !== void 0;
+        const valid = (key2.length < 5 || key2 !== "level" && key2 !== "serializers" && key2 !== "formatters" && key2 !== "customLevels") && bindings.hasOwnProperty(key2) && value !== void 0;
         if (valid === true) {
           value = serializers[key2] ? serializers[key2](value) : value;
           value = (stringifiers[key2] || wildcardStringifier || stringify2)(value, stringifySafe);
@@ -5952,11 +5988,10 @@ var require_tools = __commonJS({
     function hasBeenTampered(stream) {
       return stream.write !== stream.constructor.prototype.write;
     }
-    var hasNodeCodeCoverage = process.env.NODE_V8_COVERAGE || process.env.V8_COVERAGE;
     function buildSafeSonicBoom(opts) {
       const stream = new SonicBoom(opts);
       stream.on("error", filterBrokenPipe);
-      if (!hasNodeCodeCoverage && !opts.sync && isMainThread) {
+      if (!opts.sync && isMainThread) {
         onExit.register(stream, autoEnd);
         stream.on("close", function() {
           onExit.unregister(stream);
@@ -6295,7 +6330,7 @@ var require_levels = __commonJS({
 var require_meta = __commonJS({
   "../../node_modules/pino/lib/meta.js"(exports2, module2) {
     "use strict";
-    module2.exports = { version: "9.6.0" };
+    module2.exports = { version: "9.14.0" };
   }
 });
 
@@ -6344,7 +6379,8 @@ var require_proto = __commonJS({
       asChindings,
       asJson,
       buildFormatters,
-      stringify
+      stringify,
+      noop
     } = require_tools();
     var {
       version
@@ -6372,6 +6408,12 @@ var require_proto = __commonJS({
       set levelVal(n) {
         throw Error("levelVal is read-only");
       },
+      get msgPrefix() {
+        return this[msgPrefixSym];
+      },
+      get [Symbol.toStringTag]() {
+        return "Pino";
+      },
       [lsCacheSym]: initialLsCache,
       [writeSym]: write,
       [asJsonSym]: asJson,
@@ -6387,10 +6429,24 @@ var require_proto = __commonJS({
       if (!bindings2) {
         throw Error("missing bindings for child Pino");
       }
-      options = options || {};
       const serializers = this[serializersSym];
       const formatters = this[formattersSym];
       const instance = Object.create(this);
+      if (options == null) {
+        if (instance[formattersSym].bindings !== resetChildingsFormatter) {
+          instance[formattersSym] = buildFormatters(
+            formatters.level,
+            resetChildingsFormatter,
+            formatters.log
+          );
+        }
+        instance[chindingsSym] = asChindings(instance, bindings2);
+        instance[setLevelSym](this.level);
+        if (this.onChild !== noop) {
+          this.onChild(instance);
+        }
+        return instance;
+      }
       if (options.hasOwnProperty("serializers") === true) {
         instance[serializersSym] = /* @__PURE__ */ Object.create(null);
         for (const k in serializers) {
@@ -6496,8 +6552,6 @@ var require_proto = __commonJS({
         stream.lastLogger = this;
       }
       stream.write(streamWriteHook ? streamWriteHook(s) : s);
-    }
-    function noop() {
     }
     function flush(cb) {
       if (cb != null && typeof cb !== "function") {
@@ -7111,7 +7165,6 @@ var require_multistream = __commonJS({
     var { DEFAULT_LEVELS } = require_constants();
     var DEFAULT_INFO_LEVEL = DEFAULT_LEVELS.info;
     function multistream(streamsArray, opts) {
-      let counter = 0;
       streamsArray = streamsArray || [];
       opts = opts || { dedupe: false };
       const streamLevels = Object.create(DEFAULT_LEVELS);
@@ -7124,10 +7177,12 @@ var require_multistream = __commonJS({
       const res = {
         write,
         add,
+        remove,
         emit,
         flushSync,
         end,
         minLevel: 0,
+        lastId: 0,
         streams: [],
         clone,
         [metadata]: true,
@@ -7208,11 +7263,21 @@ var require_multistream = __commonJS({
           stream: stream_,
           level,
           levelVal: void 0,
-          id: counter++
+          id: ++res.lastId
         };
         streams.unshift(dest_);
         streams.sort(compareByLevel);
         this.minLevel = streams[0].level;
+        return res;
+      }
+      function remove(id) {
+        const { streams } = this;
+        const index = streams.findIndex((s) => s.id === id);
+        if (index >= 0) {
+          streams.splice(index, 1);
+          streams.sort(compareByLevel);
+          this.minLevel = streams.length > 0 ? streams[0].level : -1;
+        }
         return res;
       }
       function end() {
@@ -7234,6 +7299,7 @@ var require_multistream = __commonJS({
         return {
           write,
           add,
+          remove,
           minLevel: level,
           streams,
           clone,
@@ -8046,7 +8112,9 @@ var require_serializer = __commonJS({
       }
       asString(str) {
         const len = str.length;
-        if (len < 42) {
+        if (len === 0) {
+          return '""';
+        } else if (len < 42) {
           let result = "";
           let last = -1;
           let point = 255;
@@ -8212,7 +8280,7 @@ var require_error_handler = __commonJS({
             if (!reply2.log[kDisableRequestLogging]) {
               reply2.log.warn(
                 { req: reply2.request, res: reply2, err: error2 },
-                error2 && error2.message
+                error2?.message
               );
             }
             reply2.raw.writeHead(reply2.raw.statusCode);
@@ -8254,14 +8322,14 @@ var require_error_handler = __commonJS({
         if (!reply.log[kDisableRequestLogging]) {
           reply.log.info(
             { res: reply, err: error },
-            error && error.message
+            error?.message
           );
         }
       } else {
         if (!reply.log[kDisableRequestLogging]) {
           reply.log.error(
             { req: request, res: reply, err: error },
-            error && error.message
+            error?.message
           );
         }
       }
@@ -8274,16 +8342,20 @@ var require_error_handler = __commonJS({
       let payload;
       try {
         const serializerFn = getSchemaSerializer(reply[kRouteContext], statusCode, reply[kReplyHeaders]["content-type"]);
-        payload = serializerFn === false ? serializeError({
-          error: statusCodes[statusCode + ""],
-          code: error.code,
-          message: error.message,
-          statusCode
-        }) : serializerFn(Object.create(error, {
-          error: { value: statusCodes[statusCode + ""] },
-          message: { value: error.message },
-          statusCode: { value: statusCode }
-        }));
+        if (serializerFn === false) {
+          payload = serializeError({
+            error: statusCodes[statusCode + ""],
+            code: error.code,
+            message: error.message,
+            statusCode
+          });
+        } else {
+          payload = serializerFn(Object.create(error, {
+            error: { value: statusCodes[statusCode + ""] },
+            message: { value: error.message },
+            statusCode: { value: statusCode }
+          }));
+        }
       } catch (err) {
         if (!reply.log[kDisableRequestLogging]) {
           reply.log.error({ err, statusCode: res.statusCode }, "The serializer for the given status code failed");
@@ -8324,6 +8396,139 @@ var require_error_handler = __commonJS({
     module2.exports = {
       buildErrorHandler,
       handleError
+    };
+  }
+});
+
+// ../../node_modules/fastify/lib/decorate.js
+var require_decorate = __commonJS({
+  "../../node_modules/fastify/lib/decorate.js"(exports2, module2) {
+    "use strict";
+    var {
+      kReply,
+      kRequest,
+      kState,
+      kHasBeenDecorated
+    } = require_symbols2();
+    var {
+      FST_ERR_DEC_ALREADY_PRESENT,
+      FST_ERR_DEC_MISSING_DEPENDENCY,
+      FST_ERR_DEC_AFTER_START,
+      FST_ERR_DEC_REFERENCE_TYPE,
+      FST_ERR_DEC_DEPENDENCY_INVALID_TYPE,
+      FST_ERR_DEC_UNDECLARED
+    } = require_errors2();
+    function decorate(instance, name, fn, dependencies) {
+      if (Object.hasOwn(instance, name)) {
+        throw new FST_ERR_DEC_ALREADY_PRESENT(name);
+      }
+      checkDependencies(instance, name, dependencies);
+      if (fn && (typeof fn.getter === "function" || typeof fn.setter === "function")) {
+        Object.defineProperty(instance, name, {
+          get: fn.getter,
+          set: fn.setter
+        });
+      } else {
+        instance[name] = fn;
+      }
+    }
+    function getInstanceDecorator(name) {
+      if (!checkExistence(this, name)) {
+        throw new FST_ERR_DEC_UNDECLARED(name, "instance");
+      }
+      if (typeof this[name] === "function") {
+        return this[name].bind(this);
+      }
+      return this[name];
+    }
+    function decorateConstructor(konstructor, name, fn, dependencies) {
+      const instance = konstructor.prototype;
+      if (Object.hasOwn(instance, name) || hasKey(konstructor, name)) {
+        throw new FST_ERR_DEC_ALREADY_PRESENT(name);
+      }
+      konstructor[kHasBeenDecorated] = true;
+      checkDependencies(konstructor, name, dependencies);
+      if (fn && (typeof fn.getter === "function" || typeof fn.setter === "function")) {
+        Object.defineProperty(instance, name, {
+          get: fn.getter,
+          set: fn.setter
+        });
+      } else if (typeof fn === "function") {
+        instance[name] = fn;
+      } else {
+        konstructor.props.push({ key: name, value: fn });
+      }
+    }
+    function checkReferenceType(name, fn) {
+      if (typeof fn === "object" && fn && !(typeof fn.getter === "function" || typeof fn.setter === "function")) {
+        throw new FST_ERR_DEC_REFERENCE_TYPE(name, typeof fn);
+      }
+    }
+    function decorateFastify(name, fn, dependencies) {
+      assertNotStarted(this, name);
+      decorate(this, name, fn, dependencies);
+      return this;
+    }
+    function checkExistence(instance, name) {
+      if (name) {
+        return name in instance || instance.prototype && name in instance.prototype || hasKey(instance, name);
+      }
+      return instance in this;
+    }
+    function hasKey(fn, name) {
+      if (fn.props) {
+        return fn.props.find(({ key: key2 }) => key2 === name);
+      }
+      return false;
+    }
+    function checkRequestExistence(name) {
+      if (name && hasKey(this[kRequest], name)) return true;
+      return checkExistence(this[kRequest].prototype, name);
+    }
+    function checkReplyExistence(name) {
+      if (name && hasKey(this[kReply], name)) return true;
+      return checkExistence(this[kReply].prototype, name);
+    }
+    function checkDependencies(instance, name, deps) {
+      if (deps === void 0 || deps === null) {
+        return;
+      }
+      if (!Array.isArray(deps)) {
+        throw new FST_ERR_DEC_DEPENDENCY_INVALID_TYPE(name);
+      }
+      for (let i = 0; i !== deps.length; ++i) {
+        if (!checkExistence(instance, deps[i])) {
+          throw new FST_ERR_DEC_MISSING_DEPENDENCY(deps[i]);
+        }
+      }
+    }
+    function decorateReply(name, fn, dependencies) {
+      assertNotStarted(this, name);
+      checkReferenceType(name, fn);
+      decorateConstructor(this[kReply], name, fn, dependencies);
+      return this;
+    }
+    function decorateRequest(name, fn, dependencies) {
+      assertNotStarted(this, name);
+      checkReferenceType(name, fn);
+      decorateConstructor(this[kRequest], name, fn, dependencies);
+      return this;
+    }
+    function assertNotStarted(instance, name) {
+      if (instance[kState].started) {
+        throw new FST_ERR_DEC_AFTER_START(name);
+      }
+    }
+    module2.exports = {
+      add: decorateFastify,
+      exist: checkExistence,
+      existRequest: checkRequestExistence,
+      existReply: checkReplyExistence,
+      dependencies: checkDependencies,
+      decorateReply,
+      decorateRequest,
+      getInstanceDecorator,
+      hasKey
     };
   }
 });
@@ -8381,8 +8586,10 @@ var require_reply = __commonJS({
       FST_ERR_BAD_TRAILER_NAME,
       FST_ERR_BAD_TRAILER_VALUE,
       FST_ERR_MISSING_SERIALIZATION_FN,
-      FST_ERR_MISSING_CONTENTTYPE_SERIALIZATION_FN
+      FST_ERR_MISSING_CONTENTTYPE_SERIALIZATION_FN,
+      FST_ERR_DEC_UNDECLARED
     } = require_errors2();
+    var decorators = require_decorate();
     var toString = Object.prototype.toString;
     function Reply(res, request, log) {
       this.raw = res;
@@ -8446,14 +8653,14 @@ var require_reply = __commonJS({
       return this;
     };
     Reply.prototype.send = function(payload) {
-      if (this[kReplyIsRunningOnErrorHook] === true) {
+      if (this[kReplyIsRunningOnErrorHook]) {
         throw new FST_ERR_SEND_INSIDE_ONERR();
       }
-      if (this.sent) {
+      if (this.sent === true) {
         this.log.warn({ err: new FST_ERR_REP_ALREADY_SENT(this.request.url, this.request.method) });
         return this;
       }
-      if (payload instanceof Error || this[kReplyIsError] === true) {
+      if (this[kReplyIsError] || payload instanceof Error) {
         this[kReplyIsError] = false;
         onErrorHook(this, payload, onSendHook);
         return this;
@@ -8474,15 +8681,15 @@ var require_reply = __commonJS({
           onSendHook(this, payload);
           return this;
         }
-        if (payload?.buffer instanceof ArrayBuffer) {
-          if (hasContentType === false) {
+        if (payload.buffer instanceof ArrayBuffer) {
+          if (!hasContentType) {
             this[kReplyHeaders]["content-type"] = CONTENT_TYPE.OCTET;
           }
           const payloadToSend = Buffer.isBuffer(payload) ? payload : Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
           onSendHook(this, payloadToSend);
           return this;
         }
-        if (hasContentType === false && typeof payload === "string") {
+        if (!hasContentType && typeof payload === "string") {
           this[kReplyHeaders]["content-type"] = CONTENT_TYPE.PLAIN;
           onSendHook(this, payload);
           return this;
@@ -8492,20 +8699,17 @@ var require_reply = __commonJS({
         if (typeof payload !== "string") {
           preSerializationHook(this, payload);
           return this;
-        } else {
-          payload = this[kReplySerializer](payload);
         }
-      } else if (hasContentType === false || contentType.indexOf("json") > -1) {
-        if (hasContentType === false) {
+        payload = this[kReplySerializer](payload);
+      } else if (!hasContentType || contentType.indexOf("json") !== -1) {
+        if (!hasContentType) {
           this[kReplyHeaders]["content-type"] = CONTENT_TYPE.JSON;
-        } else {
-          if (contentType.indexOf("charset") === -1) {
-            const customContentType = contentType.trim();
-            if (customContentType.endsWith(";")) {
-              this[kReplyHeaders]["content-type"] = `${customContentType} charset=utf-8`;
-            } else {
-              this[kReplyHeaders]["content-type"] = `${customContentType}; charset=utf-8`;
-            }
+        } else if (contentType.indexOf("charset") === -1) {
+          const customContentType = contentType.trim();
+          if (customContentType.endsWith(";")) {
+            this[kReplyHeaders]["content-type"] = `${customContentType} charset=utf-8`;
+          } else {
+            this[kReplyHeaders]["content-type"] = `${customContentType}; charset=utf-8`;
           }
         }
         if (typeof payload !== "string") {
@@ -8518,12 +8722,8 @@ var require_reply = __commonJS({
     };
     Reply.prototype.getHeader = function(key2) {
       key2 = key2.toLowerCase();
-      const res = this.raw;
-      let value = this[kReplyHeaders][key2];
-      if (value === void 0 && res.hasHeader(key2)) {
-        value = res.getHeader(key2);
-      }
-      return value;
+      const value = this[kReplyHeaders][key2];
+      return value !== void 0 ? value : this.raw.getHeader(key2);
     };
     Reply.prototype.getHeaders = function() {
       return {
@@ -8598,11 +8798,11 @@ var require_reply = __commonJS({
       return this;
     };
     Reply.prototype.code = function(code) {
-      const intValue = Number(code);
-      if (isNaN(intValue) || intValue < 100 || intValue > 599) {
+      const statusCode = +code;
+      if (!(statusCode >= 100 && statusCode <= 599)) {
         throw new FST_ERR_BAD_STATUS_CODE(code || String(code));
       }
-      this.raw.statusCode = intValue;
+      this.raw.statusCode = statusCode;
       this[kReplyHasStatusCode] = true;
       return this;
     };
@@ -8712,6 +8912,16 @@ var require_reply = __commonJS({
         }
       });
     };
+    Reply.prototype.getDecorator = function(name) {
+      if (!decorators.hasKey(this, name) && !decorators.exist(this, name)) {
+        throw new FST_ERR_DEC_UNDECLARED(name, "reply");
+      }
+      const decorator = this[name];
+      if (typeof decorator === "function") {
+        return decorator.bind(this);
+      }
+      return decorator;
+    };
     function preSerializationHook(reply, payload) {
       if (reply[kRouteContext].preSerialization !== null) {
         preSerializationHookRunner(
@@ -8722,10 +8932,10 @@ var require_reply = __commonJS({
           preSerializationHookEnd
         );
       } else {
-        preSerializationHookEnd(null, reply.request, reply, payload);
+        preSerializationHookEnd(null, void 0, reply, payload);
       }
     }
-    function preSerializationHookEnd(err, request, reply, payload) {
+    function preSerializationHookEnd(err, _request, reply, payload) {
       if (err != null) {
         onErrorHook(reply, err);
         return;
@@ -9911,7 +10121,7 @@ var require_proxy_addr = __commonJS({
       if (typeof trust !== "function") {
         trust = compile(trust);
       }
-      for (var i = 0; i < addrs.length - 1; i++) {
+      for (let i = 0; i < addrs.length - 1; i++) {
         if (trust(addrs[i], i)) continue;
         addrs.length = i + 1;
       }
@@ -9929,9 +10139,9 @@ var require_proxy_addr = __commonJS({
       } else {
         throw new TypeError("unsupported trust argument");
       }
-      for (var i = 0; i < trust.length; i++) {
+      for (let i = 0; i < trust.length; i++) {
         val = trust[i];
-        if (!Object.prototype.hasOwnProperty.call(IP_RANGES, val)) {
+        if (!Object.hasOwn(IP_RANGES, val)) {
           continue;
         }
         val = IP_RANGES[val];
@@ -9942,7 +10152,7 @@ var require_proxy_addr = __commonJS({
     }
     function compileRangeSubnets(arr) {
       const rangeSubnets = new Array(arr.length);
-      for (var i = 0; i < arr.length; i++) {
+      for (let i = 0; i < arr.length; i++) {
         rangeSubnets[i] = parseipNotation(arr[i]);
       }
       return rangeSubnets;
@@ -9990,8 +10200,7 @@ var require_proxy_addr = __commonJS({
         throw new TypeError("trust argument is required");
       }
       const addrs = alladdrs(req, trust);
-      const addr = addrs[addrs.length - 1];
-      return addr;
+      return addrs[addrs.length - 1];
     }
     function trustNone() {
       return false;
@@ -10002,18 +10211,19 @@ var require_proxy_addr = __commonJS({
         const ip = parseip(addr);
         let ipconv;
         const kind = ip.kind();
-        for (var i = 0; i < subnets.length; i++) {
+        for (let i = 0; i < subnets.length; i++) {
           const subnet = subnets[i];
           const subnetip = subnet[0];
           const subnetkind = subnetip.kind();
           const subnetrange = subnet[1];
           let trusted = ip;
           if (kind !== subnetkind) {
-            if (subnetkind === "ipv4" && !ip.isIPv4MappedAddress()) {
+            const subnetisipv4 = subnetkind === "ipv4";
+            if (subnetisipv4 && !ip.isIPv4MappedAddress()) {
               continue;
             }
             if (!ipconv) {
-              ipconv = subnetkind === "ipv4" ? ip.toIPv4Address() : ip.toIPv4MappedAddress();
+              ipconv = subnetisipv4 ? ip.toIPv4Address() : ip.toIPv4MappedAddress();
             }
             trusted = ipconv;
           }
@@ -10062,7 +10272,8 @@ var require_request = __commonJS({
       kRouteContext,
       kRequestOriginalUrl
     } = require_symbols2();
-    var { FST_ERR_REQ_INVALID_VALIDATION_INVOCATION } = require_errors2();
+    var { FST_ERR_REQ_INVALID_VALIDATION_INVOCATION, FST_ERR_DEC_UNDECLARED } = require_errors2();
+    var decorators = require_decorate();
     var HTTP_PART_SYMBOL_MAP = {
       body: kSchemaBody,
       headers: kSchemaHeaders,
@@ -10167,6 +10378,11 @@ var require_request = __commonJS({
       });
       return _Request;
     }
+    function assertsRequestDecoration(request, name) {
+      if (!decorators.hasKey(request, name) && !decorators.exist(request, name)) {
+        throw new FST_ERR_DEC_UNDECLARED(name, "request");
+      }
+    }
     Object.defineProperties(Request.prototype, {
       server: {
         get() {
@@ -10206,17 +10422,11 @@ var require_request = __commonJS({
             exposeHeadRoute: context.exposeHeadRoute,
             prefixTrailingSlash: context.prefixTrailingSlash,
             handler: context.handler,
+            config: context.config,
+            schema: context.schema,
             version
           };
-          Object.defineProperties(options, {
-            config: {
-              get: () => context.config
-            },
-            schema: {
-              get: () => context.schema
-            }
-          });
-          return Object.freeze(options);
+          return options;
         }
       },
       is404: {
@@ -10330,6 +10540,22 @@ var require_request = __commonJS({
           }
           return validate(input);
         }
+      },
+      getDecorator: {
+        value: function(name) {
+          assertsRequestDecoration(this, name);
+          const decorator = this[name];
+          if (typeof decorator === "function") {
+            return decorator.bind(this);
+          }
+          return decorator;
+        }
+      },
+      setDecorator: {
+        value: function(name, value) {
+          assertsRequestDecoration(this, name);
+          this[name] = value;
+        }
       }
     });
     module2.exports = Request;
@@ -10423,127 +10649,6 @@ var require_context = __commonJS({
       return new Error(text.slice(0, -separator.length));
     }
     module2.exports = Context;
-  }
-});
-
-// ../../node_modules/fastify/lib/decorate.js
-var require_decorate = __commonJS({
-  "../../node_modules/fastify/lib/decorate.js"(exports2, module2) {
-    "use strict";
-    var {
-      kReply,
-      kRequest,
-      kState,
-      kHasBeenDecorated
-    } = require_symbols2();
-    var {
-      FST_ERR_DEC_ALREADY_PRESENT,
-      FST_ERR_DEC_MISSING_DEPENDENCY,
-      FST_ERR_DEC_AFTER_START,
-      FST_ERR_DEC_REFERENCE_TYPE,
-      FST_ERR_DEC_DEPENDENCY_INVALID_TYPE
-    } = require_errors2();
-    function decorate(instance, name, fn, dependencies) {
-      if (Object.hasOwn(instance, name)) {
-        throw new FST_ERR_DEC_ALREADY_PRESENT(name);
-      }
-      checkDependencies(instance, name, dependencies);
-      if (fn && (typeof fn.getter === "function" || typeof fn.setter === "function")) {
-        Object.defineProperty(instance, name, {
-          get: fn.getter,
-          set: fn.setter
-        });
-      } else {
-        instance[name] = fn;
-      }
-    }
-    function decorateConstructor(konstructor, name, fn, dependencies) {
-      const instance = konstructor.prototype;
-      if (Object.hasOwn(instance, name) || hasKey(konstructor, name)) {
-        throw new FST_ERR_DEC_ALREADY_PRESENT(name);
-      }
-      konstructor[kHasBeenDecorated] = true;
-      checkDependencies(konstructor, name, dependencies);
-      if (fn && (typeof fn.getter === "function" || typeof fn.setter === "function")) {
-        Object.defineProperty(instance, name, {
-          get: fn.getter,
-          set: fn.setter
-        });
-      } else if (typeof fn === "function") {
-        instance[name] = fn;
-      } else {
-        konstructor.props.push({ key: name, value: fn });
-      }
-    }
-    function checkReferenceType(name, fn) {
-      if (typeof fn === "object" && fn && !(typeof fn.getter === "function" || typeof fn.setter === "function")) {
-        throw new FST_ERR_DEC_REFERENCE_TYPE(name, typeof fn);
-      }
-    }
-    function decorateFastify(name, fn, dependencies) {
-      assertNotStarted(this, name);
-      decorate(this, name, fn, dependencies);
-      return this;
-    }
-    function checkExistence(instance, name) {
-      if (name) {
-        return name in instance || instance.prototype && name in instance.prototype || hasKey(instance, name);
-      }
-      return instance in this;
-    }
-    function hasKey(fn, name) {
-      if (fn.props) {
-        return fn.props.find(({ key: key2 }) => key2 === name);
-      }
-      return false;
-    }
-    function checkRequestExistence(name) {
-      if (name && hasKey(this[kRequest], name)) return true;
-      return checkExistence(this[kRequest].prototype, name);
-    }
-    function checkReplyExistence(name) {
-      if (name && hasKey(this[kReply], name)) return true;
-      return checkExistence(this[kReply].prototype, name);
-    }
-    function checkDependencies(instance, name, deps) {
-      if (deps === void 0 || deps === null) {
-        return;
-      }
-      if (!Array.isArray(deps)) {
-        throw new FST_ERR_DEC_DEPENDENCY_INVALID_TYPE(name);
-      }
-      for (let i = 0; i !== deps.length; ++i) {
-        if (!checkExistence(instance, deps[i])) {
-          throw new FST_ERR_DEC_MISSING_DEPENDENCY(deps[i]);
-        }
-      }
-    }
-    function decorateReply(name, fn, dependencies) {
-      assertNotStarted(this, name);
-      checkReferenceType(name, fn);
-      decorateConstructor(this[kReply], name, fn, dependencies);
-      return this;
-    }
-    function decorateRequest(name, fn, dependencies) {
-      assertNotStarted(this, name);
-      checkReferenceType(name, fn);
-      decorateConstructor(this[kRequest], name, fn, dependencies);
-      return this;
-    }
-    function assertNotStarted(instance, name) {
-      if (instance[kState].started) {
-        throw new FST_ERR_DEC_AFTER_START(name);
-      }
-    }
-    module2.exports = {
-      add: decorateFastify,
-      exist: checkExistence,
-      existRequest: checkRequestExistence,
-      existReply: checkReplyExistence,
-      dependencies: checkDependencies,
-      decorateReply,
-      decorateRequest
-    };
   }
 });
 
@@ -11288,7 +11393,7 @@ var require_secure_json_parse = __commonJS({
             }
             delete node.__proto__;
           }
-          if (constructorAction !== "ignore" && Object.prototype.hasOwnProperty.call(node, "constructor") && Object.prototype.hasOwnProperty.call(node.constructor, "prototype")) {
+          if (constructorAction !== "ignore" && Object.prototype.hasOwnProperty.call(node, "constructor") && node.constructor !== null && typeof node.constructor === "object" && Object.prototype.hasOwnProperty.call(node.constructor, "prototype")) {
             if (safe === true) {
               return null;
             } else if (constructorAction === "error") {
@@ -11320,8 +11425,8 @@ var require_secure_json_parse = __commonJS({
       Error.stackTraceLimit = 0;
       try {
         return _parse(text, reviver, { safe: true });
-      } catch (_e) {
-        return null;
+      } catch {
+        return void 0;
       } finally {
         Error.stackTraceLimit = stackTraceLimit;
       }
@@ -11340,7 +11445,7 @@ var require_contentTypeParser = __commonJS({
     "use strict";
     var { AsyncResource } = require("node:async_hooks");
     var { FifoMap: Fifo } = require_toad_cache();
-    var secureJson = require_secure_json_parse();
+    var { parse: secureJsonParse } = require_secure_json_parse();
     var {
       kDefaultJsonParse,
       kContentTypeParser,
@@ -11361,7 +11466,8 @@ var require_contentTypeParser = __commonJS({
       FST_ERR_CTP_INVALID_MEDIA_TYPE,
       FST_ERR_CTP_INVALID_CONTENT_LENGTH,
       FST_ERR_CTP_EMPTY_JSON_BODY,
-      FST_ERR_CTP_INSTANCE_ALREADY_STARTED
+      FST_ERR_CTP_INSTANCE_ALREADY_STARTED,
+      FST_ERR_CTP_INVALID_JSON_BODY
     } = require_errors2();
     var { FSTSEC001 } = require_warnings();
     function ContentTypeParser(bodyLimit, onProtoPoisoning, onConstructorPoisoning) {
@@ -11479,14 +11585,16 @@ var require_contentTypeParser = __commonJS({
     ContentTypeParser.prototype.run = function(contentType, handler, request, reply) {
       const parser = this.getParser(contentType);
       if (parser === void 0) {
-        if (request.is404) {
+        if (request.is404 === true) {
           handler(request, reply);
-        } else {
-          reply.send(new FST_ERR_CTP_INVALID_MEDIA_TYPE(contentType || void 0));
+          return;
         }
+        reply[kReplyIsError] = true;
+        reply.send(new FST_ERR_CTP_INVALID_MEDIA_TYPE(contentType || void 0));
         return;
       }
       const resource = new AsyncResource("content-type-parser:run", request);
+      const done = resource.bind(onDone);
       if (parser.asString === true || parser.asBuffer === true) {
         rawBody(
           request,
@@ -11495,38 +11603,38 @@ var require_contentTypeParser = __commonJS({
           parser,
           done
         );
-      } else {
-        const result = parser.fn(request, request[kRequestPayloadStream], done);
-        if (typeof result?.then === "function") {
-          result.then((body) => done(null, body), done);
-        }
+        return;
       }
-      function done(error, body) {
-        resource.runInAsyncScope(() => {
-          resource.emitDestroy();
-          if (error) {
-            reply[kReplyIsError] = true;
-            reply.send(error);
-          } else {
-            request.body = body;
-            handler(request, reply);
-          }
-        });
+      const result = parser.fn(request, request[kRequestPayloadStream], done);
+      if (result && typeof result.then === "function") {
+        result.then((body) => {
+          done(null, body);
+        }, done);
+      }
+      function onDone(error, body) {
+        resource.emitDestroy();
+        if (error != null) {
+          reply.header("connection", "close");
+          reply[kReplyIsError] = true;
+          reply.send(error);
+          return;
+        }
+        request.body = body;
+        handler(request, reply);
       }
     };
     function rawBody(request, reply, options, parser, done) {
-      const asString = parser.asString;
+      const asString = parser.asString === true;
       const limit = options.limit === null ? parser.bodyLimit : options.limit;
       const contentLength = Number(request.headers["content-length"]);
       if (contentLength > limit) {
-        reply.header("connection", "close");
-        reply.send(new FST_ERR_CTP_BODY_TOO_LARGE());
+        done(new FST_ERR_CTP_BODY_TOO_LARGE(), void 0);
         return;
       }
       let receivedLength = 0;
-      let body = asString === true ? "" : [];
+      let body = asString ? "" : [];
       const payload = request[kRequestPayloadStream] || request.raw;
-      if (asString === true) {
+      if (asString) {
         payload.setEncoding("utf8");
       }
       payload.on("data", onData);
@@ -11534,16 +11642,16 @@ var require_contentTypeParser = __commonJS({
       payload.on("error", onEnd);
       payload.resume();
       function onData(chunk) {
-        receivedLength += chunk.length;
+        receivedLength += asString ? Buffer.byteLength(chunk) : chunk.length;
         const { receivedEncodedLength = 0 } = payload;
         if (receivedLength > limit || receivedEncodedLength > limit) {
           payload.removeListener("data", onData);
           payload.removeListener("end", onEnd);
           payload.removeListener("error", onEnd);
-          reply.send(new FST_ERR_CTP_BODY_TOO_LARGE());
+          done(new FST_ERR_CTP_BODY_TOO_LARGE(), void 0);
           return;
         }
-        if (asString === true) {
+        if (asString) {
           body += chunk;
         } else {
           body.push(chunk);
@@ -11553,45 +11661,41 @@ var require_contentTypeParser = __commonJS({
         payload.removeListener("data", onData);
         payload.removeListener("end", onEnd);
         payload.removeListener("error", onEnd);
-        if (err !== void 0) {
+        if (err != null) {
           if (!(typeof err.statusCode === "number" && err.statusCode >= 400)) {
             err.statusCode = 400;
           }
-          reply[kReplyIsError] = true;
-          reply.code(err.statusCode).send(err);
+          done(err, void 0);
           return;
-        }
-        if (asString === true) {
-          receivedLength = Buffer.byteLength(body);
         }
         if (!Number.isNaN(contentLength) && (payload.receivedEncodedLength || receivedLength) !== contentLength) {
-          reply.header("connection", "close");
-          reply.send(new FST_ERR_CTP_INVALID_CONTENT_LENGTH());
+          done(new FST_ERR_CTP_INVALID_CONTENT_LENGTH(), void 0);
           return;
         }
-        if (asString === false) {
+        if (!asString) {
           body = Buffer.concat(body);
         }
         const result = parser.fn(request, body, done);
         if (result && typeof result.then === "function") {
-          result.then((body2) => done(null, body2), done);
+          result.then((body2) => {
+            done(null, body2);
+          }, done);
         }
       }
     }
     function getDefaultJsonParser(onProtoPoisoning, onConstructorPoisoning) {
+      const parseOptions = { protoAction: onProtoPoisoning, constructorAction: onConstructorPoisoning };
       return defaultJsonParser;
       function defaultJsonParser(req, body, done) {
-        if (body === "" || body == null || Buffer.isBuffer(body) && body.length === 0) {
-          return done(new FST_ERR_CTP_EMPTY_JSON_BODY(), void 0);
+        if (body.length === 0) {
+          done(new FST_ERR_CTP_EMPTY_JSON_BODY(), void 0);
+          return;
         }
-        let json;
         try {
-          json = secureJson.parse(body, { protoAction: onProtoPoisoning, constructorAction: onConstructorPoisoning });
-        } catch (err) {
-          err.statusCode = 400;
-          return done(err, void 0);
+          done(null, secureJsonParse(body, parseOptions));
+        } catch {
+          done(new FST_ERR_CTP_INVALID_JSON_BODY(), void 0);
         }
-        done(null, json);
       }
     }
     function defaultPlainTextParser(req, body, done) {
@@ -15061,92 +15165,62 @@ var require_data = __commonJS({
   }
 });
 
-// ../../node_modules/fast-uri/lib/scopedChars.js
-var require_scopedChars = __commonJS({
-  "../../node_modules/fast-uri/lib/scopedChars.js"(exports2, module2) {
-    "use strict";
-    var HEX = {
-      0: 0,
-      1: 1,
-      2: 2,
-      3: 3,
-      4: 4,
-      5: 5,
-      6: 6,
-      7: 7,
-      8: 8,
-      9: 9,
-      a: 10,
-      A: 10,
-      b: 11,
-      B: 11,
-      c: 12,
-      C: 12,
-      d: 13,
-      D: 13,
-      e: 14,
-      E: 14,
-      f: 15,
-      F: 15
-    };
-    module2.exports = {
-      HEX
-    };
-  }
-});
-
 // ../../node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
   "../../node_modules/fast-uri/lib/utils.js"(exports2, module2) {
     "use strict";
-    var { HEX } = require_scopedChars();
-    var IPV4_REG = /^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u;
-    function normalizeIPv4(host) {
-      if (findToken(host, ".") < 3) {
-        return { host, isIPV4: false };
-      }
-      const matches = host.match(IPV4_REG) || [];
-      const [address] = matches;
-      if (address) {
-        return { host: stripLeadingZeros(address, "."), isIPV4: true };
-      } else {
-        return { host, isIPV4: false };
-      }
-    }
-    function stringArrayToHexStripped(input, keepZero = false) {
+    var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
+    var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    function stringArrayToHexStripped(input) {
       let acc = "";
-      let strip = true;
-      for (const c of input) {
-        if (HEX[c] === void 0) return void 0;
-        if (c !== "0" && strip === true) strip = false;
-        if (!strip) acc += c;
+      let code = 0;
+      let i = 0;
+      for (i = 0; i < input.length; i++) {
+        code = input[i].charCodeAt(0);
+        if (code === 48) {
+          continue;
+        }
+        if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
+          return "";
+        }
+        acc += input[i];
+        break;
       }
-      if (keepZero && acc.length === 0) acc = "0";
+      for (i += 1; i < input.length; i++) {
+        code = input[i].charCodeAt(0);
+        if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) {
+          return "";
+        }
+        acc += input[i];
+      }
       return acc;
+    }
+    var nonSimpleDomain = RegExp.prototype.test.bind(/[^!"$&'()*+,\-.;=_`a-z{}~]/u);
+    function consumeIsZone(buffer) {
+      buffer.length = 0;
+      return true;
+    }
+    function consumeHextets(buffer, address, output) {
+      if (buffer.length) {
+        const hex = stringArrayToHexStripped(buffer);
+        if (hex !== "") {
+          address.push(hex);
+        } else {
+          output.error = true;
+          return false;
+        }
+        buffer.length = 0;
+      }
+      return true;
     }
     function getIPV6(input) {
       let tokenCount = 0;
       const output = { error: false, address: "", zone: "" };
       const address = [];
       const buffer = [];
-      let isZone = false;
       let endipv6Encountered = false;
       let endIpv6 = false;
-      function consume() {
-        if (buffer.length) {
-          if (isZone === false) {
-            const hex = stringArrayToHexStripped(buffer);
-            if (hex !== void 0) {
-              address.push(hex);
-            } else {
-              output.error = true;
-              return false;
-            }
-          }
-          buffer.length = 0;
-        }
-        return true;
-      }
+      let consume = consumeHextets;
       for (let i = 0; i < input.length; i++) {
         const cursor = input[i];
         if (cursor === "[" || cursor === "]") {
@@ -15156,31 +15230,30 @@ var require_utils = __commonJS({
           if (endipv6Encountered === true) {
             endIpv6 = true;
           }
-          if (!consume()) {
+          if (!consume(buffer, address, output)) {
             break;
           }
-          tokenCount++;
-          address.push(":");
-          if (tokenCount > 7) {
+          if (++tokenCount > 7) {
             output.error = true;
             break;
           }
-          if (i - 1 >= 0 && input[i - 1] === ":") {
+          if (i > 0 && input[i - 1] === ":") {
             endipv6Encountered = true;
           }
+          address.push(":");
           continue;
         } else if (cursor === "%") {
-          if (!consume()) {
+          if (!consume(buffer, address, output)) {
             break;
           }
-          isZone = true;
+          consume = consumeIsZone;
         } else {
           buffer.push(cursor);
           continue;
         }
       }
       if (buffer.length) {
-        if (isZone) {
+        if (consume === consumeIsZone) {
           output.zone = buffer.join("");
         } else if (endIpv6) {
           address.push(buffer.join(""));
@@ -15203,32 +15276,10 @@ var require_utils = __commonJS({
           newHost += "%" + ipv6.zone;
           escapedHost += "%25" + ipv6.zone;
         }
-        return { host: newHost, escapedHost, isIPV6: true };
+        return { host: newHost, isIPV6: true, escapedHost };
       } else {
         return { host, isIPV6: false };
       }
-    }
-    function stripLeadingZeros(str, token) {
-      let out = "";
-      let skip = true;
-      const l = str.length;
-      for (let i = 0; i < l; i++) {
-        const c = str[i];
-        if (c === "0" && skip) {
-          if (i + 1 <= l && str[i + 1] === token || i + 1 === l) {
-            out += c;
-            skip = false;
-          }
-        } else {
-          if (c === token) {
-            skip = true;
-          } else {
-            skip = false;
-          }
-          out += c;
-        }
-      }
-      return out;
     }
     function findToken(str, token) {
       let ind = 0;
@@ -15237,89 +15288,134 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    var RDS1 = /^\.\.?\//u;
-    var RDS2 = /^\/\.(?:\/|$)/u;
-    var RDS3 = /^\/\.\.(?:\/|$)/u;
-    var RDS5 = /^\/?(?:.|\n)*?(?=\/|$)/u;
-    function removeDotSegments(input) {
+    function removeDotSegments(path) {
+      let input = path;
       const output = [];
-      while (input.length) {
-        if (input.match(RDS1)) {
-          input = input.replace(RDS1, "");
-        } else if (input.match(RDS2)) {
-          input = input.replace(RDS2, "/");
-        } else if (input.match(RDS3)) {
-          input = input.replace(RDS3, "/");
-          output.pop();
-        } else if (input === "." || input === "..") {
-          input = "";
-        } else {
-          const im = input.match(RDS5);
-          if (im) {
-            const s = im[0];
-            input = input.slice(s.length);
-            output.push(s);
+      let nextSlash = -1;
+      let len = 0;
+      while (len = input.length) {
+        if (len === 1) {
+          if (input === ".") {
+            break;
+          } else if (input === "/") {
+            output.push("/");
+            break;
           } else {
-            throw new Error("Unexpected dot segment condition");
+            output.push(input);
+            break;
           }
+        } else if (len === 2) {
+          if (input[0] === ".") {
+            if (input[1] === ".") {
+              break;
+            } else if (input[1] === "/") {
+              input = input.slice(2);
+              continue;
+            }
+          } else if (input[0] === "/") {
+            if (input[1] === "." || input[1] === "/") {
+              output.push("/");
+              break;
+            }
+          }
+        } else if (len === 3) {
+          if (input === "/..") {
+            if (output.length !== 0) {
+              output.pop();
+            }
+            output.push("/");
+            break;
+          }
+        }
+        if (input[0] === ".") {
+          if (input[1] === ".") {
+            if (input[2] === "/") {
+              input = input.slice(3);
+              continue;
+            }
+          } else if (input[1] === "/") {
+            input = input.slice(2);
+            continue;
+          }
+        } else if (input[0] === "/") {
+          if (input[1] === ".") {
+            if (input[2] === "/") {
+              input = input.slice(2);
+              continue;
+            } else if (input[2] === ".") {
+              if (input[3] === "/") {
+                input = input.slice(3);
+                if (output.length !== 0) {
+                  output.pop();
+                }
+                continue;
+              }
+            }
+          }
+        }
+        if ((nextSlash = input.indexOf("/", 1)) === -1) {
+          output.push(input);
+          break;
+        } else {
+          output.push(input.slice(0, nextSlash));
+          input = input.slice(nextSlash);
         }
       }
       return output.join("");
     }
-    function normalizeComponentEncoding(components, esc) {
+    function normalizeComponentEncoding(component, esc) {
       const func = esc !== true ? escape : unescape;
-      if (components.scheme !== void 0) {
-        components.scheme = func(components.scheme);
+      if (component.scheme !== void 0) {
+        component.scheme = func(component.scheme);
       }
-      if (components.userinfo !== void 0) {
-        components.userinfo = func(components.userinfo);
+      if (component.userinfo !== void 0) {
+        component.userinfo = func(component.userinfo);
       }
-      if (components.host !== void 0) {
-        components.host = func(components.host);
+      if (component.host !== void 0) {
+        component.host = func(component.host);
       }
-      if (components.path !== void 0) {
-        components.path = func(components.path);
+      if (component.path !== void 0) {
+        component.path = func(component.path);
       }
-      if (components.query !== void 0) {
-        components.query = func(components.query);
+      if (component.query !== void 0) {
+        component.query = func(component.query);
       }
-      if (components.fragment !== void 0) {
-        components.fragment = func(components.fragment);
+      if (component.fragment !== void 0) {
+        component.fragment = func(component.fragment);
       }
-      return components;
+      return component;
     }
-    function recomposeAuthority(components) {
+    function recomposeAuthority(component) {
       const uriTokens = [];
-      if (components.userinfo !== void 0) {
-        uriTokens.push(components.userinfo);
+      if (component.userinfo !== void 0) {
+        uriTokens.push(component.userinfo);
         uriTokens.push("@");
       }
-      if (components.host !== void 0) {
-        let host = unescape(components.host);
-        const ipV4res = normalizeIPv4(host);
-        if (ipV4res.isIPV4) {
-          host = ipV4res.host;
-        } else {
-          const ipV6res = normalizeIPv6(ipV4res.host);
+      if (component.host !== void 0) {
+        let host = unescape(component.host);
+        if (!isIPv4(host)) {
+          const ipV6res = normalizeIPv6(host);
           if (ipV6res.isIPV6 === true) {
             host = `[${ipV6res.escapedHost}]`;
           } else {
-            host = components.host;
+            host = component.host;
           }
         }
         uriTokens.push(host);
       }
-      if (typeof components.port === "number" || typeof components.port === "string") {
+      if (typeof component.port === "number" || typeof component.port === "string") {
         uriTokens.push(":");
-        uriTokens.push(String(components.port));
+        uriTokens.push(String(component.port));
       }
       return uriTokens.length ? uriTokens.join("") : void 0;
     }
     module2.exports = {
+      nonSimpleDomain,
       recomposeAuthority,
       normalizeComponentEncoding,
       removeDotSegments,
-      normalizeIPv4,
+      isIPv4,
+      isUUID,
       normalizeIPv6,
       stringArrayToHexStripped
     };
@@ -15330,145 +15426,209 @@ var require_utils = __commonJS({
 var require_schemes = __commonJS({
   "../../node_modules/fast-uri/lib/schemes.js"(exports2, module2) {
     "use strict";
-    var UUID_REG = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
+    var { isUUID } = require_utils();
     var URN_REG = /([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-.:;=@]|%[\da-f]{2})+)/iu;
-    function isSecure(wsComponents) {
-      return typeof wsComponents.secure === "boolean" ? wsComponents.secure : String(wsComponents.scheme).toLowerCase() === "wss";
+    var supportedSchemeNames = (
+      /** @type {const} */
+      [
+        "http",
+        "https",
+        "ws",
+        "wss",
+        "urn",
+        "urn:uuid"
+      ]
+    );
+    function isValidSchemeName(name) {
+      return supportedSchemeNames.indexOf(
+        /** @type {*} */
+        name
+      ) !== -1;
     }
-    function httpParse(components) {
-      if (!components.host) {
-        components.error = components.error || "HTTP URIs must have a host.";
+    function wsIsSecure(wsComponent) {
+      if (wsComponent.secure === true) {
+        return true;
+      } else if (wsComponent.secure === false) {
+        return false;
+      } else if (wsComponent.scheme) {
+        return wsComponent.scheme.length === 3 && (wsComponent.scheme[0] === "w" || wsComponent.scheme[0] === "W") && (wsComponent.scheme[1] === "s" || wsComponent.scheme[1] === "S") && (wsComponent.scheme[2] === "s" || wsComponent.scheme[2] === "S");
+      } else {
+        return false;
       }
-      return components;
     }
-    function httpSerialize(components) {
-      const secure = String(components.scheme).toLowerCase() === "https";
-      if (components.port === (secure ? 443 : 80) || components.port === "") {
-        components.port = void 0;
+    function httpParse(component) {
+      if (!component.host) {
+        component.error = component.error || "HTTP URIs must have a host.";
       }
-      if (!components.path) {
-        components.path = "/";
-      }
-      return components;
+      return component;
     }
-    function wsParse(wsComponents) {
-      wsComponents.secure = isSecure(wsComponents);
-      wsComponents.resourceName = (wsComponents.path || "/") + (wsComponents.query ? "?" + wsComponents.query : "");
-      wsComponents.path = void 0;
-      wsComponents.query = void 0;
-      return wsComponents;
+    function httpSerialize(component) {
+      const secure = String(component.scheme).toLowerCase() === "https";
+      if (component.port === (secure ? 443 : 80) || component.port === "") {
+        component.port = void 0;
+      }
+      if (!component.path) {
+        component.path = "/";
+      }
+      return component;
     }
-    function wsSerialize(wsComponents) {
-      if (wsComponents.port === (isSecure(wsComponents) ? 443 : 80) || wsComponents.port === "") {
-        wsComponents.port = void 0;
-      }
-      if (typeof wsComponents.secure === "boolean") {
-        wsComponents.scheme = wsComponents.secure ? "wss" : "ws";
-        wsComponents.secure = void 0;
-      }
-      if (wsComponents.resourceName) {
-        const [path, query] = wsComponents.resourceName.split("?");
-        wsComponents.path = path && path !== "/" ? path : void 0;
-        wsComponents.query = query;
-        wsComponents.resourceName = void 0;
-      }
-      wsComponents.fragment = void 0;
-      return wsComponents;
+    function wsParse(wsComponent) {
+      wsComponent.secure = wsIsSecure(wsComponent);
+      wsComponent.resourceName = (wsComponent.path || "/") + (wsComponent.query ? "?" + wsComponent.query : "");
+      wsComponent.path = void 0;
+      wsComponent.query = void 0;
+      return wsComponent;
     }
-    function urnParse(urnComponents, options) {
-      if (!urnComponents.path) {
-        urnComponents.error = "URN can not be parsed";
-        return urnComponents;
+    function wsSerialize(wsComponent) {
+      if (wsComponent.port === (wsIsSecure(wsComponent) ? 443 : 80) || wsComponent.port === "") {
+        wsComponent.port = void 0;
       }
-      const matches = urnComponents.path.match(URN_REG);
+      if (typeof wsComponent.secure === "boolean") {
+        wsComponent.scheme = wsComponent.secure ? "wss" : "ws";
+        wsComponent.secure = void 0;
+      }
+      if (wsComponent.resourceName) {
+        const [path, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path && path !== "/" ? path : void 0;
+        wsComponent.query = query;
+        wsComponent.resourceName = void 0;
+      }
+      wsComponent.fragment = void 0;
+      return wsComponent;
+    }
+    function urnParse(urnComponent, options) {
+      if (!urnComponent.path) {
+        urnComponent.error = "URN can not be parsed";
+        return urnComponent;
+      }
+      const matches = urnComponent.path.match(URN_REG);
       if (matches) {
-        const scheme = options.scheme || urnComponents.scheme || "urn";
-        urnComponents.nid = matches[1].toLowerCase();
-        urnComponents.nss = matches[2];
-        const urnScheme = `${scheme}:${options.nid || urnComponents.nid}`;
-        const schemeHandler = SCHEMES[urnScheme];
-        urnComponents.path = void 0;
+        const scheme = options.scheme || urnComponent.scheme || "urn";
+        urnComponent.nid = matches[1].toLowerCase();
+        urnComponent.nss = matches[2];
+        const urnScheme = `${scheme}:${options.nid || urnComponent.nid}`;
+        const schemeHandler = getSchemeHandler(urnScheme);
+        urnComponent.path = void 0;
         if (schemeHandler) {
-          urnComponents = schemeHandler.parse(urnComponents, options);
+          urnComponent = schemeHandler.parse(urnComponent, options);
         }
       } else {
-        urnComponents.error = urnComponents.error || "URN can not be parsed.";
+        urnComponent.error = urnComponent.error || "URN can not be parsed.";
       }
-      return urnComponents;
+      return urnComponent;
     }
-    function urnSerialize(urnComponents, options) {
-      const scheme = options.scheme || urnComponents.scheme || "urn";
-      const nid = urnComponents.nid.toLowerCase();
+    function urnSerialize(urnComponent, options) {
+      if (urnComponent.nid === void 0) {
+        throw new Error("URN without nid cannot be serialized");
+      }
+      const scheme = options.scheme || urnComponent.scheme || "urn";
+      const nid = urnComponent.nid.toLowerCase();
       const urnScheme = `${scheme}:${options.nid || nid}`;
-      const schemeHandler = SCHEMES[urnScheme];
+      const schemeHandler = getSchemeHandler(urnScheme);
       if (schemeHandler) {
-        urnComponents = schemeHandler.serialize(urnComponents, options);
+        urnComponent = schemeHandler.serialize(urnComponent, options);
       }
-      const uriComponents = urnComponents;
-      const nss = urnComponents.nss;
-      uriComponents.path = `${nid || options.nid}:${nss}`;
+      const uriComponent = urnComponent;
+      const nss = urnComponent.nss;
+      uriComponent.path = `${nid || options.nid}:${nss}`;
       options.skipEscape = true;
-      return uriComponents;
+      return uriComponent;
     }
-    function urnuuidParse(urnComponents, options) {
-      const uuidComponents = urnComponents;
-      uuidComponents.uuid = uuidComponents.nss;
-      uuidComponents.nss = void 0;
-      if (!options.tolerant && (!uuidComponents.uuid || !UUID_REG.test(uuidComponents.uuid))) {
-        uuidComponents.error = uuidComponents.error || "UUID is not valid.";
+    function urnuuidParse(urnComponent, options) {
+      const uuidComponent = urnComponent;
+      uuidComponent.uuid = uuidComponent.nss;
+      uuidComponent.nss = void 0;
+      if (!options.tolerant && (!uuidComponent.uuid || !isUUID(uuidComponent.uuid))) {
+        uuidComponent.error = uuidComponent.error || "UUID is not valid.";
       }
-      return uuidComponents;
+      return uuidComponent;
     }
-    function urnuuidSerialize(uuidComponents) {
-      const urnComponents = uuidComponents;
-      urnComponents.nss = (uuidComponents.uuid || "").toLowerCase();
-      return urnComponents;
+    function urnuuidSerialize(uuidComponent) {
+      const urnComponent = uuidComponent;
+      urnComponent.nss = (uuidComponent.uuid || "").toLowerCase();
+      return urnComponent;
     }
-    var http = {
-      scheme: "http",
-      domainHost: true,
-      parse: httpParse,
-      serialize: httpSerialize
+    var http = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "http",
+        domainHost: true,
+        parse: httpParse,
+        serialize: httpSerialize
+      }
+    );
+    var https = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "https",
+        domainHost: http.domainHost,
+        parse: httpParse,
+        serialize: httpSerialize
+      }
+    );
+    var ws = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "ws",
+        domainHost: true,
+        parse: wsParse,
+        serialize: wsSerialize
+      }
+    );
+    var wss = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "wss",
+        domainHost: ws.domainHost,
+        parse: ws.parse,
+        serialize: ws.serialize
+      }
+    );
+    var urn = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "urn",
+        parse: urnParse,
+        serialize: urnSerialize,
+        skipNormalize: true
+      }
+    );
+    var urnuuid = (
+      /** @type {SchemeHandler} */
+      {
+        scheme: "urn:uuid",
+        parse: urnuuidParse,
+        serialize: urnuuidSerialize,
+        skipNormalize: true
+      }
+    );
+    var SCHEMES = (
+      /** @type {Record<SchemeName, SchemeHandler>} */
+      {
+        http,
+        https,
+        ws,
+        wss,
+        urn,
+        "urn:uuid": urnuuid
+      }
+    );
+    Object.setPrototypeOf(SCHEMES, null);
+    function getSchemeHandler(scheme) {
+      return scheme && (SCHEMES[
+        /** @type {SchemeName} */
+        scheme
+      ] || SCHEMES[
+        /** @type {SchemeName} */
+        scheme.toLowerCase()
+      ]) || void 0;
+    }
+    module2.exports = {
+      wsIsSecure,
+      SCHEMES,
+      isValidSchemeName,
+      getSchemeHandler
     };
-    var https = {
-      scheme: "https",
-      domainHost: http.domainHost,
-      parse: httpParse,
-      serialize: httpSerialize
-    };
-    var ws = {
-      scheme: "ws",
-      domainHost: true,
-      parse: wsParse,
-      serialize: wsSerialize
-    };
-    var wss = {
-      scheme: "wss",
-      domainHost: ws.domainHost,
-      parse: ws.parse,
-      serialize: ws.serialize
-    };
-    var urn = {
-      scheme: "urn",
-      parse: urnParse,
-      serialize: urnSerialize,
-      skipNormalize: true
-    };
-    var urnuuid = {
-      scheme: "urn:uuid",
-      parse: urnuuidParse,
-      serialize: urnuuidSerialize,
-      skipNormalize: true
-    };
-    var SCHEMES = {
-      http,
-      https,
-      ws,
-      wss,
-      urn,
-      "urn:uuid": urnuuid
-    };
-    module2.exports = SCHEMES;
   }
 });
 
@@ -15476,22 +15636,25 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "../../node_modules/fast-uri/index.js"(exports2, module2) {
     "use strict";
-    var { normalizeIPv6, normalizeIPv4, removeDotSegments, recomposeAuthority, normalizeComponentEncoding } = require_utils();
-    var SCHEMES = require_schemes();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
+    var { SCHEMES, getSchemeHandler } = require_schemes();
     function normalize(uri, options) {
       if (typeof uri === "string") {
-        uri = serialize(parse(uri, options), options);
+        uri = /** @type {T} */
+        serialize(parse(uri, options), options);
       } else if (typeof uri === "object") {
-        uri = parse(serialize(uri, options), options);
+        uri = /** @type {T} */
+        parse(serialize(uri, options), options);
       }
       return uri;
     }
     function resolve(baseURI, relativeURI, options) {
-      const schemelessOptions = Object.assign({ scheme: "null" }, options);
-      const resolved = resolveComponents(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
-      return serialize(resolved, { ...schemelessOptions, skipEscape: true });
+      const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
+      const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
+      schemelessOptions.skipEscape = true;
+      return serialize(resolved, schemelessOptions);
     }
-    function resolveComponents(base, relative, options, skipNormalization) {
+    function resolveComponent(base, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse(serialize(base, options), options);
@@ -15521,7 +15684,7 @@ var require_fast_uri = __commonJS({
               target.query = base.query;
             }
           } else {
-            if (relative.path.charAt(0) === "/") {
+            if (relative.path[0] === "/") {
               target.path = removeDotSegments(relative.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
@@ -15560,7 +15723,7 @@ var require_fast_uri = __commonJS({
       return uriA.toLowerCase() === uriB.toLowerCase();
     }
     function serialize(cmpts, opts) {
-      const components = {
+      const component = {
         host: cmpts.host,
         scheme: cmpts.scheme,
         userinfo: cmpts.userinfo,
@@ -15578,59 +15741,48 @@ var require_fast_uri = __commonJS({
       };
       const options = Object.assign({}, opts);
       const uriTokens = [];
-      const schemeHandler = SCHEMES[(options.scheme || components.scheme || "").toLowerCase()];
-      if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(components, options);
-      if (components.path !== void 0) {
+      const schemeHandler = getSchemeHandler(options.scheme || component.scheme);
+      if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
+      if (component.path !== void 0) {
         if (!options.skipEscape) {
-          components.path = escape(components.path);
-          if (components.scheme !== void 0) {
-            components.path = components.path.split("%3A").join(":");
+          component.path = escape(component.path);
+          if (component.scheme !== void 0) {
+            component.path = component.path.split("%3A").join(":");
           }
         } else {
-          components.path = unescape(components.path);
+          component.path = unescape(component.path);
         }
       }
-      if (options.reference !== "suffix" && components.scheme) {
-        uriTokens.push(components.scheme, ":");
+      if (options.reference !== "suffix" && component.scheme) {
+        uriTokens.push(component.scheme, ":");
       }
-      const authority = recomposeAuthority(components);
+      const authority = recomposeAuthority(component);
       if (authority !== void 0) {
         if (options.reference !== "suffix") {
           uriTokens.push("//");
         }
         uriTokens.push(authority);
-        if (components.path && components.path.charAt(0) !== "/") {
+        if (component.path && component.path[0] !== "/") {
           uriTokens.push("/");
         }
       }
-      if (components.path !== void 0) {
-        let s = components.path;
+      if (component.path !== void 0) {
+        let s = component.path;
         if (!options.absolutePath && (!schemeHandler || !schemeHandler.absolutePath)) {
           s = removeDotSegments(s);
         }
-        if (authority === void 0) {
-          s = s.replace(/^\/\//u, "/%2F");
+        if (authority === void 0 && s[0] === "/" && s[1] === "/") {
+          s = "/%2F" + s.slice(2);
         }
         uriTokens.push(s);
       }
-      if (components.query !== void 0) {
-        uriTokens.push("?", components.query);
+      if (component.query !== void 0) {
+        uriTokens.push("?", component.query);
       }
-      if (components.fragment !== void 0) {
-        uriTokens.push("#", components.fragment);
+      if (component.fragment !== void 0) {
+        uriTokens.push("#", component.fragment);
       }
       return uriTokens.join("");
-    }
-    var hexLookUp = Array.from({ length: 127 }, (_v, k) => /[^!"$&'()*+,\-.;=_`a-z{}~]/u.test(String.fromCharCode(k)));
-    function nonSimpleDomain(value) {
-      let code = 0;
-      for (let i = 0, len = value.length; i < len; ++i) {
-        code = value.charCodeAt(i);
-        if (code > 126 || hexLookUp[code]) {
-          return true;
-        }
-      }
-      return false;
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     function parse(uri, opts) {
@@ -15644,9 +15796,14 @@ var require_fast_uri = __commonJS({
         query: void 0,
         fragment: void 0
       };
-      const gotEncoding = uri.indexOf("%") !== -1;
       let isIP = false;
-      if (options.reference === "suffix") uri = (options.scheme ? options.scheme + ":" : "") + "//" + uri;
+      if (options.reference === "suffix") {
+        if (options.scheme) {
+          uri = options.scheme + ":" + uri;
+        } else {
+          uri = "//" + uri;
+        }
+      }
       const matches = uri.match(URI_PARSE);
       if (matches) {
         parsed.scheme = matches[1];
@@ -15660,13 +15817,12 @@ var require_fast_uri = __commonJS({
           parsed.port = matches[5];
         }
         if (parsed.host) {
-          const ipv4result = normalizeIPv4(parsed.host);
-          if (ipv4result.isIPV4 === false) {
-            const ipv6result = normalizeIPv6(ipv4result.host);
+          const ipv4result = isIPv4(parsed.host);
+          if (ipv4result === false) {
+            const ipv6result = normalizeIPv6(parsed.host);
             parsed.host = ipv6result.host.toLowerCase();
             isIP = ipv6result.isIPV6;
           } else {
-            parsed.host = ipv4result.host;
             isIP = true;
           }
         }
@@ -15682,7 +15838,7 @@ var require_fast_uri = __commonJS({
         if (options.reference && options.reference !== "suffix" && options.reference !== parsed.reference) {
           parsed.error = parsed.error || "URI is not a " + options.reference + " reference.";
         }
-        const schemeHandler = SCHEMES[(options.scheme || parsed.scheme || "").toLowerCase()];
+        const schemeHandler = getSchemeHandler(options.scheme || parsed.scheme);
         if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
           if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
             try {
@@ -15693,11 +15849,13 @@ var require_fast_uri = __commonJS({
           }
         }
         if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
-          if (gotEncoding && parsed.scheme !== void 0) {
-            parsed.scheme = unescape(parsed.scheme);
-          }
-          if (gotEncoding && parsed.host !== void 0) {
-            parsed.host = unescape(parsed.host);
+          if (uri.indexOf("%") !== -1) {
+            if (parsed.scheme !== void 0) {
+              parsed.scheme = unescape(parsed.scheme);
+            }
+            if (parsed.host !== void 0) {
+              parsed.host = unescape(parsed.host);
+            }
           }
           if (parsed.path) {
             parsed.path = escape(unescape(parsed.path));
@@ -15718,7 +15876,7 @@ var require_fast_uri = __commonJS({
       SCHEMES,
       normalize,
       resolve,
-      resolveComponents,
+      resolveComponent,
       equal,
       serialize,
       parse
@@ -18698,7 +18856,7 @@ var require_dist2 = __commonJS({
 });
 
 // ../../node_modules/fast-json-stringify/lib/validator.js
-var require_validator2 = __commonJS({
+var require_validator = __commonJS({
   "../../node_modules/fast-json-stringify/lib/validator.js"(exports2, module2) {
     "use strict";
     var Ajv = require_ajv();
@@ -20352,7 +20510,7 @@ var require_standalone = __commonJS({
     module2.exports = buildStandaloneCode;
     module2.exports.dependencies = {
       Serializer: require_serializer(),
-      Validator: require_validator2()
+      Validator: require_validator()
     };
   }
 });
@@ -20363,13 +20521,27 @@ var require_fast_json_stringify = __commonJS({
     "use strict";
     var { RefResolver } = require_json_schema_ref_resolver();
     var Serializer = require_serializer();
-    var Validator = require_validator2();
+    var Validator = require_validator();
     var Location = require_location();
     var validate = require_schema_validator();
     var mergeSchemas = require_merge_schemas();
     var SINGLE_TICK = /'/g;
     var largeArraySize = 2e4;
     var largeArrayMechanism = "default";
+    var serializerFns = `
+const {
+  asString,
+  asNumber,
+  asBoolean,
+  asDateTime,
+  asDate,
+  asTime,
+  asUnsafeString
+} = serializer
+
+const asInteger = serializer.asInteger.bind(serializer)
+
+`;
     var validRoundingMethods = [
       "floor",
       "ceil",
@@ -20475,6 +20647,7 @@ var require_fast_json_stringify = __commonJS({
       const location = new Location(schema, context.rootSchemaId);
       const code = buildValue(context, location, "input");
       let contextFunctionCode = `
+    ${serializerFns}
     const JSON_STR_BEGIN_OBJECT = '{'
     const JSON_STR_END_OBJECT = '}'
     const JSON_STR_BEGIN_ARRAY = '['
@@ -20599,7 +20772,7 @@ ${contextFunctionCode}`,
           code += `
         if (/${propertyKey.replace(/\\*\//g, "\\/")}/.test(key)) {
           ${addComma}
-          json += serializer.asString(key) + JSON_STR_COLONS
+          json += asString(key) + JSON_STR_COLONS
           ${buildValue(context, propertyLocation, "value")}
           continue
         }
@@ -20612,13 +20785,13 @@ ${contextFunctionCode}`,
         if (additionalPropertiesSchema === true) {
           code += `
         ${addComma}
-        json += serializer.asString(key) + JSON_STR_COLONS + JSON.stringify(value)
+        json += asString(key) + JSON_STR_COLONS + JSON.stringify(value)
       `;
         } else {
           const propertyLocation = location.getPropertyLocation("additionalProperties");
           code += `
         ${addComma}
-        json += serializer.asString(key) + JSON_STR_COLONS
+        json += asString(key) + JSON_STR_COLONS
         ${buildValue(context, propertyLocation, "value")}
       `;
         }
@@ -20819,7 +20992,7 @@ ${contextFunctionCode}`,
           const tmpRes = buildValue(context, itemsLocation.getPropertyLocation(i), "value");
           functionCode += `
         if (${i} < arrayLength) {
-          if (${buildArrayTypeCondition(item.type, `[${i}]`)}) {
+          if (${buildArrayTypeCondition(item.type, "value")}) {
             ${tmpRes}
             if (${i} < arrayEnd) {
               json += JSON_STR_COMMA
@@ -20833,16 +21006,18 @@ ${contextFunctionCode}`,
         if (schema.additionalItems) {
           functionCode += `
         for (let i = ${itemsSchema.length}; i < arrayLength; i++) {
-          json += JSON.stringify(obj[i])
+          value = obj[i]
+          json += JSON.stringify(value)
           if (i < arrayEnd) {
             json += JSON_STR_COMMA
           }
         }`;
         }
       } else {
-        const code = buildValue(context, itemsLocation, "obj[i]");
+        const code = buildValue(context, itemsLocation, "value");
         functionCode += `
       for (let i = 0; i < arrayLength; i++) {
+        value = obj[i]
         ${code}
         if (i < arrayEnd) {
           json += JSON_STR_COMMA
@@ -20971,13 +21146,13 @@ ${contextFunctionCode}`,
           return "json += JSON_STR_NULL";
         case "string": {
           if (schema.format === "date-time") {
-            return `json += serializer.asDateTime(${input})`;
+            return `json += asDateTime(${input})`;
           } else if (schema.format === "date") {
-            return `json += serializer.asDate(${input})`;
+            return `json += asDate(${input})`;
           } else if (schema.format === "time") {
-            return `json += serializer.asTime(${input})`;
+            return `json += asTime(${input})`;
           } else if (schema.format === "unsafe") {
-            return `json += serializer.asUnsafeString(${input})`;
+            return `json += asUnsafeString(${input})`;
           } else {
             return `
         if (typeof ${input} !== 'string') {
@@ -20986,22 +21161,22 @@ ${contextFunctionCode}`,
           } else if (${input} instanceof Date) {
             json += JSON_STR_QUOTE + ${input}.toISOString() + JSON_STR_QUOTE
           } else if (${input} instanceof RegExp) {
-            json += serializer.asString(${input}.source)
+            json += asString(${input}.source)
           } else {
-            json += serializer.asString(${input}.toString())
+            json += asString(${input}.toString())
           }
         } else {
-          json += serializer.asString(${input})
+          json += asString(${input})
         }
         `;
           }
         }
         case "integer":
-          return `json += serializer.asInteger(${input})`;
+          return `json += asInteger(${input})`;
         case "number":
-          return `json += serializer.asNumber(${input})`;
+          return `json += asNumber(${input})`;
         case "boolean":
-          return `json += serializer.asBoolean(${input})`;
+          return `json += asBoolean(${input})`;
         case "object": {
           const funcName = buildObject(context, location);
           return `json += ${funcName}(${input})`;
@@ -21223,7 +21398,23 @@ ${contextFunctionCode}`,
 var require_standalone2 = __commonJS({
   "../../node_modules/@fastify/fast-json-stringify-compiler/standalone.js"(exports2, module2) {
     "use strict";
-    var SerializerSelector = require_fast_json_stringify_compiler();
+    var fastJsonStringify = require_fast_json_stringify();
+    function SerializerSelector() {
+      return function buildSerializerFactory(externalSchemas, serializerOpts) {
+        const fjsOpts = Object.assign({}, serializerOpts, { schema: externalSchemas });
+        return responseSchemaCompiler.bind(null, fjsOpts);
+      };
+    }
+    function responseSchemaCompiler(fjsOpts, {
+      schema
+      /* method, url, httpStatus */
+    }) {
+      if (fjsOpts.schema && schema.$id && fjsOpts.schema[schema.$id]) {
+        fjsOpts.schema = { ...fjsOpts.schema };
+        delete fjsOpts.schema[schema.$id];
+      }
+      return fastJsonStringify(schema, fjsOpts);
+    }
     function StandaloneSerializer(options = { readMode: true }) {
       if (options.readMode === true && typeof options.restoreFunction !== "function") {
         throw new Error("You must provide a function for the restoreFunction-option when readMode ON");
@@ -21249,7 +21440,8 @@ var require_standalone2 = __commonJS({
         };
       };
     }
-    module2.exports = StandaloneSerializer;
+    module2.exports.SerializerSelector = SerializerSelector;
+    module2.exports.StandaloneSerializer = StandaloneSerializer;
     module2.exports.default = StandaloneSerializer;
   }
 });
@@ -21258,27 +21450,11 @@ var require_standalone2 = __commonJS({
 var require_fast_json_stringify_compiler = __commonJS({
   "../../node_modules/@fastify/fast-json-stringify-compiler/index.js"(exports2, module2) {
     "use strict";
-    var fastJsonStringify = require_fast_json_stringify();
-    function SerializerSelector() {
-      return function buildSerializerFactory(externalSchemas, serializerOpts) {
-        const fjsOpts = Object.assign({}, serializerOpts, { schema: externalSchemas });
-        return responseSchemaCompiler.bind(null, fjsOpts);
-      };
-    }
-    function responseSchemaCompiler(fjsOpts, {
-      schema
-      /* method, url, httpStatus */
-    }) {
-      if (fjsOpts.schema && schema.$id && fjsOpts.schema[schema.$id]) {
-        fjsOpts.schema = { ...fjsOpts.schema };
-        delete fjsOpts.schema[schema.$id];
-      }
-      return fastJsonStringify(schema, fjsOpts);
-    }
+    var { SerializerSelector, StandaloneSerializer } = require_standalone2();
     module2.exports = SerializerSelector;
     module2.exports.default = SerializerSelector;
     module2.exports.SerializerSelector = SerializerSelector;
-    module2.exports.StandaloneSerializer = require_standalone2();
+    module2.exports.StandaloneSerializer = StandaloneSerializer;
   }
 });
 
@@ -22532,7 +22708,7 @@ var require_parseJson = __commonJS({
 });
 
 // ../../node_modules/ajv/dist/compile/jtd/parse.js
-var require_parse2 = __commonJS({
+var require_parse = __commonJS({
   "../../node_modules/ajv/dist/compile/jtd/parse.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -22890,7 +23066,7 @@ var require_jtd2 = __commonJS({
     var jtd_1 = require_jtd();
     var jtd_schema_1 = require_jtd_schema();
     var serialize_1 = require_serialize();
-    var parse_1 = require_parse2();
+    var parse_1 = require_parse();
     var META_SCHEMA_ID = "JTD-meta-schema";
     var Ajv = class extends core_1.default {
       constructor(opts = {}) {
@@ -23358,6 +23534,7 @@ var require_schema_controller = __commonJS({
 // ../../node_modules/semver/internal/constants.js
 var require_constants2 = __commonJS({
   "../../node_modules/semver/internal/constants.js"(exports2, module2) {
+    "use strict";
     var SEMVER_SPEC_VERSION = "2.0.0";
     var MAX_LENGTH = 256;
     var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || /* istanbul ignore next */
@@ -23389,6 +23566,7 @@ var require_constants2 = __commonJS({
 // ../../node_modules/semver/internal/debug.js
 var require_debug2 = __commonJS({
   "../../node_modules/semver/internal/debug.js"(exports2, module2) {
+    "use strict";
     var debug2 = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {
     };
     module2.exports = debug2;
@@ -23398,6 +23576,7 @@ var require_debug2 = __commonJS({
 // ../../node_modules/semver/internal/re.js
 var require_re = __commonJS({
   "../../node_modules/semver/internal/re.js"(exports2, module2) {
+    "use strict";
     var {
       MAX_SAFE_COMPONENT_LENGTH,
       MAX_SAFE_BUILD_LENGTH,
@@ -23438,8 +23617,8 @@ var require_re = __commonJS({
     createToken("NONNUMERICIDENTIFIER", `\\d*[a-zA-Z-]${LETTERDASHNUMBER}*`);
     createToken("MAINVERSION", `(${src[t.NUMERICIDENTIFIER]})\\.(${src[t.NUMERICIDENTIFIER]})\\.(${src[t.NUMERICIDENTIFIER]})`);
     createToken("MAINVERSIONLOOSE", `(${src[t.NUMERICIDENTIFIERLOOSE]})\\.(${src[t.NUMERICIDENTIFIERLOOSE]})\\.(${src[t.NUMERICIDENTIFIERLOOSE]})`);
-    createToken("PRERELEASEIDENTIFIER", `(?:${src[t.NUMERICIDENTIFIER]}|${src[t.NONNUMERICIDENTIFIER]})`);
-    createToken("PRERELEASEIDENTIFIERLOOSE", `(?:${src[t.NUMERICIDENTIFIERLOOSE]}|${src[t.NONNUMERICIDENTIFIER]})`);
+    createToken("PRERELEASEIDENTIFIER", `(?:${src[t.NONNUMERICIDENTIFIER]}|${src[t.NUMERICIDENTIFIER]})`);
+    createToken("PRERELEASEIDENTIFIERLOOSE", `(?:${src[t.NONNUMERICIDENTIFIER]}|${src[t.NUMERICIDENTIFIERLOOSE]})`);
     createToken("PRERELEASE", `(?:-(${src[t.PRERELEASEIDENTIFIER]}(?:\\.${src[t.PRERELEASEIDENTIFIER]})*))`);
     createToken("PRERELEASELOOSE", `(?:-?(${src[t.PRERELEASEIDENTIFIERLOOSE]}(?:\\.${src[t.PRERELEASEIDENTIFIERLOOSE]})*))`);
     createToken("BUILDIDENTIFIER", `${LETTERDASHNUMBER}+`);
@@ -23485,6 +23664,7 @@ var require_re = __commonJS({
 // ../../node_modules/semver/internal/parse-options.js
 var require_parse_options = __commonJS({
   "../../node_modules/semver/internal/parse-options.js"(exports2, module2) {
+    "use strict";
     var looseOption = Object.freeze({ loose: true });
     var emptyOpts = Object.freeze({});
     var parseOptions = (options) => {
@@ -23503,8 +23683,12 @@ var require_parse_options = __commonJS({
 // ../../node_modules/semver/internal/identifiers.js
 var require_identifiers = __commonJS({
   "../../node_modules/semver/internal/identifiers.js"(exports2, module2) {
+    "use strict";
     var numeric = /^[0-9]+$/;
     var compareIdentifiers = (a, b) => {
+      if (typeof a === "number" && typeof b === "number") {
+        return a === b ? 0 : a < b ? -1 : 1;
+      }
       const anum = numeric.test(a);
       const bnum = numeric.test(b);
       if (anum && bnum) {
@@ -23524,9 +23708,10 @@ var require_identifiers = __commonJS({
 // ../../node_modules/semver/classes/semver.js
 var require_semver = __commonJS({
   "../../node_modules/semver/classes/semver.js"(exports2, module2) {
+    "use strict";
     var debug2 = require_debug2();
     var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants2();
-    var { safeRe: re, safeSrc: src, t } = require_re();
+    var { safeRe: re, t } = require_re();
     var parseOptions = require_parse_options();
     var { compareIdentifiers } = require_identifiers();
     var SemVer = class _SemVer {
@@ -23610,7 +23795,25 @@ var require_semver = __commonJS({
         if (!(other instanceof _SemVer)) {
           other = new _SemVer(other, this.options);
         }
-        return compareIdentifiers(this.major, other.major) || compareIdentifiers(this.minor, other.minor) || compareIdentifiers(this.patch, other.patch);
+        if (this.major < other.major) {
+          return -1;
+        }
+        if (this.major > other.major) {
+          return 1;
+        }
+        if (this.minor < other.minor) {
+          return -1;
+        }
+        if (this.minor > other.minor) {
+          return 1;
+        }
+        if (this.patch < other.patch) {
+          return -1;
+        }
+        if (this.patch > other.patch) {
+          return 1;
+        }
+        return 0;
       }
       comparePre(other) {
         if (!(other instanceof _SemVer)) {
@@ -23671,8 +23874,7 @@ var require_semver = __commonJS({
             throw new Error("invalid increment argument: identifier is empty");
           }
           if (identifier) {
-            const r = new RegExp(`^${this.options.loose ? src[t.PRERELEASELOOSE] : src[t.PRERELEASE]}$`);
-            const match = `-${identifier}`.match(r);
+            const match = `-${identifier}`.match(this.options.loose ? re[t.PRERELEASELOOSE] : re[t.PRERELEASE]);
             if (!match || match[1] !== identifier) {
               throw new Error(`invalid identifier: ${identifier}`);
             }
@@ -23779,8 +23981,9 @@ var require_semver = __commonJS({
 });
 
 // ../../node_modules/semver/functions/parse.js
-var require_parse3 = __commonJS({
+var require_parse2 = __commonJS({
   "../../node_modules/semver/functions/parse.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var parse = (version, options, throwErrors = false) => {
       if (version instanceof SemVer) {
@@ -23802,7 +24005,8 @@ var require_parse3 = __commonJS({
 // ../../node_modules/semver/functions/valid.js
 var require_valid = __commonJS({
   "../../node_modules/semver/functions/valid.js"(exports2, module2) {
-    var parse = require_parse3();
+    "use strict";
+    var parse = require_parse2();
     var valid = (version, options) => {
       const v = parse(version, options);
       return v ? v.version : null;
@@ -23814,7 +24018,8 @@ var require_valid = __commonJS({
 // ../../node_modules/semver/functions/clean.js
 var require_clean = __commonJS({
   "../../node_modules/semver/functions/clean.js"(exports2, module2) {
-    var parse = require_parse3();
+    "use strict";
+    var parse = require_parse2();
     var clean = (version, options) => {
       const s = parse(version.trim().replace(/^[=v]+/, ""), options);
       return s ? s.version : null;
@@ -23826,6 +24031,7 @@ var require_clean = __commonJS({
 // ../../node_modules/semver/functions/inc.js
 var require_inc = __commonJS({
   "../../node_modules/semver/functions/inc.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var inc = (version, release, options, identifier, identifierBase) => {
       if (typeof options === "string") {
@@ -23849,7 +24055,8 @@ var require_inc = __commonJS({
 // ../../node_modules/semver/functions/diff.js
 var require_diff = __commonJS({
   "../../node_modules/semver/functions/diff.js"(exports2, module2) {
-    var parse = require_parse3();
+    "use strict";
+    var parse = require_parse2();
     var diff = (version1, version2) => {
       const v1 = parse(version1, null, true);
       const v2 = parse(version2, null, true);
@@ -23892,6 +24099,7 @@ var require_diff = __commonJS({
 // ../../node_modules/semver/functions/major.js
 var require_major = __commonJS({
   "../../node_modules/semver/functions/major.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var major = (a, loose) => new SemVer(a, loose).major;
     module2.exports = major;
@@ -23901,6 +24109,7 @@ var require_major = __commonJS({
 // ../../node_modules/semver/functions/minor.js
 var require_minor = __commonJS({
   "../../node_modules/semver/functions/minor.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var minor = (a, loose) => new SemVer(a, loose).minor;
     module2.exports = minor;
@@ -23910,6 +24119,7 @@ var require_minor = __commonJS({
 // ../../node_modules/semver/functions/patch.js
 var require_patch = __commonJS({
   "../../node_modules/semver/functions/patch.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var patch = (a, loose) => new SemVer(a, loose).patch;
     module2.exports = patch;
@@ -23919,7 +24129,8 @@ var require_patch = __commonJS({
 // ../../node_modules/semver/functions/prerelease.js
 var require_prerelease = __commonJS({
   "../../node_modules/semver/functions/prerelease.js"(exports2, module2) {
-    var parse = require_parse3();
+    "use strict";
+    var parse = require_parse2();
     var prerelease = (version, options) => {
       const parsed = parse(version, options);
       return parsed && parsed.prerelease.length ? parsed.prerelease : null;
@@ -23931,6 +24142,7 @@ var require_prerelease = __commonJS({
 // ../../node_modules/semver/functions/compare.js
 var require_compare = __commonJS({
   "../../node_modules/semver/functions/compare.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
     module2.exports = compare;
@@ -23940,6 +24152,7 @@ var require_compare = __commonJS({
 // ../../node_modules/semver/functions/rcompare.js
 var require_rcompare = __commonJS({
   "../../node_modules/semver/functions/rcompare.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var rcompare = (a, b, loose) => compare(b, a, loose);
     module2.exports = rcompare;
@@ -23949,6 +24162,7 @@ var require_rcompare = __commonJS({
 // ../../node_modules/semver/functions/compare-loose.js
 var require_compare_loose = __commonJS({
   "../../node_modules/semver/functions/compare-loose.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var compareLoose = (a, b) => compare(a, b, true);
     module2.exports = compareLoose;
@@ -23958,6 +24172,7 @@ var require_compare_loose = __commonJS({
 // ../../node_modules/semver/functions/compare-build.js
 var require_compare_build = __commonJS({
   "../../node_modules/semver/functions/compare-build.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var compareBuild = (a, b, loose) => {
       const versionA = new SemVer(a, loose);
@@ -23971,6 +24186,7 @@ var require_compare_build = __commonJS({
 // ../../node_modules/semver/functions/sort.js
 var require_sort = __commonJS({
   "../../node_modules/semver/functions/sort.js"(exports2, module2) {
+    "use strict";
     var compareBuild = require_compare_build();
     var sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose));
     module2.exports = sort;
@@ -23980,6 +24196,7 @@ var require_sort = __commonJS({
 // ../../node_modules/semver/functions/rsort.js
 var require_rsort = __commonJS({
   "../../node_modules/semver/functions/rsort.js"(exports2, module2) {
+    "use strict";
     var compareBuild = require_compare_build();
     var rsort = (list, loose) => list.sort((a, b) => compareBuild(b, a, loose));
     module2.exports = rsort;
@@ -23989,6 +24206,7 @@ var require_rsort = __commonJS({
 // ../../node_modules/semver/functions/gt.js
 var require_gt = __commonJS({
   "../../node_modules/semver/functions/gt.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var gt = (a, b, loose) => compare(a, b, loose) > 0;
     module2.exports = gt;
@@ -23998,6 +24216,7 @@ var require_gt = __commonJS({
 // ../../node_modules/semver/functions/lt.js
 var require_lt = __commonJS({
   "../../node_modules/semver/functions/lt.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var lt = (a, b, loose) => compare(a, b, loose) < 0;
     module2.exports = lt;
@@ -24007,6 +24226,7 @@ var require_lt = __commonJS({
 // ../../node_modules/semver/functions/eq.js
 var require_eq = __commonJS({
   "../../node_modules/semver/functions/eq.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var eq = (a, b, loose) => compare(a, b, loose) === 0;
     module2.exports = eq;
@@ -24016,6 +24236,7 @@ var require_eq = __commonJS({
 // ../../node_modules/semver/functions/neq.js
 var require_neq = __commonJS({
   "../../node_modules/semver/functions/neq.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var neq = (a, b, loose) => compare(a, b, loose) !== 0;
     module2.exports = neq;
@@ -24025,6 +24246,7 @@ var require_neq = __commonJS({
 // ../../node_modules/semver/functions/gte.js
 var require_gte = __commonJS({
   "../../node_modules/semver/functions/gte.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var gte = (a, b, loose) => compare(a, b, loose) >= 0;
     module2.exports = gte;
@@ -24034,6 +24256,7 @@ var require_gte = __commonJS({
 // ../../node_modules/semver/functions/lte.js
 var require_lte = __commonJS({
   "../../node_modules/semver/functions/lte.js"(exports2, module2) {
+    "use strict";
     var compare = require_compare();
     var lte = (a, b, loose) => compare(a, b, loose) <= 0;
     module2.exports = lte;
@@ -24043,6 +24266,7 @@ var require_lte = __commonJS({
 // ../../node_modules/semver/functions/cmp.js
 var require_cmp = __commonJS({
   "../../node_modules/semver/functions/cmp.js"(exports2, module2) {
+    "use strict";
     var eq = require_eq();
     var neq = require_neq();
     var gt = require_gt();
@@ -24092,8 +24316,9 @@ var require_cmp = __commonJS({
 // ../../node_modules/semver/functions/coerce.js
 var require_coerce = __commonJS({
   "../../node_modules/semver/functions/coerce.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
-    var parse = require_parse3();
+    var parse = require_parse2();
     var { safeRe: re, t } = require_re();
     var coerce = (version, options) => {
       if (version instanceof SemVer) {
@@ -24137,6 +24362,7 @@ var require_coerce = __commonJS({
 // ../../node_modules/semver/internal/lrucache.js
 var require_lrucache = __commonJS({
   "../../node_modules/semver/internal/lrucache.js"(exports2, module2) {
+    "use strict";
     var LRUCache = class {
       constructor() {
         this.max = 1e3;
@@ -24174,6 +24400,7 @@ var require_lrucache = __commonJS({
 // ../../node_modules/semver/classes/range.js
 var require_range = __commonJS({
   "../../node_modules/semver/classes/range.js"(exports2, module2) {
+    "use strict";
     var SPACE_CHARACTERS = /\s+/g;
     var Range = class _Range {
       constructor(range, options) {
@@ -24343,6 +24570,7 @@ var require_range = __commonJS({
       return result;
     };
     var parseComparator = (comp, options) => {
+      comp = comp.replace(re[t.BUILD], "");
       debug2("comp", comp, options);
       comp = replaceCarets(comp, options);
       debug2("caret", comp);
@@ -24549,6 +24777,7 @@ var require_range = __commonJS({
 // ../../node_modules/semver/classes/comparator.js
 var require_comparator = __commonJS({
   "../../node_modules/semver/classes/comparator.js"(exports2, module2) {
+    "use strict";
     var ANY = Symbol("SemVer ANY");
     var Comparator = class _Comparator {
       static get ANY() {
@@ -24661,6 +24890,7 @@ var require_comparator = __commonJS({
 // ../../node_modules/semver/functions/satisfies.js
 var require_satisfies = __commonJS({
   "../../node_modules/semver/functions/satisfies.js"(exports2, module2) {
+    "use strict";
     var Range = require_range();
     var satisfies = (version, range, options) => {
       try {
@@ -24677,6 +24907,7 @@ var require_satisfies = __commonJS({
 // ../../node_modules/semver/ranges/to-comparators.js
 var require_to_comparators = __commonJS({
   "../../node_modules/semver/ranges/to-comparators.js"(exports2, module2) {
+    "use strict";
     var Range = require_range();
     var toComparators = (range, options) => new Range(range, options).set.map((comp) => comp.map((c) => c.value).join(" ").trim().split(" "));
     module2.exports = toComparators;
@@ -24686,6 +24917,7 @@ var require_to_comparators = __commonJS({
 // ../../node_modules/semver/ranges/max-satisfying.js
 var require_max_satisfying = __commonJS({
   "../../node_modules/semver/ranges/max-satisfying.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var Range = require_range();
     var maxSatisfying = (versions, range, options) => {
@@ -24714,6 +24946,7 @@ var require_max_satisfying = __commonJS({
 // ../../node_modules/semver/ranges/min-satisfying.js
 var require_min_satisfying = __commonJS({
   "../../node_modules/semver/ranges/min-satisfying.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var Range = require_range();
     var minSatisfying = (versions, range, options) => {
@@ -24742,6 +24975,7 @@ var require_min_satisfying = __commonJS({
 // ../../node_modules/semver/ranges/min-version.js
 var require_min_version = __commonJS({
   "../../node_modules/semver/ranges/min-version.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var Range = require_range();
     var gt = require_gt();
@@ -24798,6 +25032,7 @@ var require_min_version = __commonJS({
 // ../../node_modules/semver/ranges/valid.js
 var require_valid2 = __commonJS({
   "../../node_modules/semver/ranges/valid.js"(exports2, module2) {
+    "use strict";
     var Range = require_range();
     var validRange = (range, options) => {
       try {
@@ -24813,6 +25048,7 @@ var require_valid2 = __commonJS({
 // ../../node_modules/semver/ranges/outside.js
 var require_outside = __commonJS({
   "../../node_modules/semver/ranges/outside.js"(exports2, module2) {
+    "use strict";
     var SemVer = require_semver();
     var Comparator = require_comparator();
     var { ANY } = Comparator;
@@ -24881,6 +25117,7 @@ var require_outside = __commonJS({
 // ../../node_modules/semver/ranges/gtr.js
 var require_gtr = __commonJS({
   "../../node_modules/semver/ranges/gtr.js"(exports2, module2) {
+    "use strict";
     var outside = require_outside();
     var gtr = (version, range, options) => outside(version, range, ">", options);
     module2.exports = gtr;
@@ -24890,6 +25127,7 @@ var require_gtr = __commonJS({
 // ../../node_modules/semver/ranges/ltr.js
 var require_ltr = __commonJS({
   "../../node_modules/semver/ranges/ltr.js"(exports2, module2) {
+    "use strict";
     var outside = require_outside();
     var ltr = (version, range, options) => outside(version, range, "<", options);
     module2.exports = ltr;
@@ -24899,6 +25137,7 @@ var require_ltr = __commonJS({
 // ../../node_modules/semver/ranges/intersects.js
 var require_intersects = __commonJS({
   "../../node_modules/semver/ranges/intersects.js"(exports2, module2) {
+    "use strict";
     var Range = require_range();
     var intersects = (r1, r2, options) => {
       r1 = new Range(r1, options);
@@ -24912,6 +25151,7 @@ var require_intersects = __commonJS({
 // ../../node_modules/semver/ranges/simplify.js
 var require_simplify = __commonJS({
   "../../node_modules/semver/ranges/simplify.js"(exports2, module2) {
+    "use strict";
     var satisfies = require_satisfies();
     var compare = require_compare();
     module2.exports = (versions, range, options) => {
@@ -24961,6 +25201,7 @@ var require_simplify = __commonJS({
 // ../../node_modules/semver/ranges/subset.js
 var require_subset = __commonJS({
   "../../node_modules/semver/ranges/subset.js"(exports2, module2) {
+    "use strict";
     var Range = require_range();
     var Comparator = require_comparator();
     var { ANY } = Comparator;
@@ -25122,11 +25363,12 @@ var require_subset = __commonJS({
 // ../../node_modules/semver/index.js
 var require_semver2 = __commonJS({
   "../../node_modules/semver/index.js"(exports2, module2) {
+    "use strict";
     var internalRe = require_re();
     var constants = require_constants2();
     var SemVer = require_semver();
     var identifiers = require_identifiers();
-    var parse = require_parse3();
+    var parse = require_parse2();
     var valid = require_valid();
     var clean = require_clean();
     var inc = require_inc();
@@ -25229,6 +25471,7 @@ var require_pluginUtils = __commonJS({
       FST_ERR_PLUGIN_NOT_PRESENT_IN_INSTANCE,
       FST_ERR_PLUGIN_INVALID_ASYNC_HANDLER
     } = require_errors2();
+    var rcRegex = /-(?:rc|pre|alpha).+$/u;
     function getMeta(fn) {
       return fn[Symbol.for("plugin-meta")];
     }
@@ -25299,9 +25542,9 @@ var require_pluginUtils = __commonJS({
     }
     function checkVersion(fn) {
       const meta = getMeta(fn);
-      if (meta == null || meta?.fastify == null) return;
+      if (meta?.fastify == null) return;
       const requiredVersion = meta.fastify;
-      const fastifyRc = /-(?:rc|pre|alpha).+$/.test(this.version);
+      const fastifyRc = rcRegex.test(this.version);
       if (fastifyRc === true && semver.gt(this.version, semver.coerce(requiredVersion)) === true) {
         return;
       }
@@ -25837,7 +26080,7 @@ var require_fast_decode_uri_component = __commonJS({
 });
 
 // ../../node_modules/fast-querystring/lib/parse.js
-var require_parse4 = __commonJS({
+var require_parse3 = __commonJS({
   "../../node_modules/fast-querystring/lib/parse.js"(exports2, module2) {
     "use strict";
     var fastDecode = require_fast_decode_uri_component();
@@ -26177,7 +26420,7 @@ var require_stringify = __commonJS({
 var require_lib = __commonJS({
   "../../node_modules/fast-querystring/lib/index.js"(exports2, module2) {
     "use strict";
-    var parse = require_parse4();
+    var parse = require_parse3();
     var stringify = require_stringify();
     var fastQuerystring = {
       parse,
@@ -26955,13 +27198,13 @@ var require_http_method = __commonJS({
     module2.exports = {
       name: "__fmw_internal_strategy_merged_tree_http_method__",
       storage: function() {
-        const handlers = {};
+        const handlers = /* @__PURE__ */ new Map();
         return {
           get: (type) => {
-            return handlers[type] || null;
+            return handlers.get(type) || null;
           },
           set: (type, store) => {
-            handlers[type] = store;
+            handlers.set(type, store);
           }
         };
       },
@@ -27465,7 +27708,7 @@ var require_accept_version = __commonJS({
       if (!(this instanceof SemVerStore)) {
         return new SemVerStore();
       }
-      this.store = {};
+      this.store = /* @__PURE__ */ new Map();
       this.maxMajor = 0;
       this.maxMinors = {};
       this.maxPatches = {};
@@ -27483,25 +27726,25 @@ var require_accept_version = __commonJS({
       patch = Number(patch) || 0;
       if (major >= this.maxMajor) {
         this.maxMajor = major;
-        this.store.x = store;
-        this.store["*"] = store;
-        this.store["x.x"] = store;
-        this.store["x.x.x"] = store;
+        this.store.set("x", store);
+        this.store.set("*", store);
+        this.store.set("x.x", store);
+        this.store.set("x.x.x", store);
       }
       if (minor >= (this.maxMinors[major] || 0)) {
         this.maxMinors[major] = minor;
-        this.store[`${major}.x`] = store;
-        this.store[`${major}.x.x`] = store;
+        this.store.set(`${major}.x`, store);
+        this.store.set(`${major}.x.x`, store);
       }
       if (patch >= (this.maxPatches[`${major}.${minor}`] || 0)) {
         this.maxPatches[`${major}.${minor}`] = patch;
-        this.store[`${major}.${minor}.x`] = store;
+        this.store.set(`${major}.${minor}.x`, store);
       }
-      this.store[`${major}.${minor}.${patch}`] = store;
+      this.store.set(`${major}.${minor}.${patch}`, store);
       return this;
     };
     SemVerStore.prototype.get = function(version) {
-      return this.store[version];
+      return this.store.get(version);
     };
     module2.exports = {
       name: "version",
@@ -27520,11 +27763,11 @@ var require_accept_host = __commonJS({
     "use strict";
     var assert = require("node:assert");
     function HostStorage() {
-      const hosts = {};
+      const hosts = /* @__PURE__ */ new Map();
       const regexHosts = [];
       return {
         get: (host) => {
-          const exact = hosts[host];
+          const exact = hosts.get(host);
           if (exact) {
             return exact;
           }
@@ -27538,7 +27781,7 @@ var require_accept_host = __commonJS({
           if (host instanceof RegExp) {
             regexHosts.push({ host, value });
           } else {
-            hosts[host] = value;
+            hosts.set(host, value);
           }
         }
       };
@@ -27841,11 +28084,19 @@ var require_find_my_way = __commonJS({
     var { safeDecodeURI, safeDecodeURIComponent } = require_url_sanitizer();
     var FULL_PATH_REGEXP = /^https?:\/\/.*?\//;
     var OPTIONAL_PARAM_REGEXP = /(\/:[^/()]*?)\?(\/?)/;
+    var ESCAPE_REGEXP = /[.*+?^${}()|[\]\\]/g;
+    var REMOVE_DUPLICATE_SLASHES_REGEXP = /\/\/+/g;
     if (!isRegexSafe(FULL_PATH_REGEXP)) {
       throw new Error("the FULL_PATH_REGEXP is not safe, update this module");
     }
     if (!isRegexSafe(OPTIONAL_PARAM_REGEXP)) {
       throw new Error("the OPTIONAL_PARAM_REGEXP is not safe, update this module");
+    }
+    if (!isRegexSafe(ESCAPE_REGEXP)) {
+      throw new Error("the ESCAPE_REGEXP is not safe, update this module");
+    }
+    if (!isRegexSafe(REMOVE_DUPLICATE_SLASHES_REGEXP)) {
+      throw new Error("the REMOVE_DUPLICATE_SLASHES_REGEXP is not safe, update this module");
     }
     function Router(opts) {
       if (!(this instanceof Router)) {
@@ -28394,10 +28645,10 @@ var require_find_my_way = __commonJS({
     };
     module2.exports = Router;
     function escapeRegExp(string) {
-      return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return string.replace(ESCAPE_REGEXP, "\\$&");
     }
     function removeDuplicateSlashes(path) {
-      return path.replace(/\/\/+/g, "/");
+      return path.indexOf("//") !== -1 ? path.replace(REMOVE_DUPLICATE_SLASHES_REGEXP, "/") : path;
     }
     function trimLastSlash(path) {
       if (path.length > 1 && path.charCodeAt(path.length - 1) === 47) {
@@ -28446,14 +28697,16 @@ var require_headRoute = __commonJS({
     function headRouteOnSendHandler(req, reply, payload, done) {
       if (payload === void 0) {
         reply.header("content-length", "0");
-        return done(null, null);
+        done(null, null);
+        return;
       }
       if (typeof payload.resume === "function") {
         payload.on("error", (err) => {
           reply.log.error({ err }, "Error on Stream found for HEAD route");
         });
         payload.resume();
-        return done(null, null);
+        done(null, null);
+        return;
       }
       const size = "" + Buffer.byteLength(payload);
       reply.header("content-length", size);
@@ -28499,6 +28752,7 @@ var require_route = __commonJS({
       FST_ERR_ROUTE_BODY_LIMIT_OPTION_NOT_INT,
       FST_ERR_HOOK_INVALID_ASYNC_HANDLER
     } = require_errors2();
+    var { FSTDEP022 } = require_warnings();
     var {
       kRoutePrefix,
       kSupportedHTTPMethods,
@@ -28521,6 +28775,19 @@ var require_route = __commonJS({
     var { buildErrorHandler } = require_error_handler();
     var { createChildLogger } = require_logger_factory();
     var { getGenReqId } = require_reqIdGenFactory();
+    var routerKeys = [
+      "allowUnsafeRegex",
+      "buildPrettyMeta",
+      "caseSensitive",
+      "constraints",
+      "defaultRoute",
+      "ignoreDuplicateSlashes",
+      "ignoreTrailingSlash",
+      "maxParamLength",
+      "onBadUrl",
+      "querystringParser",
+      "useSemicolonDelimiter"
+    ];
     function buildRouting(options) {
       const router = FindMyWay(options.config);
       let avvio;
@@ -28550,8 +28817,8 @@ var require_route = __commonJS({
           throwIfAlreadyStarted = fastifyArgs.throwIfAlreadyStarted;
           globalExposeHeadRoutes = options2.exposeHeadRoutes;
           disableRequestLogging = options2.disableRequestLogging;
-          ignoreTrailingSlash = options2.ignoreTrailingSlash;
-          ignoreDuplicateSlashes = options2.ignoreDuplicateSlashes;
+          ignoreTrailingSlash = options2.routerOptions.ignoreTrailingSlash;
+          ignoreDuplicateSlashes = options2.routerOptions.ignoreDuplicateSlashes;
           return503OnClosing = Object.hasOwn(options2, "return503OnClosing") ? options2.return503OnClosing : true;
           keepAliveConnections = fastifyArgs.keepAliveConnections;
         },
@@ -28935,12 +29202,25 @@ var require_route = __commonJS({
         handleRequest.call(request.server, null, request, reply);
       }
     }
+    function buildRouterOptions(options, defaultOptions) {
+      const routerOptions = options.routerOptions || /* @__PURE__ */ Object.create(null);
+      const usedDeprecatedOptions = routerKeys.filter((key2) => Object.hasOwn(options, key2));
+      if (usedDeprecatedOptions.length > 0) {
+        FSTDEP022(usedDeprecatedOptions.join(", "));
+      }
+      for (const key2 of routerKeys) {
+        if (!Object.hasOwn(routerOptions, key2)) {
+          routerOptions[key2] = options[key2] ?? defaultOptions[key2];
+        }
+      }
+      return routerOptions;
+    }
     function removeTrackedSocket() {
       this.keepAliveConnections.delete(this.socket);
     }
     function noop() {
     }
-    module2.exports = { buildRouting, validateBodyLimitOption };
+    module2.exports = { buildRouting, validateBodyLimitOption, buildRouterOptions };
   }
 });
 
@@ -29096,7 +29376,7 @@ var require_configValidator = __commonJS({
     "use strict";
     module2.exports = validate10;
     module2.exports.default = validate10;
-    var schema11 = { "type": "object", "additionalProperties": false, "properties": { "connectionTimeout": { "type": "integer", "default": 0 }, "keepAliveTimeout": { "type": "integer", "default": 72e3 }, "forceCloseConnections": { "oneOf": [{ "type": "string", "pattern": "idle" }, { "type": "boolean" }] }, "maxRequestsPerSocket": { "type": "integer", "default": 0, "nullable": true }, "requestTimeout": { "type": "integer", "default": 0 }, "bodyLimit": { "type": "integer", "default": 1048576 }, "caseSensitive": { "type": "boolean", "default": true }, "allowUnsafeRegex": { "type": "boolean", "default": false }, "http2": { "type": "boolean" }, "https": { "if": { "not": { "oneOf": [{ "type": "boolean" }, { "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["allowHTTP1"], "properties": { "allowHTTP1": { "type": "boolean" } } }] } }, "then": { "setDefaultValue": true } }, "ignoreTrailingSlash": { "type": "boolean", "default": false }, "ignoreDuplicateSlashes": { "type": "boolean", "default": false }, "disableRequestLogging": { "type": "boolean", "default": false }, "maxParamLength": { "type": "integer", "default": 100 }, "onProtoPoisoning": { "type": "string", "default": "error" }, "onConstructorPoisoning": { "type": "string", "default": "error" }, "pluginTimeout": { "type": "integer", "default": 1e4 }, "requestIdHeader": { "anyOf": [{ "type": "boolean" }, { "type": "string" }], "default": false }, "requestIdLogLabel": { "type": "string", "default": "reqId" }, "http2SessionTimeout": { "type": "integer", "default": 72e3 }, "exposeHeadRoutes": { "type": "boolean", "default": true }, "useSemicolonDelimiter": { "type": "boolean", "default": false }, "constraints": { "type": "object", "additionalProperties": { "type": "object", "required": ["name", "storage", "validate", "deriveConstraint"], "additionalProperties": true, "properties": { "name": { "type": "string" }, "storage": {}, "validate": {}, "deriveConstraint": {} } } } } };
+    var schema11 = { "type": "object", "additionalProperties": false, "properties": { "connectionTimeout": { "type": "integer", "default": 0 }, "keepAliveTimeout": { "type": "integer", "default": 72e3 }, "forceCloseConnections": { "oneOf": [{ "type": "string", "pattern": "idle" }, { "type": "boolean" }] }, "maxRequestsPerSocket": { "type": "integer", "default": 0, "nullable": true }, "requestTimeout": { "type": "integer", "default": 0 }, "bodyLimit": { "type": "integer", "default": 1048576 }, "caseSensitive": { "type": "boolean", "default": true }, "allowUnsafeRegex": { "type": "boolean", "default": false }, "http2": { "type": "boolean" }, "https": { "if": { "not": { "oneOf": [{ "type": "boolean" }, { "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["allowHTTP1"], "properties": { "allowHTTP1": { "type": "boolean" } } }] } }, "then": { "setDefaultValue": true } }, "ignoreTrailingSlash": { "type": "boolean", "default": false }, "ignoreDuplicateSlashes": { "type": "boolean", "default": false }, "disableRequestLogging": { "type": "boolean", "default": false }, "maxParamLength": { "type": "integer", "default": 100 }, "onProtoPoisoning": { "type": "string", "default": "error" }, "onConstructorPoisoning": { "type": "string", "default": "error" }, "pluginTimeout": { "type": "integer", "default": 1e4 }, "requestIdHeader": { "anyOf": [{ "type": "boolean" }, { "type": "string" }], "default": false }, "requestIdLogLabel": { "type": "string", "default": "reqId" }, "http2SessionTimeout": { "type": "integer", "default": 72e3 }, "exposeHeadRoutes": { "type": "boolean", "default": true }, "useSemicolonDelimiter": { "type": "boolean", "default": false }, "routerOptions": { "type": "object", "additionalProperties": false, "properties": { "ignoreTrailingSlash": { "type": "boolean", "default": false }, "ignoreDuplicateSlashes": { "type": "boolean", "default": false }, "maxParamLength": { "type": "integer", "default": 100 }, "allowUnsafeRegex": { "type": "boolean", "default": false }, "useSemicolonDelimiter": { "type": "boolean", "default": false } } }, "constraints": { "type": "object", "additionalProperties": { "type": "object", "required": ["name", "storage", "validate", "deriveConstraint"], "additionalProperties": true, "properties": { "name": { "type": "string" }, "storage": {}, "validate": {}, "deriveConstraint": {} } } } } };
     var func2 = Object.prototype.hasOwnProperty;
     var pattern0 = new RegExp("idle", "u");
     function validate10(data, { instancePath = "", parentData, parentDataProperty, rootData = data } = {}) {
@@ -30010,63 +30290,219 @@ var require_configValidator = __commonJS({
                                                       }
                                                       var valid0 = _errs67 === errors;
                                                       if (valid0) {
-                                                        if (data.constraints !== void 0) {
-                                                          let data23 = data.constraints;
+                                                        if (data.routerOptions !== void 0) {
+                                                          let data23 = data.routerOptions;
                                                           const _errs69 = errors;
                                                           if (errors === _errs69) {
                                                             if (data23 && typeof data23 == "object" && !Array.isArray(data23)) {
+                                                              if (data23.ignoreTrailingSlash === void 0) {
+                                                                data23.ignoreTrailingSlash = false;
+                                                              }
+                                                              if (data23.ignoreDuplicateSlashes === void 0) {
+                                                                data23.ignoreDuplicateSlashes = false;
+                                                              }
+                                                              if (data23.maxParamLength === void 0) {
+                                                                data23.maxParamLength = 100;
+                                                              }
+                                                              if (data23.allowUnsafeRegex === void 0) {
+                                                                data23.allowUnsafeRegex = false;
+                                                              }
+                                                              if (data23.useSemicolonDelimiter === void 0) {
+                                                                data23.useSemicolonDelimiter = false;
+                                                              }
+                                                              const _errs71 = errors;
                                                               for (const key2 in data23) {
-                                                                let data24 = data23[key2];
+                                                                if (!(key2 === "ignoreTrailingSlash" || key2 === "ignoreDuplicateSlashes" || key2 === "maxParamLength" || key2 === "allowUnsafeRegex" || key2 === "useSemicolonDelimiter")) {
+                                                                  delete data23[key2];
+                                                                }
+                                                              }
+                                                              if (_errs71 === errors) {
+                                                                let data24 = data23.ignoreTrailingSlash;
                                                                 const _errs72 = errors;
-                                                                if (errors === _errs72) {
-                                                                  if (data24 && typeof data24 == "object" && !Array.isArray(data24)) {
-                                                                    let missing1;
-                                                                    if (data24.name === void 0 && (missing1 = "name") || data24.storage === void 0 && (missing1 = "storage") || data24.validate === void 0 && (missing1 = "validate") || data24.deriveConstraint === void 0 && (missing1 = "deriveConstraint")) {
-                                                                      validate10.errors = [{ instancePath: instancePath + "/constraints/" + key2.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "#/properties/constraints/additionalProperties/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
-                                                                      return false;
+                                                                if (typeof data24 !== "boolean") {
+                                                                  let coerced26 = void 0;
+                                                                  if (!(coerced26 !== void 0)) {
+                                                                    if (data24 === "false" || data24 === 0 || data24 === null) {
+                                                                      coerced26 = false;
+                                                                    } else if (data24 === "true" || data24 === 1) {
+                                                                      coerced26 = true;
                                                                     } else {
-                                                                      if (data24.name !== void 0) {
-                                                                        let data25 = data24.name;
-                                                                        if (typeof data25 !== "string") {
-                                                                          let dataType26 = typeof data25;
-                                                                          let coerced26 = void 0;
-                                                                          if (!(coerced26 !== void 0)) {
-                                                                            if (dataType26 == "number" || dataType26 == "boolean") {
-                                                                              coerced26 = "" + data25;
-                                                                            } else if (data25 === null) {
-                                                                              coerced26 = "";
-                                                                            } else {
-                                                                              validate10.errors = [{ instancePath: instancePath + "/constraints/" + key2.replace(/~/g, "~0").replace(/\//g, "~1") + "/name", schemaPath: "#/properties/constraints/additionalProperties/properties/name/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
-                                                                              return false;
-                                                                            }
-                                                                          }
-                                                                          if (coerced26 !== void 0) {
-                                                                            data25 = coerced26;
-                                                                            if (data24 !== void 0) {
-                                                                              data24["name"] = coerced26;
-                                                                            }
-                                                                          }
-                                                                        }
-                                                                      }
+                                                                      validate10.errors = [{ instancePath: instancePath + "/routerOptions/ignoreTrailingSlash", schemaPath: "#/properties/routerOptions/properties/ignoreTrailingSlash/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                                                                      return false;
                                                                     }
-                                                                  } else {
-                                                                    validate10.errors = [{ instancePath: instancePath + "/constraints/" + key2.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "#/properties/constraints/additionalProperties/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
-                                                                    return false;
+                                                                  }
+                                                                  if (coerced26 !== void 0) {
+                                                                    data24 = coerced26;
+                                                                    if (data23 !== void 0) {
+                                                                      data23["ignoreTrailingSlash"] = coerced26;
+                                                                    }
                                                                   }
                                                                 }
                                                                 var valid7 = _errs72 === errors;
-                                                                if (!valid7) {
-                                                                  break;
+                                                                if (valid7) {
+                                                                  let data25 = data23.ignoreDuplicateSlashes;
+                                                                  const _errs74 = errors;
+                                                                  if (typeof data25 !== "boolean") {
+                                                                    let coerced27 = void 0;
+                                                                    if (!(coerced27 !== void 0)) {
+                                                                      if (data25 === "false" || data25 === 0 || data25 === null) {
+                                                                        coerced27 = false;
+                                                                      } else if (data25 === "true" || data25 === 1) {
+                                                                        coerced27 = true;
+                                                                      } else {
+                                                                        validate10.errors = [{ instancePath: instancePath + "/routerOptions/ignoreDuplicateSlashes", schemaPath: "#/properties/routerOptions/properties/ignoreDuplicateSlashes/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                                                                        return false;
+                                                                      }
+                                                                    }
+                                                                    if (coerced27 !== void 0) {
+                                                                      data25 = coerced27;
+                                                                      if (data23 !== void 0) {
+                                                                        data23["ignoreDuplicateSlashes"] = coerced27;
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                  var valid7 = _errs74 === errors;
+                                                                  if (valid7) {
+                                                                    let data26 = data23.maxParamLength;
+                                                                    const _errs76 = errors;
+                                                                    if (!(typeof data26 == "number" && (!(data26 % 1) && !isNaN(data26)) && isFinite(data26))) {
+                                                                      let dataType28 = typeof data26;
+                                                                      let coerced28 = void 0;
+                                                                      if (!(coerced28 !== void 0)) {
+                                                                        if (dataType28 === "boolean" || data26 === null || dataType28 === "string" && data26 && data26 == +data26 && !(data26 % 1)) {
+                                                                          coerced28 = +data26;
+                                                                        } else {
+                                                                          validate10.errors = [{ instancePath: instancePath + "/routerOptions/maxParamLength", schemaPath: "#/properties/routerOptions/properties/maxParamLength/type", keyword: "type", params: { type: "integer" }, message: "must be integer" }];
+                                                                          return false;
+                                                                        }
+                                                                      }
+                                                                      if (coerced28 !== void 0) {
+                                                                        data26 = coerced28;
+                                                                        if (data23 !== void 0) {
+                                                                          data23["maxParamLength"] = coerced28;
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                    var valid7 = _errs76 === errors;
+                                                                    if (valid7) {
+                                                                      let data27 = data23.allowUnsafeRegex;
+                                                                      const _errs78 = errors;
+                                                                      if (typeof data27 !== "boolean") {
+                                                                        let coerced29 = void 0;
+                                                                        if (!(coerced29 !== void 0)) {
+                                                                          if (data27 === "false" || data27 === 0 || data27 === null) {
+                                                                            coerced29 = false;
+                                                                          } else if (data27 === "true" || data27 === 1) {
+                                                                            coerced29 = true;
+                                                                          } else {
+                                                                            validate10.errors = [{ instancePath: instancePath + "/routerOptions/allowUnsafeRegex", schemaPath: "#/properties/routerOptions/properties/allowUnsafeRegex/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                                                                            return false;
+                                                                          }
+                                                                        }
+                                                                        if (coerced29 !== void 0) {
+                                                                          data27 = coerced29;
+                                                                          if (data23 !== void 0) {
+                                                                            data23["allowUnsafeRegex"] = coerced29;
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                      var valid7 = _errs78 === errors;
+                                                                      if (valid7) {
+                                                                        let data28 = data23.useSemicolonDelimiter;
+                                                                        const _errs80 = errors;
+                                                                        if (typeof data28 !== "boolean") {
+                                                                          let coerced30 = void 0;
+                                                                          if (!(coerced30 !== void 0)) {
+                                                                            if (data28 === "false" || data28 === 0 || data28 === null) {
+                                                                              coerced30 = false;
+                                                                            } else if (data28 === "true" || data28 === 1) {
+                                                                              coerced30 = true;
+                                                                            } else {
+                                                                              validate10.errors = [{ instancePath: instancePath + "/routerOptions/useSemicolonDelimiter", schemaPath: "#/properties/routerOptions/properties/useSemicolonDelimiter/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" }];
+                                                                              return false;
+                                                                            }
+                                                                          }
+                                                                          if (coerced30 !== void 0) {
+                                                                            data28 = coerced30;
+                                                                            if (data23 !== void 0) {
+                                                                              data23["useSemicolonDelimiter"] = coerced30;
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                        var valid7 = _errs80 === errors;
+                                                                      }
+                                                                    }
+                                                                  }
                                                                 }
                                                               }
                                                             } else {
-                                                              validate10.errors = [{ instancePath: instancePath + "/constraints", schemaPath: "#/properties/constraints/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                                                              validate10.errors = [{ instancePath: instancePath + "/routerOptions", schemaPath: "#/properties/routerOptions/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
                                                               return false;
                                                             }
                                                           }
                                                           var valid0 = _errs69 === errors;
                                                         } else {
                                                           var valid0 = true;
+                                                        }
+                                                        if (valid0) {
+                                                          if (data.constraints !== void 0) {
+                                                            let data29 = data.constraints;
+                                                            const _errs82 = errors;
+                                                            if (errors === _errs82) {
+                                                              if (data29 && typeof data29 == "object" && !Array.isArray(data29)) {
+                                                                for (const key3 in data29) {
+                                                                  let data30 = data29[key3];
+                                                                  const _errs85 = errors;
+                                                                  if (errors === _errs85) {
+                                                                    if (data30 && typeof data30 == "object" && !Array.isArray(data30)) {
+                                                                      let missing1;
+                                                                      if (data30.name === void 0 && (missing1 = "name") || data30.storage === void 0 && (missing1 = "storage") || data30.validate === void 0 && (missing1 = "validate") || data30.deriveConstraint === void 0 && (missing1 = "deriveConstraint")) {
+                                                                        validate10.errors = [{ instancePath: instancePath + "/constraints/" + key3.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "#/properties/constraints/additionalProperties/required", keyword: "required", params: { missingProperty: missing1 }, message: "must have required property '" + missing1 + "'" }];
+                                                                        return false;
+                                                                      } else {
+                                                                        if (data30.name !== void 0) {
+                                                                          let data31 = data30.name;
+                                                                          if (typeof data31 !== "string") {
+                                                                            let dataType31 = typeof data31;
+                                                                            let coerced31 = void 0;
+                                                                            if (!(coerced31 !== void 0)) {
+                                                                              if (dataType31 == "number" || dataType31 == "boolean") {
+                                                                                coerced31 = "" + data31;
+                                                                              } else if (data31 === null) {
+                                                                                coerced31 = "";
+                                                                              } else {
+                                                                                validate10.errors = [{ instancePath: instancePath + "/constraints/" + key3.replace(/~/g, "~0").replace(/\//g, "~1") + "/name", schemaPath: "#/properties/constraints/additionalProperties/properties/name/type", keyword: "type", params: { type: "string" }, message: "must be string" }];
+                                                                                return false;
+                                                                              }
+                                                                            }
+                                                                            if (coerced31 !== void 0) {
+                                                                              data31 = coerced31;
+                                                                              if (data30 !== void 0) {
+                                                                                data30["name"] = coerced31;
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    } else {
+                                                                      validate10.errors = [{ instancePath: instancePath + "/constraints/" + key3.replace(/~/g, "~0").replace(/\//g, "~1"), schemaPath: "#/properties/constraints/additionalProperties/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                                                                      return false;
+                                                                    }
+                                                                  }
+                                                                  var valid8 = _errs85 === errors;
+                                                                  if (!valid8) {
+                                                                    break;
+                                                                  }
+                                                                }
+                                                              } else {
+                                                                validate10.errors = [{ instancePath: instancePath + "/constraints", schemaPath: "#/properties/constraints/type", keyword: "type", params: { type: "object" }, message: "must be object" }];
+                                                                return false;
+                                                              }
+                                                            }
+                                                            var valid0 = _errs82 === errors;
+                                                          } else {
+                                                            var valid0 = true;
+                                                          }
                                                         }
                                                       }
                                                     }
@@ -30099,7 +30535,7 @@ var require_configValidator = __commonJS({
       validate10.errors = vErrors;
       return errors === 0;
     }
-    module2.exports.defaultInitOptions = { "connectionTimeout": 0, "keepAliveTimeout": 72e3, "maxRequestsPerSocket": 0, "requestTimeout": 0, "bodyLimit": 1048576, "caseSensitive": true, "allowUnsafeRegex": false, "disableRequestLogging": false, "ignoreTrailingSlash": false, "ignoreDuplicateSlashes": false, "maxParamLength": 100, "onProtoPoisoning": "error", "onConstructorPoisoning": "error", "pluginTimeout": 1e4, "requestIdHeader": false, "requestIdLogLabel": "reqId", "http2SessionTimeout": 72e3, "exposeHeadRoutes": true, "useSemicolonDelimiter": false };
+    module2.exports.defaultInitOptions = { "connectionTimeout": 0, "keepAliveTimeout": 72e3, "maxRequestsPerSocket": 0, "requestTimeout": 0, "bodyLimit": 1048576, "caseSensitive": true, "allowUnsafeRegex": false, "disableRequestLogging": false, "ignoreTrailingSlash": false, "ignoreDuplicateSlashes": false, "maxParamLength": 100, "onProtoPoisoning": "error", "onConstructorPoisoning": "error", "pluginTimeout": 1e4, "requestIdHeader": false, "requestIdLogLabel": "reqId", "http2SessionTimeout": 72e3, "exposeHeadRoutes": true, "useSemicolonDelimiter": false, "allowErrorHandlerOverride": true, "routerOptions": { "ignoreTrailingSlash": false, "ignoreDuplicateSlashes": false, "maxParamLength": 100, "allowUnsafeRegex": false, "useSemicolonDelimiter": false } };
   }
 });
 
@@ -30152,7 +30588,8 @@ var require_pluginOverride = __commonJS({
       kReply,
       kRequest,
       kFourOhFour,
-      kPluginNameChain
+      kPluginNameChain,
+      kErrorHandlerAlreadySet
     } = require_symbols2();
     var Reply = require_reply();
     var Request = require_request();
@@ -30182,6 +30619,7 @@ var require_pluginOverride = __commonJS({
       instance.getSchemas = instance[kSchemaController].getSchemas.bind(instance[kSchemaController]);
       instance[pluginUtils.kRegisteredPlugins] = Object.create(instance[pluginUtils.kRegisteredPlugins]);
       instance[kPluginNameChain] = [fnName];
+      instance[kErrorHandlerAlreadySet] = false;
       if (instance[kLogSerializers] || opts.logSerializers) {
         instance[kLogSerializers] = Object.assign(Object.create(instance[kLogSerializers]), opts.logSerializers);
       }
@@ -30384,6 +30822,64 @@ var require_dist4 = __commonJS({
   }
 });
 
+// ../../node_modules/light-my-request/node_modules/process-warning/index.js
+var require_process_warning2 = __commonJS({
+  "../../node_modules/light-my-request/node_modules/process-warning/index.js"(exports2, module2) {
+    "use strict";
+    var { format } = require("node:util");
+    function createDeprecation(params) {
+      return createWarning({ ...params, name: "DeprecationWarning" });
+    }
+    function createWarning({ name, code, message, unlimited = false } = {}) {
+      if (!name) throw new Error("Warning name must not be empty");
+      if (!code) throw new Error("Warning code must not be empty");
+      if (!message) throw new Error("Warning message must not be empty");
+      if (typeof unlimited !== "boolean") throw new Error("Warning opts.unlimited must be a boolean");
+      code = code.toUpperCase();
+      let warningContainer = {
+        [name]: function(a, b, c) {
+          if (warning.emitted === true && warning.unlimited !== true) {
+            return;
+          }
+          warning.emitted = true;
+          process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
+        }
+      };
+      if (unlimited) {
+        warningContainer = {
+          [name]: function(a, b, c) {
+            warning.emitted = true;
+            process.emitWarning(warning.format(a, b, c), warning.name, warning.code);
+          }
+        };
+      }
+      const warning = warningContainer[name];
+      warning.emitted = false;
+      warning.message = message;
+      warning.unlimited = unlimited;
+      warning.code = code;
+      warning.format = function(a, b, c) {
+        let formatted;
+        if (a && b && c) {
+          formatted = format(message, a, b, c);
+        } else if (a && b) {
+          formatted = format(message, a, b);
+        } else if (a) {
+          formatted = format(message, a);
+        } else {
+          formatted = message;
+        }
+        return formatted;
+      };
+      return warning;
+    }
+    var out = { createWarning, createDeprecation };
+    module2.exports = out;
+    module2.exports.default = out;
+    module2.exports.processWarning = out;
+  }
+});
+
 // ../../node_modules/light-my-request/lib/parse-url.js
 var require_parse_url = __commonJS({
   "../../node_modules/light-my-request/lib/parse-url.js"(exports2, module2) {
@@ -30485,7 +30981,7 @@ var require_request2 = __commonJS({
     var util = require("node:util");
     var cookie = require_dist4();
     var assert = require("node:assert");
-    var { createDeprecation } = require_process_warning();
+    var { createDeprecation } = require_process_warning2();
     var parseURL = require_parse_url();
     var { isFormDataLike, formDataToStream } = require_form_data();
     var { EventEmitter } = require("node:events");
@@ -32022,7 +32518,7 @@ var require_light_my_request = __commonJS({
 var require_fastify = __commonJS({
   "../../node_modules/fastify/fastify.js"(exports2, module2) {
     "use strict";
-    var VERSION = "5.2.1";
+    var VERSION = "5.6.1";
     var Avvio = require_boot();
     var http = require("node:http");
     var diagnostics = require("node:diagnostics_channel");
@@ -32051,7 +32547,8 @@ var require_fastify = __commonJS({
       kErrorHandler,
       kKeepAliveConnections,
       kChildLoggerFactory,
-      kGenReqId
+      kGenReqId,
+      kErrorHandlerAlreadySet
     } = require_symbols2();
     var { createServer } = require_server();
     var Reply = require_reply();
@@ -32064,7 +32561,7 @@ var require_fastify = __commonJS({
     var { createChildLogger, defaultChildLoggerFactory, createLogger } = require_logger_factory();
     var pluginUtils = require_pluginUtils();
     var { getGenReqId, reqIdGenFactory } = require_reqIdGenFactory();
-    var { buildRouting, validateBodyLimitOption } = require_route();
+    var { buildRouting, validateBodyLimitOption, buildRouterOptions } = require_route();
     var build404 = require_fourOhFour();
     var getSecuredInitialConfig = require_initialConfigValidation();
     var override = require_pluginOverride();
@@ -32074,6 +32571,7 @@ var require_fastify = __commonJS({
       AVVIO_ERRORS_MAP,
       ...errorCodes
     } = require_errors2();
+    var PonyPromise = require_promise();
     var { defaultInitOptions } = getSecuredInitialConfig;
     var {
       FST_ERR_ASYNC_CONSTRAINT,
@@ -32089,9 +32587,11 @@ var require_fastify = __commonJS({
       FST_ERR_ROUTE_REWRITE_NOT_STR,
       FST_ERR_SCHEMA_ERROR_FORMATTER_NOT_FN,
       FST_ERR_ERROR_HANDLER_NOT_FN,
+      FST_ERR_ERROR_HANDLER_ALREADY_SET,
       FST_ERR_ROUTE_METHOD_INVALID
     } = errorCodes;
     var { buildErrorHandler } = require_error_handler();
+    var { FSTWRN004 } = require_warnings();
     var initChannel = diagnostics.channel("fastify.initialization");
     function defaultBuildPrettyMeta(route) {
       const cleanKeys = {};
@@ -32107,8 +32607,8 @@ var require_fastify = __commonJS({
       } else {
         options = Object.assign({}, options);
       }
-      if (options.querystringParser && typeof options.querystringParser !== "function") {
-        throw new FST_ERR_QSP_NOT_FN(typeof options.querystringParser);
+      if (options.querystringParser && typeof options.querystringParser !== "function" || options.routerOptions?.querystringParser && typeof options.routerOptions.querystringParser !== "function") {
+        throw new FST_ERR_QSP_NOT_FN(typeof (options.querystringParser ?? options.routerOptions.querystringParser));
       }
       if (options.schemaController && options.schemaController.bucket && typeof options.schemaController.bucket !== "function") {
         throw new FST_ERR_SCHEMA_CONTROLLER_BUCKET_OPT_NOT_FN(typeof options.schemaController.bucket);
@@ -32141,22 +32641,21 @@ var require_fastify = __commonJS({
       options.disableRequestLogging = disableRequestLogging;
       options.ajv = ajvOptions;
       options.clientErrorHandler = options.clientErrorHandler || defaultClientErrorHandler;
+      options.allowErrorHandlerOverride = options.allowErrorHandlerOverride ?? defaultInitOptions.allowErrorHandlerOverride;
       const initialConfig = getSecuredInitialConfig(options);
       options.exposeHeadRoutes = initialConfig.exposeHeadRoutes;
+      options.routerOptions = buildRouterOptions(options, {
+        defaultRoute,
+        onBadUrl,
+        ignoreTrailingSlash: defaultInitOptions.ignoreTrailingSlash,
+        ignoreDuplicateSlashes: defaultInitOptions.ignoreDuplicateSlashes,
+        maxParamLength: defaultInitOptions.maxParamLength,
+        allowUnsafeRegex: defaultInitOptions.allowUnsafeRegex,
+        buildPrettyMeta: defaultBuildPrettyMeta,
+        useSemicolonDelimiter: defaultInitOptions.useSemicolonDelimiter
+      });
       const router = buildRouting({
-        config: {
-          defaultRoute,
-          onBadUrl,
-          constraints: options.constraints,
-          ignoreTrailingSlash: options.ignoreTrailingSlash || defaultInitOptions.ignoreTrailingSlash,
-          ignoreDuplicateSlashes: options.ignoreDuplicateSlashes || defaultInitOptions.ignoreDuplicateSlashes,
-          maxParamLength: options.maxParamLength || defaultInitOptions.maxParamLength,
-          caseSensitive: options.caseSensitive,
-          allowUnsafeRegex: options.allowUnsafeRegex || defaultInitOptions.allowUnsafeRegex,
-          buildPrettyMeta: defaultBuildPrettyMeta,
-          querystringParser: options.querystringParser,
-          useSemicolonDelimiter: options.useSemicolonDelimiter ?? defaultInitOptions.useSemicolonDelimiter
-        }
+        config: options.routerOptions
       });
       const fourOhFour = build404(options);
       const httpHandler = wrapRouting(router, options);
@@ -32164,6 +32663,7 @@ var require_fastify = __commonJS({
       const { server, listen } = createServer(options, httpHandler);
       const serverHasCloseAllConnections = typeof server.closeAllConnections === "function";
       const serverHasCloseIdleConnections = typeof server.closeIdleConnections === "function";
+      const serverHasCloseHttp2Sessions = typeof server.closeHttp2Sessions === "function";
       let forceCloseConnections = options.forceCloseConnections;
       if (forceCloseConnections === "idle" && !serverHasCloseIdleConnections) {
         throw new FST_ERR_FORCE_CLOSE_CONNECTIONS_IDLE_NOT_AVAILABLE();
@@ -32181,7 +32681,8 @@ var require_fastify = __commonJS({
           started: false,
           ready: false,
           booting: false,
-          readyPromise: null
+          aborted: false,
+          readyResolver: null
         },
         [kKeepAliveConnections]: keepAliveConnections,
         [kSupportedHTTPMethods]: {
@@ -32211,6 +32712,7 @@ var require_fastify = __commonJS({
         [kSchemaController]: schemaController,
         [kSchemaErrorFormatter]: null,
         [kErrorHandler]: buildErrorHandler(),
+        [kErrorHandlerAlreadySet]: false,
         [kChildLoggerFactory]: defaultChildLoggerFactory,
         [kReplySerializerDefault]: null,
         [kContentTypeParser]: new ContentTypeParser(
@@ -32314,6 +32816,7 @@ var require_fastify = __commonJS({
         decorateRequest: decorator.decorateRequest,
         hasRequestDecorator: decorator.existRequest,
         hasReplyDecorator: decorator.existReply,
+        getDecorator: decorator.getInstanceDecorator,
         addHttpMethod,
         // fake http injection
         inject,
@@ -32436,6 +32939,9 @@ var require_fastify = __commonJS({
                 }
               }
             }
+            if (serverHasCloseHttp2Sessions) {
+              instance.server.closeHttp2Sessions();
+            }
             if (!options.serverFactory || fastify3[kState].listening) {
               instance.server.close(function(err) {
                 if (err && err.code !== "ERR_SERVER_NOT_RUNNING") {
@@ -32512,24 +33018,19 @@ var require_fastify = __commonJS({
         }
       }
       function ready(cb) {
-        if (this[kState].readyPromise !== null) {
+        if (this[kState].readyResolver !== null) {
           if (cb != null) {
-            this[kState].readyPromise.then(() => cb(null, fastify3), cb);
+            this[kState].readyResolver.promise.then(() => cb(null, fastify3), cb);
             return;
           }
-          return this[kState].readyPromise;
+          return this[kState].readyResolver.promise;
         }
-        let resolveReady;
-        let rejectReady;
         process.nextTick(runHooks);
-        this[kState].readyPromise = new Promise(function(resolve, reject) {
-          resolveReady = resolve;
-          rejectReady = reject;
-        });
+        this[kState].readyResolver = PonyPromise.withResolvers();
         if (!cb) {
-          return this[kState].readyPromise;
+          return this[kState].readyResolver.promise;
         } else {
-          this[kState].readyPromise.then(() => cb(null, fastify3), cb);
+          this[kState].readyResolver.promise.then(() => cb(null, fastify3), cb);
         }
         function runHooks() {
           fastify3[kAvvioBoot]((err, done) => {
@@ -32545,12 +33046,12 @@ var require_fastify = __commonJS({
         function manageErr(err) {
           err = err != null && AVVIO_ERRORS_MAP[err.code] != null ? appendStackTrace(err, new AVVIO_ERRORS_MAP[err.code](err.message)) : err;
           if (err) {
-            return rejectReady(err);
+            return fastify3[kState].readyResolver.reject(err);
           }
-          resolveReady(fastify3);
+          fastify3[kState].readyResolver.resolve(fastify3);
           fastify3[kState].booting = false;
           fastify3[kState].ready = true;
-          fastify3[kState].promise = null;
+          fastify3[kState].readyResolver = null;
         }
       }
       function withTypeProvider() {
@@ -32584,8 +33085,12 @@ var require_fastify = __commonJS({
           this[kHooks].add(name, fn);
         } else {
           this.after((err, done) => {
-            _addHook.call(this, name, fn);
-            done(err);
+            try {
+              _addHook.call(this, name, fn);
+              done(err);
+            } catch (err2) {
+              done(err2);
+            }
           });
         }
         return this;
@@ -32719,6 +33224,12 @@ ${body}`);
         if (typeof func !== "function") {
           throw new FST_ERR_ERROR_HANDLER_NOT_FN();
         }
+        if (!options.allowErrorHandlerOverride && this[kErrorHandlerAlreadySet]) {
+          throw new FST_ERR_ERROR_HANDLER_ALREADY_SET();
+        } else if (this[kErrorHandlerAlreadySet]) {
+          FSTWRN004("To disable this behavior, set 'allowErrorHandlerOverride' to false or ignore this message. For more information, visit: https://fastify.dev/docs/latest/Reference/Server/#allowerrorhandleroverride");
+        }
+        this[kErrorHandlerAlreadySet] = true;
         this[kErrorHandler] = buildErrorHandler(this[kErrorHandler], func.bind(this));
         return this;
       }
@@ -32797,6 +33308,7 @@ var PROVIDERS = {
   openai: "openai",
   together: "together",
   groq: "groq",
+  grok: "grok",
   custom: "custom"
 };
 function detectProvider(baseUrl2) {
@@ -32807,6 +33319,7 @@ function detectProvider(baseUrl2) {
     if (host.includes("api.openai.com")) return PROVIDERS.openai;
     if (host.includes("together.ai") || host.includes("together.xyz")) return PROVIDERS.together;
     if (host.includes("api.groq.com")) return PROVIDERS.groq;
+    if (host.includes("api.x.ai")) return PROVIDERS.grok;
     return PROVIDERS.custom;
   } catch {
     return PROVIDERS.custom;
@@ -32817,13 +33330,15 @@ function resolveApiKey(provider2, env = process.env) {
   if (provider2 === PROVIDERS.custom && custom) return custom;
   if (provider2 === PROVIDERS.openai && env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (provider2 === PROVIDERS.together && env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (provider2 === PROVIDERS.groq && env.GROQ_API_KEY) return env.GROQ_API_KEY;
+  if (provider2 === PROVIDERS.groq && (env.GROQ_API_KEY || env.GROK_API_KEY)) return env.GROQ_API_KEY || env.GROK_API_KEY;
+  if (provider2 === PROVIDERS.grok && (env.XAI_API_KEY || env.GROK_API_KEY)) return env.XAI_API_KEY || env.GROK_API_KEY;
   if (provider2 === PROVIDERS.openrouter && env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
   if (custom) return custom;
   if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (env.GROQ_API_KEY) return env.GROQ_API_KEY;
+  if (env.GROQ_API_KEY || env.GROK_API_KEY) return env.GROQ_API_KEY || env.GROK_API_KEY;
+  if (env.XAI_API_KEY) return env.XAI_API_KEY;
   return null;
 }
 function providerSpecificHeaders(provider2, env = process.env) {
@@ -32837,6 +33352,43 @@ function providerSpecificHeaders(provider2, env = process.env) {
   return headers;
 }
 
+// ../../transform.js
+function normalizeContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.filter((item) => item && item.type === "text" && typeof item.text === "string").map((item) => item.text).join(" ");
+  }
+  return null;
+}
+function removeUriFormat(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (schema.type === "string" && schema.format === "uri") {
+    const { format, ...rest } = schema;
+    return rest;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((item) => removeUriFormat(item));
+  }
+  const result = {};
+  for (const key2 in schema) {
+    if (key2 === "properties" && typeof schema[key2] === "object") {
+      result[key2] = {};
+      for (const propKey in schema[key2]) {
+        result[key2][propKey] = removeUriFormat(schema[key2][propKey]);
+      }
+    } else if (key2 === "items" && typeof schema[key2] === "object") {
+      result[key2] = removeUriFormat(schema[key2]);
+    } else if (key2 === "additionalProperties" && typeof schema[key2] === "object") {
+      result[key2] = removeUriFormat(schema[key2]);
+    } else if (["anyOf", "allOf", "oneOf"].includes(key2) && Array.isArray(schema[key2])) {
+      result[key2] = schema[key2].map((item) => removeUriFormat(item));
+    } else {
+      result[key2] = removeUriFormat(schema[key2]);
+    }
+  }
+  return result;
+}
+
 // ../../index.js
 var baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || "https://openrouter.ai/api";
 var provider = detectProvider(baseUrl);
@@ -32846,6 +33398,19 @@ var models = {
   reasoning: process.env.REASONING_MODEL || model,
   completion: process.env.COMPLETION_MODEL || model
 };
+console.log("[Startup] Claude Throne Proxy initializing...");
+console.log("[Startup] Configuration:");
+console.log(`[Startup] - Provider: ${provider}`);
+console.log(`[Startup] - Base URL: ${baseUrl}`);
+console.log(`[Startup] - Reasoning Model: ${models.reasoning}`);
+console.log(`[Startup] - Completion Model: ${models.completion}`);
+console.log(`[Startup] - API Key: ${key ? "present" : "MISSING"}`);
+console.log(`[Startup] - Debug Mode: ${process.env.DEBUG ? "enabled" : "disabled"}`);
+if (models.reasoning !== models.completion) {
+  console.log("[Startup] - Two-model mode detected");
+} else {
+  console.log("[Startup] - Single-model mode");
+}
 var fastify = (0, import_fastify.default)({
   logger: true
 });
@@ -32853,6 +33418,7 @@ function debug(...args) {
   if (!process.env.DEBUG) return;
   console.log(...args);
 }
+var safeWords = (v) => typeof v === "string" ? v.split(/\s+/).filter(Boolean).length : 0;
 var sendSSE = (reply, event, data) => {
   const sseMessage = `event: ${event}
 data: ${JSON.stringify(data)}
@@ -32896,40 +33462,19 @@ fastify.get("/v1/models", async (request, reply) => {
     reply.code(500).send({ error: String(err?.message || err) });
   }
 });
-fastify.post("/v1/messages", async (request, reply) => {
+fastify.get("/healthz", async (request, reply) => {
+  return {
+    status: "ok",
+    version: "1.4.5",
+    // TODO: read from package.json
+    provider,
+    baseUrl,
+    models
+  };
+});
+fastify.post("/v1/debug/echo", async (request, reply) => {
   try {
-    let sendSuccessMessage = function() {
-      if (isSucceeded) return;
-      isSucceeded = true;
-      reply.raw.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive"
-      });
-      const messageId = "msg_" + Math.random().toString(36).substr(2, 24);
-      sendSSE(reply, "message_start", {
-        type: "message_start",
-        message: {
-          id: messageId,
-          type: "message",
-          role: "assistant",
-          model: openaiPayload.model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 0, output_tokens: 0 }
-        }
-      });
-      sendSSE(reply, "ping", { type: "ping" });
-    };
     const payload = request.body;
-    const normalizeContent = (content) => {
-      if (typeof content === "string") return content;
-      if (Array.isArray(content)) {
-        return content.filter((item) => item && item.type === "text" && typeof item.text === "string").map((item) => item.text).join(" ");
-      }
-      return null;
-    };
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
       payload.system.forEach((sysMsg) => {
@@ -32974,34 +33519,6 @@ fastify.post("/v1/messages", async (request, reply) => {
         }
       });
     }
-    const removeUriFormat = (schema) => {
-      if (!schema || typeof schema !== "object") return schema;
-      if (schema.type === "string" && schema.format === "uri") {
-        const { format, ...rest } = schema;
-        return rest;
-      }
-      if (Array.isArray(schema)) {
-        return schema.map((item) => removeUriFormat(item));
-      }
-      const result = {};
-      for (const key2 in schema) {
-        if (key2 === "properties" && typeof schema[key2] === "object") {
-          result[key2] = {};
-          for (const propKey in schema[key2]) {
-            result[key2][propKey] = removeUriFormat(schema[key2][propKey]);
-          }
-        } else if (key2 === "items" && typeof schema[key2] === "object") {
-          result[key2] = removeUriFormat(schema[key2]);
-        } else if (key2 === "additionalProperties" && typeof schema[key2] === "object") {
-          result[key2] = removeUriFormat(schema[key2]);
-        } else if (["anyOf", "allOf", "oneOf"].includes(key2) && Array.isArray(schema[key2])) {
-          result[key2] = schema[key2].map((item) => removeUriFormat(item));
-        } else {
-          result[key2] = removeUriFormat(schema[key2]);
-        }
-      }
-      return result;
-    };
     const tools = (payload.tools || []).filter((tool) => !["BatchTool"].includes(tool.name)).map((tool) => ({
       type: "function",
       function: {
@@ -33010,8 +33527,143 @@ fastify.post("/v1/messages", async (request, reply) => {
         parameters: removeUriFormat(tool.input_schema)
       }
     }));
+    const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
     const openaiPayload = {
-      model: payload.thinking ? models.reasoning : models.completion,
+      model: selectedModel,
+      messages,
+      max_tokens: payload.max_tokens,
+      temperature: payload.temperature !== void 0 ? payload.temperature : 1,
+      stream: payload.stream === true
+    };
+    if (tools.length > 0) openaiPayload.tools = tools;
+    const headers = {
+      "Content-Type": "application/json",
+      ...providerSpecificHeaders(provider)
+    };
+    if (key) {
+      headers["Authorization"] = "Bearer ***REDACTED***";
+    }
+    return {
+      debug: true,
+      modelSelection: {
+        requestedModel: payload.model || null,
+        selectedModel,
+        reasoningModel: models.reasoning,
+        completionModel: models.completion,
+        wasOverridden: !payload.model,
+        thinking: payload.thinking || false
+      },
+      configuration: {
+        provider,
+        baseUrl,
+        hasApiKey: !!key
+      },
+      headers,
+      openaiPayload
+    };
+  } catch (err) {
+    console.error(err);
+    reply.code(500);
+    return { error: err.message };
+  }
+});
+fastify.post("/v1/messages", async (request, reply) => {
+  try {
+    let sendSuccessMessage = function() {
+      if (isSucceeded) return;
+      isSucceeded = true;
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      const messageId = "msg_" + Math.random().toString(36).substr(2, 24);
+      sendSSE(reply, "message_start", {
+        type: "message_start",
+        message: {
+          id: messageId,
+          type: "message",
+          role: "assistant",
+          model: openaiPayload.model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 }
+        }
+      });
+      sendSSE(reply, "ping", { type: "ping" });
+    };
+    const payload = request.body;
+    const messages = [];
+    if (payload.system && Array.isArray(payload.system)) {
+      payload.system.forEach((sysMsg) => {
+        const normalized = normalizeContent(sysMsg.text || sysMsg.content);
+        if (normalized) {
+          messages.push({
+            role: "system",
+            content: normalized
+          });
+        }
+      });
+    }
+    if (payload.messages && Array.isArray(payload.messages)) {
+      payload.messages.forEach((msg) => {
+        const items = Array.isArray(msg.content) ? msg.content : [];
+        const toolUseItems = items.filter((item) => item.type === "tool_use");
+        const toolResultItems = items.filter((item) => item.type === "tool_result");
+        const normalized = normalizeContent(msg.content);
+        const newMsg = { role: msg.role };
+        if (normalized) newMsg.content = normalized;
+        if (msg.role === "assistant" && toolUseItems.length > 0) {
+          newMsg.tool_calls = toolUseItems.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.input ?? {})
+            }
+          }));
+        }
+        if (newMsg.content || newMsg.tool_calls) {
+          messages.push(newMsg);
+        }
+        if (toolResultItems.length > 0) {
+          toolResultItems.forEach((tr) => {
+            messages.push({
+              role: "tool",
+              content: typeof tr.text === "string" ? tr.text : tr.content ?? "",
+              tool_call_id: tr.tool_use_id
+            });
+          });
+        }
+      });
+    }
+    const tools = (payload.tools || []).filter((tool) => !["BatchTool"].includes(tool.name)).map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: removeUriFormat(tool.input_schema)
+      }
+    }));
+    const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
+    const modelSource = payload.model ? "explicit request" : payload.thinking ? "REASONING_MODEL env var" : "COMPLETION_MODEL env var";
+    debug("Model selection:", {
+      requestedModel: payload.model || "none",
+      selectedModel,
+      source: modelSource,
+      reasoning: models.reasoning,
+      completion: models.completion,
+      wasOverridden: !payload.model,
+      thinking: payload.thinking || false
+    });
+    if (!payload.model) {
+      console.log(`[Model] Auto-selected ${selectedModel} (${modelSource})`);
+    } else {
+      console.log(`[Model] Using requested model: ${selectedModel}`);
+    }
+    const openaiPayload = {
+      model: selectedModel,
       messages,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
@@ -33034,19 +33686,50 @@ fastify.post("/v1/messages", async (request, reply) => {
         error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`
       };
     }
+    const requestStartMs = Date.now();
+    let firstChunkLogged = false;
+    let ttfbMs = null;
+    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`);
+    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`);
+    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`);
+    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || "default"}, Temperature: ${openaiPayload.temperature}`);
     const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify(openaiPayload)
     });
+    const elapsedMs = Date.now() - requestStartMs;
+    console.log(`[Timing] Request completed in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
     if (!openaiResponse.ok) {
       const errorDetails = await openaiResponse.text();
+      debug("OpenRouter error response:", {
+        status: openaiResponse.status,
+        statusText: openaiResponse.statusText,
+        baseUrl,
+        requestedModel: payload.model,
+        selectedModel: openaiPayload.model,
+        elapsedMs,
+        errorBody: errorDetails
+      });
       reply.code(openaiResponse.status);
-      return { error: errorDetails };
+      try {
+        const errorJson = JSON.parse(errorDetails);
+        debug("Parsed error JSON:", errorJson);
+        return errorJson;
+      } catch {
+        debug("Error response was not valid JSON, returning string wrapper");
+        return { error: errorDetails };
+      }
     }
+    debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json();
       debug("OpenAI response:", data);
+      const inputTokens = data.usage?.prompt_tokens || 0;
+      const outputTokens = data.usage?.completion_tokens || 0;
+      const totalTokens = inputTokens + outputTokens;
+      console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`);
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1e3)).toFixed(1)} tokens/sec)`);
       if (data.error) {
         throw new Error(data.error.message);
       }
@@ -33075,8 +33758,8 @@ fastify.post("/v1/messages", async (request, reply) => {
         stop_sequence: null,
         type: "message",
         usage: {
-          input_tokens: data.usage ? data.usage.prompt_tokens : messages.reduce((acc, msg) => acc + msg.content.split(" ").length, 0),
-          output_tokens: data.usage ? data.usage.completion_tokens : openaiMessage.content.split(" ").length
+          input_tokens: data.usage ? data.usage.prompt_tokens : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
+          output_tokens: data.usage ? data.usage.completion_tokens : safeWords(openaiMessage.content)
         }
       };
       return anthropicResponse;
@@ -33096,13 +33779,27 @@ fastify.post("/v1/messages", async (request, reply) => {
       done = doneReading;
       if (value) {
         const chunk = decoder.decode(value);
-        debug("OpenAI response chunk:", chunk);
+        if (!firstChunkLogged && chunk.trim()) {
+          ttfbMs = Date.now() - requestStartMs;
+          debug("Streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
+          firstChunkLogged = true;
+        }
+        if (process.env.DEBUG_CHUNKS) {
+          debug("OpenAI response chunk:", chunk);
+        }
         const lines = chunk.split("\n");
         for (const line of lines) {
           const trimmed = line.trim();
           if (trimmed === "" || !trimmed.startsWith("data:")) continue;
           const dataStr = trimmed.replace(/^data:\s*/, "");
           if (dataStr === "[DONE]") {
+            const totalStreamMs = Date.now() - requestStartMs;
+            debug("Streaming completion timing:", {
+              totalStreamMs,
+              ttfbMs,
+              totalResponseTime: totalStreamMs,
+              serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
+            });
             if (encounteredToolCall) {
               for (const idx in toolCallAccumulators) {
                 sendSSE(reply, "content_block_stop", {
@@ -33122,7 +33819,7 @@ fastify.post("/v1/messages", async (request, reply) => {
                 stop_reason: encounteredToolCall ? "tool_use" : "end_turn",
                 stop_sequence: null
               },
-              usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: accumulatedContent.split(" ").length + accumulatedReasoning.split(" ").length }
+              usage: usage ? { output_tokens: usage.completion_tokens } : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
             });
             sendSSE(reply, "message_stop", {
               type: "message_stop"
@@ -33226,20 +33923,15 @@ fastify.post("/v1/messages", async (request, reply) => {
 });
 var start = async () => {
   try {
-    await fastify.listen({ port: process.env.PORT || 3e3 });
+    const portArg = process.argv.indexOf("--port");
+    const port = portArg > -1 ? parseInt(process.argv[portArg + 1], 10) : process.env.PORT || 3e3;
+    await fastify.listen({ port });
   } catch (err) {
     process.exit(1);
   }
 };
 start();
 /*! Bundled license information:
-
-@fastify/forwarded/index.js:
-  (*!
-   * forwarded
-   * Copyright(c) 2014-2017 Douglas Christopher Wilson
-   * MIT Licensed
-   *)
 
 @fastify/proxy-addr/index.js:
   (*!

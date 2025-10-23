@@ -3,6 +3,10 @@ import { request } from 'undici'
 export type ProviderId = 'openrouter' | 'openai' | 'together' | 'grok' | 'custom'
 
 export async function listModels(provider: ProviderId, baseUrl: string, apiKey: string): Promise<string[]> {
+  if (provider === 'custom' && (!baseUrl || !baseUrl.trim())) {
+    throw new Error('Custom provider requires a base URL')
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 

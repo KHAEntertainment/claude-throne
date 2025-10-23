@@ -185,6 +185,9 @@
 
   // Provider handling
     function onProviderChange(e) {
+    // Clear the specific provider's cache before changing
+    delete state.modelsCache[state.provider];
+    
     state.provider = e.target.value;
     state.models = [];
     state.primaryModel = '';
@@ -358,6 +361,10 @@
     state.twoModelMode = e.target.checked;
     updateTwoModelUI();
     saveState();
+    
+    // Notify backend to update twoModelMode config
+    console.log('[onTwoModelToggle] Sending toggleTwoModelMode message:', state.twoModelMode);
+    vscode.postMessage({ type: 'toggleTwoModelMode', enabled: state.twoModelMode });
   }
 
   function updateTwoModelUI() {
@@ -452,9 +459,51 @@
     if (state.provider === 'custom') {
       const customUrl = document.getElementById('customUrl')?.value;
       if (!customUrl || !customUrl.trim()) {
+        // Clear cached models for custom provider
+        state.modelsCache[state.provider] = [];
+        
         const container = document.getElementById('modelListContainer');
         if (container) {
-          container.innerHTML = '<div class="empty-state">Enter custom endpoint URL to load models</div>';
+          container.innerHTML = `
+            <div class="empty-state">
+              <p>Enter custom endpoint URL to load models, or enter model names manually:</p>
+              <input type="text" id="manualModelInput" placeholder="e.g., gpt-4, claude-3-opus" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border);" />
+              <button id="addManualModelBtn" style="margin-top: 8px; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Model</button>
+            </div>
+          `;
+          
+          // Add event listener for manual model entry
+          const addBtn = container.querySelector('#addManualModelBtn');
+          const input = container.querySelector('#manualModelInput');
+          
+          if (addBtn && input) {
+            addBtn.addEventListener('click', () => {
+              const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
+              if (modelNames.length > 0) {
+                // Create model objects
+                const newModels = modelNames.map(name => ({
+                  id: name,
+                  name: name,
+                  provider: 'custom'
+                }));
+                
+                // Add to state.models
+                state.models = [...state.models, ...newModels];
+                
+                // Render the updated list
+                renderModelList();
+                
+                // Clear input
+                input.value = '';
+              }
+            });
+            
+            input.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') {
+                addBtn.click();
+              }
+            });
+          }
         }
         return;
       }
@@ -601,6 +650,9 @@
     saveState();
     renderModelList();
 
+    // Notify backend that two-model mode is enabled
+    vscode.postMessage({ type: 'toggleTwoModelMode', enabled: true });
+
     vscode.postMessage({
       type: 'saveModels',
       reasoning: reasoning,
@@ -615,6 +667,14 @@
 
   // Proxy Controls
   function startProxy() {
+    // Log diagnostic info before starting proxy
+    console.log('[startProxy] Starting proxy with config:', {
+      twoModelMode: state.twoModelMode,
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel,
+      provider: state.provider,
+      port: state.port
+    });
     vscode.postMessage({ type: 'startProxy' });
   }
 
@@ -653,6 +713,10 @@
 
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
+    
+    // Clear models and cache when config is reloaded (e.g., after revert)
+    state.models = [];
+    state.modelsCache = {};
     
     // Update UI with config
     if (config.provider) {
@@ -701,6 +765,9 @@
       state.models = payload.models;
       state.modelsCache[state.provider] = payload.models;
       renderModelList();
+      
+      // Update save combo button visibility after models are loaded
+      updateSaveComboButton();
     }
   }
 

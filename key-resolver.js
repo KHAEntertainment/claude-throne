@@ -6,6 +6,7 @@ const PROVIDERS = {
   openai: 'openai',
   together: 'together',
   groq: 'groq',
+  grok: 'grok',
   custom: 'custom',
 }
 
@@ -17,6 +18,7 @@ export function detectProvider(baseUrl) {
     if (host.includes('api.openai.com')) return PROVIDERS.openai
     if (host.includes('together.ai') || host.includes('together.xyz')) return PROVIDERS.together
     if (host.includes('api.groq.com')) return PROVIDERS.groq
+    if (host.includes('api.x.ai')) return PROVIDERS.grok
     return PROVIDERS.custom
   } catch {
     return PROVIDERS.custom
@@ -31,7 +33,8 @@ export function resolveApiKey(provider, env = process.env) {
   // Provider-specific
   if (provider === PROVIDERS.openai && env.OPENAI_API_KEY) return env.OPENAI_API_KEY
   if (provider === PROVIDERS.together && env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY
-  if (provider === PROVIDERS.groq && env.GROQ_API_KEY) return env.GROQ_API_KEY
+  if (provider === PROVIDERS.groq && (env.GROQ_API_KEY || env.GROK_API_KEY)) return env.GROQ_API_KEY || env.GROK_API_KEY
+  if (provider === PROVIDERS.grok && (env.XAI_API_KEY || env.GROK_API_KEY)) return env.XAI_API_KEY || env.GROK_API_KEY
   if (provider === PROVIDERS.openrouter && env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY
 
   // Fallbacks
@@ -39,7 +42,8 @@ export function resolveApiKey(provider, env = process.env) {
   if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY
   if (env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY
-  if (env.GROQ_API_KEY) return env.GROQ_API_KEY
+  if (env.GROQ_API_KEY || env.GROK_API_KEY) return env.GROQ_API_KEY || env.GROK_API_KEY
+  if (env.XAI_API_KEY) return env.XAI_API_KEY
   return null
 }
 

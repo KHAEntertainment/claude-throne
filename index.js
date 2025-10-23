@@ -2,6 +2,7 @@
 import Fastify from 'fastify'
 import { TextDecoder } from 'util'
 import { detectProvider, resolveApiKey, providerSpecificHeaders } from './key-resolver.js'
+import { normalizeContent, removeUriFormat } from './transform.js'
 
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
 const provider = detectProvider(baseUrl)
@@ -12,6 +13,21 @@ const models = {
   completion: process.env.COMPLETION_MODEL || model,
 }
 
+// Startup diagnostics
+console.log('[Startup] Claude Throne Proxy initializing...')
+console.log('[Startup] Configuration:')
+console.log(`[Startup] - Provider: ${provider}`)
+console.log(`[Startup] - Base URL: ${baseUrl}`)
+console.log(`[Startup] - Reasoning Model: ${models.reasoning}`)
+console.log(`[Startup] - Completion Model: ${models.completion}`)
+console.log(`[Startup] - API Key: ${key ? 'present' : 'MISSING'}`)
+console.log(`[Startup] - Debug Mode: ${process.env.DEBUG ? 'enabled' : 'disabled'}`)
+if (models.reasoning !== models.completion) {
+  console.log('[Startup] - Two-model mode detected')
+} else {
+  console.log('[Startup] - Single-model mode')
+}
+
 const fastify = Fastify({
   logger: true
 })
@@ -19,6 +35,17 @@ function debug(...args) {
   if (!process.env.DEBUG) return
   console.log(...args)
 }
+
+// Helper to roughly count tokens; tolerates undefined/null.
+function countTokens(text) {
+  if (typeof text !== 'string' || !text) {
+    return 0;
+  }
+  return text.split(' ').length;
+}
+
+// Safe word count for usage fallback
+const safeWords = (v) => typeof v === 'string' ? v.split(/\s+/).filter(Boolean).length : 0;
 
 // Helper function to send SSE events and flush immediately.
 const sendSSE = (reply, event, data) => {
@@ -63,23 +90,132 @@ fastify.get('/v1/models', async (request, reply) => {
   }
 })
 
+fastify.get('/healthz', async (request, reply) => {
+    return {
+        status: 'ok',
+        version: '1.4.5', // TODO: read from package.json
+        provider,
+        baseUrl,
+        models,
+    }
+});
+
+fastify.post('/v1/debug/echo', async (request, reply) => {
+  try {
+    const payload = request.body
+
+
+
+    const messages = []
+    if (payload.system && Array.isArray(payload.system)) {
+      payload.system.forEach(sysMsg => {
+        const normalized = normalizeContent(sysMsg.text || sysMsg.content)
+        if (normalized) {
+          messages.push({
+            role: 'system',
+            content: normalized
+          })
+        }
+      })
+    }
+    if (payload.messages && Array.isArray(payload.messages)) {
+      payload.messages.forEach(msg => {
+        const items = Array.isArray(msg.content) ? msg.content : []
+        const toolUseItems = items.filter(item => item.type === 'tool_use')
+        const toolResultItems = items.filter(item => item.type === 'tool_result')
+
+        const normalized = normalizeContent(msg.content)
+        const newMsg = { role: msg.role }
+        if (normalized) newMsg.content = normalized
+
+        if (msg.role === 'assistant' && toolUseItems.length > 0) {
+          newMsg.tool_calls = toolUseItems.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.input ?? {}),
+            },
+          }))
+        }
+
+        if (newMsg.content || newMsg.tool_calls) {
+          messages.push(newMsg)
+        }
+
+        if (toolResultItems.length > 0) {
+          toolResultItems.forEach(tr => {
+            messages.push({
+              role: 'tool',
+              content: typeof tr.text === 'string' ? tr.text : (tr.content ?? ''),
+              tool_call_id: tr.tool_use_id,
+            })
+          })
+        }
+      })
+    }
+
+
+
+    const tools = (payload.tools || []).filter(tool => !['BatchTool'].includes(tool.name)).map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: removeUriFormat(tool.input_schema),
+      },
+    }))
+
+    const selectedModel = payload.model 
+      || (payload.thinking ? models.reasoning : models.completion)
+
+    const openaiPayload = {
+      model: selectedModel,
+      messages,
+      max_tokens: payload.max_tokens,
+      temperature: payload.temperature !== undefined ? payload.temperature : 1,
+      stream: payload.stream === true,
+    }
+    if (tools.length > 0) openaiPayload.tools = tools
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...providerSpecificHeaders(provider)
+    }
+    if (key) {
+      headers['Authorization'] = 'Bearer ***REDACTED***'
+    }
+
+    return {
+      debug: true,
+      modelSelection: {
+        requestedModel: payload.model || null,
+        selectedModel,
+        reasoningModel: models.reasoning,
+        completionModel: models.completion,
+        wasOverridden: !payload.model,
+        thinking: payload.thinking || false
+      },
+      configuration: {
+        provider,
+        baseUrl,
+        hasApiKey: !!key
+      },
+      headers,
+      openaiPayload
+    }
+  } catch (err) {
+    console.error(err)
+    reply.code(500)
+    return { error: err.message }
+  }
+})
+
 fastify.post('/v1/messages', async (request, reply) => {
   try {
     const payload = request.body
 
-    // Helper to normalize a message's content.
-    // If content is a string, return it directly.
-    // If it's an array (of objects with text property), join them.
-    const normalizeContent = (content) => {
-      if (typeof content === 'string') return content
-      if (Array.isArray(content)) {
-        return content
-          .filter(item => item && item.type === 'text' && typeof item.text === 'string')
-          .map(item => item.text)
-          .join(' ')
-      }
-      return null
-    }
+
 
     // Build messages array for the OpenAI payload.
     // Start with system messages if provided.
@@ -136,42 +272,7 @@ fastify.post('/v1/messages', async (request, reply) => {
       })
     }
 
-    // Prepare the OpenAI payload.
-    // Helper function to recursively traverse JSON schema and remove format: 'uri'
-    const removeUriFormat = (schema) => {
-      if (!schema || typeof schema !== 'object') return schema;
 
-      // If this is a string type with uri format, remove the format
-      if (schema.type === 'string' && schema.format === 'uri') {
-        const { format, ...rest } = schema;
-        return rest;
-      }
-
-      // Handle array of schemas (like in anyOf, allOf, oneOf)
-      if (Array.isArray(schema)) {
-        return schema.map(item => removeUriFormat(item));
-      }
-
-      // Recursively process all properties
-      const result = {};
-      for (const key in schema) {
-      if (key === 'properties' && typeof schema[key] === 'object') {
-        result[key] = {};
-        for (const propKey in schema[key]) {
-          result[key][propKey] = removeUriFormat(schema[key][propKey]);
-        }
-      } else if (key === 'items' && typeof schema[key] === 'object') {
-        result[key] = removeUriFormat(schema[key]);
-      } else if (key === 'additionalProperties' && typeof schema[key] === 'object') {
-        result[key] = removeUriFormat(schema[key]);
-      } else if (['anyOf', 'allOf', 'oneOf'].includes(key) && Array.isArray(schema[key])) {
-        result[key] = schema[key].map(item => removeUriFormat(item));
-      } else {
-        result[key] = removeUriFormat(schema[key]);
-      }
-      }
-      return result;
-    };
 
     const tools = (payload.tools || []).filter(tool => !['BatchTool'].includes(tool.name)).map(tool => ({
       type: 'function',
@@ -181,8 +282,32 @@ fastify.post('/v1/messages', async (request, reply) => {
         parameters: removeUriFormat(tool.input_schema),
       },
     }))
+    const selectedModel = payload.model 
+      || (payload.thinking ? models.reasoning : models.completion)
+    
+    // Enhanced model selection logging
+    const modelSource = payload.model ? 'explicit request' 
+      : (payload.thinking ? 'REASONING_MODEL env var' : 'COMPLETION_MODEL env var')
+    
+    debug('Model selection:', {
+      requestedModel: payload.model || 'none',
+      selectedModel,
+      source: modelSource,
+      reasoning: models.reasoning,
+      completion: models.completion,
+      wasOverridden: !payload.model,
+      thinking: payload.thinking || false
+    })
+    
+    // Log model selection even without DEBUG for troubleshooting
+    if (!payload.model) {
+      console.log(`[Model] Auto-selected ${selectedModel} (${modelSource})`)
+    } else {
+      console.log(`[Model] Using requested model: ${selectedModel}`)
+    }
+
     const openaiPayload = {
-      model: payload.thinking ? models.reasoning : models.completion,
+      model: selectedModel,
       messages,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
@@ -211,22 +336,63 @@ fastify.post('/v1/messages', async (request, reply) => {
       }
     }
     
+    const requestStartMs = Date.now()
+    let firstChunkLogged = false
+    let ttfbMs = null
+    
+    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`)
+    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`)
+    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`)
+    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || 'default'}, Temperature: ${openaiPayload.temperature}`)
+    
     const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(openaiPayload)
     });
+    const elapsedMs = Date.now() - requestStartMs
+    
+    console.log(`[Timing] Request completed in ${elapsedMs}ms (HTTP ${openaiResponse.status})`)
 
     if (!openaiResponse.ok) {
       const errorDetails = await openaiResponse.text()
+      debug('OpenRouter error response:', {
+        status: openaiResponse.status,
+        statusText: openaiResponse.statusText,
+        baseUrl,
+        requestedModel: payload.model,
+        selectedModel: openaiPayload.model,
+        elapsedMs,
+        errorBody: errorDetails
+      })
+      
       reply.code(openaiResponse.status)
-      return { error: errorDetails }
+      
+      // Attempt to parse error details as JSON
+      try {
+        const errorJson = JSON.parse(errorDetails)
+        debug('Parsed error JSON:', errorJson)
+        return errorJson
+      } catch {
+        debug('Error response was not valid JSON, returning string wrapper')
+        return { error: errorDetails }
+      }
     }
+    
+    debug('OpenRouter response timing:', { baseUrl, elapsedMs, status: openaiResponse.status })
 
     // If stream is not enabled, process the complete response.
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json()
       debug('OpenAI response:', data)
+      
+      // Log token usage and timing for non-streaming
+      const inputTokens = data.usage?.prompt_tokens || 0
+      const outputTokens = data.usage?.completion_tokens || 0
+      const totalTokens = inputTokens + outputTokens
+      console.log(`[Tokens] Input: ${inputTokens}, Output: ${outputTokens}, Total: ${totalTokens}`)
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(outputTokens / (elapsedMs / 1000)).toFixed(1)} tokens/sec)`)
+      
       if (data.error) {
         throw new Error(data.error.message)
       }
@@ -266,10 +432,10 @@ fastify.post('/v1/messages', async (request, reply) => {
         usage: {
           input_tokens: data.usage
             ? data.usage.prompt_tokens
-            : messages.reduce((acc, msg) => acc + msg.content.split(' ').length, 0),
+            : messages.reduce((acc, msg) => acc + safeWords(msg.content), 0),
           output_tokens: data.usage
             ? data.usage.completion_tokens
-            : openaiMessage.content.split(' ').length,
+            : safeWords(openaiMessage.content),
         }
       }
 
@@ -327,7 +493,18 @@ fastify.post('/v1/messages', async (request, reply) => {
       done = doneReading
       if (value) {
         const chunk = decoder.decode(value)
-        debug('OpenAI response chunk:', chunk)
+        
+        // Track first-byte timing
+        if (!firstChunkLogged && chunk.trim()) {
+          ttfbMs = Date.now() - requestStartMs
+          debug('Streaming first-byte timing:', { ttfbMs, chunkLength: chunk.length })
+          firstChunkLogged = true
+        }
+        
+        // Log chunks only if DEBUG_CHUNKS is enabled
+        if (process.env.DEBUG_CHUNKS) {
+          debug('OpenAI response chunk:', chunk)
+        }
         // OpenAI streaming responses are typically sent as lines prefixed with "data: "
         const lines = chunk.split('\n')
 
@@ -337,6 +514,13 @@ fastify.post('/v1/messages', async (request, reply) => {
           if (trimmed === '' || !trimmed.startsWith('data:')) continue
           const dataStr = trimmed.replace(/^data:\s*/, '')
           if (dataStr === '[DONE]') {
+            const totalStreamMs = Date.now() - requestStartMs
+            debug('Streaming completion timing:', { 
+              totalStreamMs, 
+              ttfbMs, 
+              totalResponseTime: totalStreamMs,
+              serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
+            })
             // Finalize the stream with stop events.
             if (encounteredToolCall) {
               for (const idx in toolCallAccumulators) {
@@ -359,7 +543,7 @@ fastify.post('/v1/messages', async (request, reply) => {
               },
               usage: usage
                 ? { output_tokens: usage.completion_tokens }
-                : { output_tokens: accumulatedContent.split(' ').length + accumulatedReasoning.split(' ').length }
+                : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
             })
             sendSSE(reply, 'message_stop', {
               type: 'message_stop'
@@ -467,9 +651,11 @@ fastify.post('/v1/messages', async (request, reply) => {
 
 const start = async () => {
   try {
-    await fastify.listen({ port: process.env.PORT || 3000 })
+    const portArg = process.argv.indexOf('--port');
+    const port = portArg > -1 ? parseInt(process.argv[portArg + 1], 10) : (process.env.PORT || 3000);
+    await fastify.listen({ port });
   } catch (err) {
-    process.exit(1)
+    process.exit(1);
   }
 }
 

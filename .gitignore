@@ -40,3 +40,6 @@ pids
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+.gemini/
+gha-creds-*.json

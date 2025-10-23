@@ -1,6 +1,18 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "deepseek/deepseek-chat-v3.1:free",
-  "claudeThrone.completionModel": "qwen/qwen3-coder:free"
+  "claudeThrone.reasoningModel": "inclusionai/ring-1t",
+  "claudeThrone.completionModel": "inclusionai/ling-1t",
+  "claudeThrone.customEndpointKind": "auto",
+  "claudeThrone.proxy.port": 3616,
+  "claudeThrone.twoModelMode": true,
+  "terminal.integrated.env.osx": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+  },
+  "terminal.integrated.env.linux": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+  },
+  "terminal.integrated.env.windows": {
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+  }
 }
