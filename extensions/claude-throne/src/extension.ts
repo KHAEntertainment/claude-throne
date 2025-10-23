@@ -355,6 +355,7 @@ export function activate(context: vscode.ExtensionContext) {
     const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
 
     log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
+    log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', completion='${completionModel || 'EMPTY'}'`);
     
     if (twoModelMode && reasoningModel && completionModel) {
         // Two-model mode: use reasoning model for complex tasks, completion model for fast execution
@@ -374,8 +375,13 @@ export function activate(context: vscode.ExtensionContext) {
         env.ANTHROPIC_DEFAULT_SONNET_MODEL = reasoningModel;
         env.ANTHROPIC_DEFAULT_HAIKU_MODEL = reasoningModel;
     } else {
-        log.appendLine(`[applyToClaudeCode] Warning: No reasoning model set!`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ WARNING: No reasoning model configured!`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ Models will NOT be written to .claude/settings.json`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ File will retain previous values or Anthropic defaults`);
     }
+    
+    log.appendLine(`[applyToClaudeCode] Env vars to write: ${JSON.stringify(Object.keys(env))}`);
+    log.appendLine(`[applyToClaudeCode] Will write models to settings.json: ${!!reasoningModel}`);
 
     let settingsDir: string | undefined;
     if (scopeStr === 'global') {

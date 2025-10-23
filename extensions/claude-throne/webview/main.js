@@ -851,13 +851,15 @@
       }
     }
 
-    if (config.reasoningModel) {
-      state.primaryModel = config.reasoningModel;
-    }
-
-    if (config.completionModel) {
-      state.secondaryModel = config.completionModel;
-    }
+    // Always update state to match config, even if empty (prevents stale cached values)
+    state.primaryModel = config.reasoningModel || '';
+    state.secondaryModel = config.completionModel || '';
+    
+    console.log('[handleConfigLoaded] Updated model state:', {
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel,
+      fromConfig: true
+    });
 
     // Check if two-model mode should be enabled
     if (config.twoModelMode !== undefined) {
