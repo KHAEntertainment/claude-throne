@@ -1,111 +1,150 @@
 /**
  * XML Tool Parser - Extracts tool calls from model responses
  * Based on Kilo-Code's character-by-character parsing approach
+ * 
+ * This implementation properly preserves text content while extracting tool calls,
+ * maintaining the correct order and position of text vs tools.
  */
 
-export function parseXMLToolCalls(content) {
+// Known tool names from Claude Code MCP tools
+const KNOWN_TOOLS = new Set([
+  // File operations
+  'Read', 'Write', 'Edit', 'Create', 'MultiEdit',
+  // Execution
+  'Execute',
+  // Search
+  'Grep', 'Glob', 'LS',
+  // Task management
+  'Task', 'TodoWrite',
+  // Web
+  'FetchUrl', 'WebSearch',
+  // Context7
+  'context7___resolve-library-id',
+  'context7___get-library-docs',
+  // DeepWiki
+  'deepwiki___read_wiki_structure',
+  'deepwiki___read_wiki_contents',
+  'deepwiki___ask_question',
+  // Ref
+  'Ref___ref_search_documentation',
+  'Ref___ref_read_url',
+  // CopilotKit
+  'copilotkit___search-docs',
+  'copilotkit___search-code',
+  // Legacy snake_case (for backward compatibility)
+  'read_file', 'write_file', 'edit_file', 'create_file',
+  'execute_command', 'search_files', 'list_files',
+  'ask_followup_question'
+])
+
+/**
+ * Main parsing function - uses character-by-character parsing to extract
+ * text and tool blocks while preserving their order and position
+ */
+export function parseAssistantMessage(content) {
   // Safety check for invalid content
   if (!content || typeof content !== 'string') {
-    console.warn('parseXMLToolCalls: Invalid content received:', content)
-    return []
+    console.warn('[XML Parser] Invalid content received:', content)
+    return [{
+      type: 'text',
+      text: ''
+    }]
   }
-  
-  const toolCalls = []
-  const toolRegex = /<(\w+)>([\s\S]*?)<\/\1>/g
-  let match
-  
-  while ((match = toolRegex.exec(content)) !== null) {
-    const toolName = match[1]
-    const toolContent = match[2]
-    
-    // Skip if this looks like HTML, not a tool call
-    if (['div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'strong', 'em', 'br', 'hr'].includes(toolName)) {
-      continue
-    }
-    
-    // Validate that the XML is well-formed by checking if all tags within toolContent are properly closed
-    if (!isWellFormedXML(toolContent)) {
-      continue
-    }
-    
-    // Parse parameters from XML content
-    const params = {}
-    const paramRegex = /<(\w+)>([\s\S]*?)<\/\1>/g
-    let paramMatch
-    
-    while ((paramMatch = paramRegex.exec(toolContent)) !== null) {
-      const paramName = paramMatch[1]
-      const paramValue = paramMatch[2].trim()
+
+  try {
+    const contentBlocks = []
+    let currentTextStart = 0
+    let i = 0
+
+    while (i < content.length) {
+      // Check if we're at the start of a known tool tag
+      const toolMatch = findToolTag(content, i)
       
-      // Handle nested parameters (like args containing path)
-      if (paramName === 'args' && paramValue.includes('<')) {
-        const nestedParams = {}
-        const nestedRegex = /<(\w+)>([\s\S]*?)<\/\1>/g
-        let nestedMatch
-        
-        while ((nestedMatch = nestedRegex.exec(paramValue)) !== null) {
-          nestedParams[nestedMatch[1]] = nestedMatch[2].trim()
+      if (toolMatch) {
+        // Extract any text BEFORE this tool
+        if (i > currentTextStart) {
+          const text = content.substring(currentTextStart, i).trim()
+          if (text) {
+            contentBlocks.push({
+              type: 'text',
+              text: text
+            })
+          }
         }
-        params[paramName] = nestedParams
+
+        // Parse the tool block
+        const toolResult = parseToolBlock(content, toolMatch)
+        
+        if (toolResult) {
+          contentBlocks.push({
+            type: 'tool_use',
+            id: toolResult.id,
+            name: toolResult.name,
+            input: toolResult.input
+          })
+          
+          // Move past the tool block
+          i = toolResult.endIndex
+          currentTextStart = toolResult.endIndex
+        } else {
+          // If tool parsing failed, treat it as text and continue
+          i++
+        }
       } else {
-        params[paramName] = paramValue
+        // Not a tool tag, continue scanning
+        i++
       }
     }
-    
-    toolCalls.push({
-      id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'function',
-      function: {
-        name: toolName,
-        arguments: JSON.stringify(params)
-      }
-    })
-  }
-  
-  return toolCalls
-}
 
-function isWellFormedXML(xmlContent) {
-  // Simple check to ensure all opening tags have corresponding closing tags
-  const stack = []
-  const tagRegex = /<\/?(\w+)[^>]*>/g
-  let match
-  
-  while ((match = tagRegex.exec(xmlContent)) !== null) {
-    const tag = match[0]
-    const tagName = match[1]
-    
-    if (tag.startsWith('</')) {
-      // Closing tag
-      if (stack.length === 0 || stack.pop() !== tagName) {
-        return false
+    // Extract any remaining text after the last tool
+    if (currentTextStart < content.length) {
+      const text = content.substring(currentTextStart).trim()
+      if (text) {
+        contentBlocks.push({
+          type: 'text',
+          text: text
+        })
       }
-    } else if (!tag.endsWith('/>')) {
-      // Opening tag (not self-closing)
-      stack.push(tagName)
     }
+
+    // If no content blocks were found, return the original content as text
+    if (contentBlocks.length === 0) {
+      return [{
+        type: 'text',
+        text: content.trim()
+      }]
+    }
+
+    return contentBlocks
+  } catch (parseError) {
+    console.warn('[XML Parser] Error parsing assistant message:', parseError)
+    // Return raw content as text on error
+    return [{
+      type: 'text',
+      text: content
+    }]
   }
-  
-  return stack.length === 0
 }
 
-function parseTag(content, startIndex) {
+/**
+ * Find a known tool tag starting at the given index
+ * Returns the tool name and tag end position, or null if not found
+ */
+function findToolTag(content, startIndex) {
   if (content[startIndex] !== '<') {
     return null
   }
 
-  let i = startIndex + 1
-  let isClosing = false
-  
-  // Check for closing tag
-  if (i < content.length && content[i] === '/') {
-    isClosing = true
-    i++
+  // Check if this is a closing tag (skip those)
+  if (content[startIndex + 1] === '/') {
+    return null
   }
 
-  // Parse tag name
+  // Extract tag name
+  let i = startIndex + 1
   let tagName = ''
-  while (i < content.length && content[i] !== '>' && !isWhitespace(content[i])) {
+  
+  while (i < content.length && content[i] !== '>' && content[i] !== ' ') {
     tagName += content[i]
     i++
   }
@@ -115,88 +154,150 @@ function parseTag(content, startIndex) {
     i++
   }
 
-  if (i >= content.length || content[i] !== '>') {
-    return null // Invalid tag
+  if (i >= content.length) {
+    return null // Incomplete tag
   }
+
+  // Check if this is a known tool
+  if (KNOWN_TOOLS.has(tagName)) {
+    return {
+      toolName: tagName,
+      tagEndIndex: i + 1
+    }
+  }
+
+  return null
+}
+
+/**
+ * Parse a complete tool block starting from a known tool tag
+ * Returns the tool object with name, input, and end position
+ */
+function parseToolBlock(content, toolMatch) {
+  const { toolName, tagEndIndex } = toolMatch
+  const closingTag = `</${toolName}>`
+  
+  // Find the matching closing tag
+  const closingTagIndex = content.indexOf(closingTag, tagEndIndex)
+  
+  if (closingTagIndex === -1) {
+    console.warn(`[XML Parser] No closing tag found for <${toolName}>`)
+    return null
+  }
+
+  // Extract content between opening and closing tags
+  const toolContent = content.substring(tagEndIndex, closingTagIndex)
+  
+  // Parse parameters from the tool content
+  const input = parseToolParameters(toolContent)
 
   return {
-    tagName,
-    isClosing,
-    endIndex: i + 1
+    id: generateToolId(),
+    name: toolName,
+    input: input,
+    endIndex: closingTagIndex + closingTag.length
   }
 }
 
-function isWhitespace(char) {
-  return char === ' ' || char === '\t' || char === '\n' || char === '\r'
-}
+/**
+ * Parse parameters from tool content
+ * Example: "<path>/file.txt</path><content>hello</content>" 
+ *       -> { path: '/file.txt', content: 'hello' }
+ */
+function parseToolParameters(toolContent) {
+  const params = {}
+  const paramRegex = /<(\w+)>([\s\S]*?)<\/\1>/g
+  let match
 
-export function extractTextContent(content) {
-  // Safety check for invalid content
-  if (!content || typeof content !== 'string') {
-    console.warn('extractTextContent: Invalid content received:', content)
-    return ''
-  }
-  
-  // Remove XML tags to get plain text content, preserving line breaks
-  // First remove tool XML, then clean up remaining tags
-  const withoutToolXML = content.replace(/<\w+>[\s\S]*?<\/\w+>/g, '')
-  return withoutToolXML.replace(/<[^>]*>/g, '').replace(/\n\s*\n/g, '\n\n').trim()
-}
+  while ((match = paramRegex.exec(toolContent)) !== null) {
+    const paramName = match[1]
+    let paramValue = match[2]
 
-export function hasXMLToolCalls(content) {
-  // Check for XML tool patterns (more specific than just any XML)
-  // Look for common tool names and proper XML structure
-  const toolNames = ['read_file', 'write_file', 'search_files', 'execute_command', 'ask_followup_question']
-  const toolPattern = toolNames.map(name => `<${name}>`).join('|')
-  return new RegExp(`(${toolPattern})`).test(content) && /<\/\w+>/.test(content)
-}
-
-export function parseAssistantMessage(content) {
-  // Safety check for invalid content
-  if (!content || typeof content !== 'string') {
-    console.warn('parseAssistantMessage: Invalid content received:', content)
-    return [{
-      type: 'text',
-      text: ''
-    }]
-  }
-  
-  try {
-    const toolCalls = parseXMLToolCalls(content)
-    const textContent = extractTextContent(content)
-    
-    const contentBlocks = []
-    
-    // Add text content if not empty
-    if (textContent) {
-      contentBlocks.push({
-        type: 'text',
-        text: textContent
-      })
+    // Special handling for 'content' parameter - preserve formatting
+    if (paramName === 'content' || paramName === 'code_edit' || paramName === 'new_str' || paramName === 'old_str') {
+      // Only trim leading/trailing newlines, not all whitespace
+      paramValue = paramValue.replace(/^\n+/, '').replace(/\n+$/, '')
+    } else {
+      paramValue = paramValue.trim()
     }
-    
-    // Add tool calls with safe JSON parsing
-    toolCalls.forEach(toolCall => {
-      try {
-        contentBlocks.push({
-          type: 'tool_use',
-          id: toolCall.id,
-          name: toolCall.function.name,
-          input: JSON.parse(toolCall.function.arguments)
-        })
-      } catch (jsonError) {
-        console.warn('Error parsing tool call arguments:', jsonError, 'toolCall:', toolCall)
-        // Skip malformed tool calls
+
+    // Handle nested parameters (like <args><path>...</path></args>)
+    if (paramValue.includes('<')) {
+      const nestedParams = {}
+      const nestedRegex = /<(\w+)>([\s\S]*?)<\/\1>/g
+      let nestedMatch
+
+      while ((nestedMatch = nestedRegex.exec(paramValue)) !== null) {
+        nestedParams[nestedMatch[1]] = nestedMatch[2].trim()
       }
-    })
-    
-    return contentBlocks
-  } catch (parseError) {
-    console.warn('Error parsing assistant message:', parseError, 'content:', content)
-    // Return a simple text block with the raw content if parsing fails
-    return [{
-      type: 'text',
-      text: content
-    }]
+
+      // If we found nested params, use them; otherwise use the raw value
+      if (Object.keys(nestedParams).length > 0) {
+        params[paramName] = nestedParams
+      } else {
+        params[paramName] = paramValue
+      }
+    } else {
+      params[paramName] = paramValue
+    }
   }
+
+  return params
+}
+
+/**
+ * Generate a unique tool call ID
+ */
+function generateToolId() {
+  return `toolu_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+}
+
+/**
+ * Check if content has any XML tool calls
+ * (Useful for quick detection without full parsing)
+ */
+export function hasXMLToolCalls(content) {
+  if (!content || typeof content !== 'string') {
+    return false
+  }
+
+  // Check if any known tool tags are present
+  for (const toolName of KNOWN_TOOLS) {
+    if (content.includes(`<${toolName}>`)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Legacy function for backward compatibility
+ * Extracts just the tool calls (without text)
+ */
+export function parseXMLToolCalls(content) {
+  const blocks = parseAssistantMessage(content)
+  return blocks
+    .filter(block => block.type === 'tool_use')
+    .map(block => ({
+      id: block.id,
+      type: 'function',
+      function: {
+        name: block.name,
+        arguments: JSON.stringify(block.input)
+      }
+    }))
+}
+
+/**
+ * Legacy function for backward compatibility
+ * Extracts just the text content (without tools)
+ */
+export function extractTextContent(content) {
+  const blocks = parseAssistantMessage(content)
+  return blocks
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n')
+    .trim()
 }

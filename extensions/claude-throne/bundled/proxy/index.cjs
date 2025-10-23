@@ -33470,115 +33470,189 @@ function injectXMLToolInstructions(messages, tools) {
 }
 
 // ../../xml-tool-parser.js
-function parseXMLToolCalls(content) {
-  if (!content || typeof content !== "string") {
-    console.warn("parseXMLToolCalls: Invalid content received:", content);
-    return [];
-  }
-  const toolCalls = [];
-  const toolRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
-  let match;
-  while ((match = toolRegex.exec(content)) !== null) {
-    const toolName = match[1];
-    const toolContent = match[2];
-    if (["div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "strong", "em", "br", "hr"].includes(toolName)) {
-      continue;
-    }
-    if (!isWellFormedXML(toolContent)) {
-      continue;
-    }
-    const params = {};
-    const paramRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
-    let paramMatch;
-    while ((paramMatch = paramRegex.exec(toolContent)) !== null) {
-      const paramName = paramMatch[1];
-      const paramValue = paramMatch[2].trim();
-      if (paramName === "args" && paramValue.includes("<")) {
-        const nestedParams = {};
-        const nestedRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
-        let nestedMatch;
-        while ((nestedMatch = nestedRegex.exec(paramValue)) !== null) {
-          nestedParams[nestedMatch[1]] = nestedMatch[2].trim();
-        }
-        params[paramName] = nestedParams;
-      } else {
-        params[paramName] = paramValue;
-      }
-    }
-    toolCalls.push({
-      id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: "function",
-      function: {
-        name: toolName,
-        arguments: JSON.stringify(params)
-      }
-    });
-  }
-  return toolCalls;
-}
-function isWellFormedXML(xmlContent) {
-  const stack = [];
-  const tagRegex = /<\/?(\w+)[^>]*>/g;
-  let match;
-  while ((match = tagRegex.exec(xmlContent)) !== null) {
-    const tag = match[0];
-    const tagName = match[1];
-    if (tag.startsWith("</")) {
-      if (stack.length === 0 || stack.pop() !== tagName) {
-        return false;
-      }
-    } else if (!tag.endsWith("/>")) {
-      stack.push(tagName);
-    }
-  }
-  return stack.length === 0;
-}
-function extractTextContent(content) {
-  if (!content || typeof content !== "string") {
-    console.warn("extractTextContent: Invalid content received:", content);
-    return "";
-  }
-  const withoutToolXML = content.replace(/<\w+>[\s\S]*?<\/\w+>/g, "");
-  return withoutToolXML.replace(/<[^>]*>/g, "").replace(/\n\s*\n/g, "\n\n").trim();
-}
+var KNOWN_TOOLS = /* @__PURE__ */ new Set([
+  // File operations
+  "Read",
+  "Write",
+  "Edit",
+  "Create",
+  "MultiEdit",
+  // Execution
+  "Execute",
+  // Search
+  "Grep",
+  "Glob",
+  "LS",
+  // Task management
+  "Task",
+  "TodoWrite",
+  // Web
+  "FetchUrl",
+  "WebSearch",
+  // Context7
+  "context7___resolve-library-id",
+  "context7___get-library-docs",
+  // DeepWiki
+  "deepwiki___read_wiki_structure",
+  "deepwiki___read_wiki_contents",
+  "deepwiki___ask_question",
+  // Ref
+  "Ref___ref_search_documentation",
+  "Ref___ref_read_url",
+  // CopilotKit
+  "copilotkit___search-docs",
+  "copilotkit___search-code",
+  // Legacy snake_case (for backward compatibility)
+  "read_file",
+  "write_file",
+  "edit_file",
+  "create_file",
+  "execute_command",
+  "search_files",
+  "list_files",
+  "ask_followup_question"
+]);
 function parseAssistantMessage(content) {
   if (!content || typeof content !== "string") {
-    console.warn("parseAssistantMessage: Invalid content received:", content);
+    console.warn("[XML Parser] Invalid content received:", content);
     return [{
       type: "text",
       text: ""
     }];
   }
   try {
-    const toolCalls = parseXMLToolCalls(content);
-    const textContent = extractTextContent(content);
     const contentBlocks = [];
-    if (textContent) {
-      contentBlocks.push({
-        type: "text",
-        text: textContent
-      });
-    }
-    toolCalls.forEach((toolCall) => {
-      try {
-        contentBlocks.push({
-          type: "tool_use",
-          id: toolCall.id,
-          name: toolCall.function.name,
-          input: JSON.parse(toolCall.function.arguments)
-        });
-      } catch (jsonError) {
-        console.warn("Error parsing tool call arguments:", jsonError, "toolCall:", toolCall);
+    let currentTextStart = 0;
+    let i = 0;
+    while (i < content.length) {
+      const toolMatch = findToolTag(content, i);
+      if (toolMatch) {
+        if (i > currentTextStart) {
+          const text = content.substring(currentTextStart, i).trim();
+          if (text) {
+            contentBlocks.push({
+              type: "text",
+              text
+            });
+          }
+        }
+        const toolResult = parseToolBlock(content, toolMatch);
+        if (toolResult) {
+          contentBlocks.push({
+            type: "tool_use",
+            id: toolResult.id,
+            name: toolResult.name,
+            input: toolResult.input
+          });
+          i = toolResult.endIndex;
+          currentTextStart = toolResult.endIndex;
+        } else {
+          i++;
+        }
+      } else {
+        i++;
       }
-    });
+    }
+    if (currentTextStart < content.length) {
+      const text = content.substring(currentTextStart).trim();
+      if (text) {
+        contentBlocks.push({
+          type: "text",
+          text
+        });
+      }
+    }
+    if (contentBlocks.length === 0) {
+      return [{
+        type: "text",
+        text: content.trim()
+      }];
+    }
     return contentBlocks;
   } catch (parseError) {
-    console.warn("Error parsing assistant message:", parseError, "content:", content);
+    console.warn("[XML Parser] Error parsing assistant message:", parseError);
     return [{
       type: "text",
       text: content
     }];
   }
+}
+function findToolTag(content, startIndex) {
+  if (content[startIndex] !== "<") {
+    return null;
+  }
+  if (content[startIndex + 1] === "/") {
+    return null;
+  }
+  let i = startIndex + 1;
+  let tagName = "";
+  while (i < content.length && content[i] !== ">" && content[i] !== " ") {
+    tagName += content[i];
+    i++;
+  }
+  while (i < content.length && content[i] !== ">") {
+    i++;
+  }
+  if (i >= content.length) {
+    return null;
+  }
+  if (KNOWN_TOOLS.has(tagName)) {
+    return {
+      toolName: tagName,
+      tagEndIndex: i + 1
+    };
+  }
+  return null;
+}
+function parseToolBlock(content, toolMatch) {
+  const { toolName, tagEndIndex } = toolMatch;
+  const closingTag = `</${toolName}>`;
+  const closingTagIndex = content.indexOf(closingTag, tagEndIndex);
+  if (closingTagIndex === -1) {
+    console.warn(`[XML Parser] No closing tag found for <${toolName}>`);
+    return null;
+  }
+  const toolContent = content.substring(tagEndIndex, closingTagIndex);
+  const input = parseToolParameters(toolContent);
+  return {
+    id: generateToolId(),
+    name: toolName,
+    input,
+    endIndex: closingTagIndex + closingTag.length
+  };
+}
+function parseToolParameters(toolContent) {
+  const params = {};
+  const paramRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+  let match;
+  while ((match = paramRegex.exec(toolContent)) !== null) {
+    const paramName = match[1];
+    let paramValue = match[2];
+    if (paramName === "content" || paramName === "code_edit" || paramName === "new_str" || paramName === "old_str") {
+      paramValue = paramValue.replace(/^\n+/, "").replace(/\n+$/, "");
+    } else {
+      paramValue = paramValue.trim();
+    }
+    if (paramValue.includes("<")) {
+      const nestedParams = {};
+      const nestedRegex = /<(\w+)>([\s\S]*?)<\/\1>/g;
+      let nestedMatch;
+      while ((nestedMatch = nestedRegex.exec(paramValue)) !== null) {
+        nestedParams[nestedMatch[1]] = nestedMatch[2].trim();
+      }
+      if (Object.keys(nestedParams).length > 0) {
+        params[paramName] = nestedParams;
+      } else {
+        params[paramName] = paramValue;
+      }
+    } else {
+      params[paramName] = paramValue;
+    }
+  }
+  return params;
+}
+function generateToolId() {
+  return `toolu_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 // ../../index.js
