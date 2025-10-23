@@ -201,12 +201,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
     
-    // Clear reasoning and completion models in configuration at both Workspace and Global scopes
-    await cfg.update('reasoningModel', '', vscode.ConfigurationTarget.Workspace);
-    await cfg.update('completionModel', '', vscode.ConfigurationTarget.Workspace);
-    await cfg.update('reasoningModel', '', vscode.ConfigurationTarget.Global);
-    await cfg.update('completionModel', '', vscode.ConfigurationTarget.Global);
-
+    // NOTE: We do NOT clear reasoningModel/completionModel here anymore
+    // User's saved model preferences should persist across proxy stop/start cycles
+    // Only .claude/settings.json is reverted to Anthropic defaults for Claude Code CLI
+    
     // Restore base URL to Anthropic defaults in extension settings
     const candidates: { section: string; key: string }[] = [
       { section: 'anthropic', key: 'baseUrl' },

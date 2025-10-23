@@ -5,10 +5,33 @@
 - No `src/` directory; keep modules in root. Configuration is via environment variables only.
 - Tests live in `tests/` when present. No assets folder.
 
+## Work Tracking with Beads
+
+We use Beads (`bd`) for all work and task tracking. Before starting work:
+
+1. **Find ready work**: Run `bd ready --json` to see unblocked tasks
+2. **Claim your task**: `bd update <id> --status in_progress --json`
+3. **Discover new issues**: Create them with `bd create` and link with `bd dep add`
+4. **Complete work**: `bd close <id> --reason "Implemented" --json`
+5. **Always export**: `bd export -o .beads/issues.jsonl` before committing
+
+**Key Rules:**
+- Always use `--json` flag for programmatic output
+- Use `bd` for task tracking, NOT Markdown TODO lists
+- Track dependencies with `bd dep add <new-id> <parent-id> --type blocks/discovered-from`
+- Run `bd quickstart` if you need help
+
+**Quick Setup (if not initialized):**
+```bash
+bd init --prefix coding-agent
+```
+
 ## Build, Test, and Development Commands
 - Run locally: `npm start` or `node index.js`
 - With API key: `OPENROUTER_API_KEY=... PORT=3000 npm start`
 - CLI (installed or via npx): `OPENROUTER_API_KEY=... npx anthropic-proxy`
+- Run tests: `npm test` (Vitest with single worker)
+- Run single test: `npx vitest run tests/messages.stream.test.js`
 - Smoke test (non‑streaming):
   ```bash
   curl -s http://localhost:3000/v1/messages \
@@ -21,14 +44,16 @@
 - Language: Node.js ESM; prefer `import`/`export`, `const`/`let`, async/await.
 - Indentation: 2 spaces; keep functions small and lines concise.
 - Env vars: UPPER_SNAKE_CASE (e.g., `OPENROUTER_API_KEY`, `ANTHROPIC_PROXY_BASE_URL`).
-- Logging: use Fastify’s logger; gate verbose output behind `DEBUG`.
-- Lint/format: none enforced; if adding, use ESLint + Prettier (2-space indent).
+- Logging: use Fastify's logger; gate verbose output behind `DEBUG`.
+- Error handling: use try/catch with async/await; return proper HTTP status codes.
+- No lint/format enforcement currently configured.
 
 ## Testing Guidelines
-- Focus on integration tests via HTTP using Vitest or Jest + supertest.
-- Place tests in `tests/`; name as `<feature>.test.js` grouped by route or utility.
+- Use Vitest with supertest for HTTP integration tests.
+- Place tests in `tests/`; name as `<feature>.test.js` grouped by functionality.
 - Minimum coverage: exercise `/v1/messages` for `stream: true/false`, tool calls, and error paths.
-- Example run (custom script if added): `npm test`
+- Run tests: `npm test` (uses Vitest with single worker for consistency)
+- Run single test: `npx vitest run tests/<specific-test>.js`
 
 ## Commit & Pull Request Guidelines
 - Commits: imperative subject (e.g., "proxy: map finish reasons").
