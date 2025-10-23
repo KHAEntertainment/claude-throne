@@ -487,13 +487,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage(`Proxy started on port ${port}`)
       this.postStatus()
       
-      // Auto-apply to Claude Code if enabled
-      const autoApply = cfg.get<boolean>('autoApply', false)
-      if (autoApply) {
-        // Wait a moment for proxy to fully initialize and start accepting connections
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
-      }
+      // ALWAYS apply settings to Claude Code when proxy starts
+      // (The autoApply flag only controls whether we revert on stop)
+      this.log.appendLine(`[handleStartProxy] Applying proxy settings to Claude Code...`)
+      // Wait a moment for proxy to fully initialize and start accepting connections
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
     } catch (err) {
       this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)

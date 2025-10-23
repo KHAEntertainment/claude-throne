@@ -7,13 +7,13 @@
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
   "terminal.integrated.env.osx": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
   },
   "terminal.integrated.env.linux": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
   },
   "terminal.integrated.env.windows": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616"
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
   },
   "claudeThrone.provider": "openrouter"
 }
