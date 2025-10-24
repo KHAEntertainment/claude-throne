@@ -2,11 +2,14 @@ import * as vscode from 'vscode'
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
+import { isAnthropicEndpoint } from '../services/endpoints'
+import { applyAnthropicUrl } from '../services/AnthropicApply'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
+  private directApplied: boolean = false
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -95,6 +98,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'stopProxy':
             await this.handleStopProxy()
             break
+          case 'revertApply':
+            await this.handleRevertApply()
+            break
           case 'openSettings':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
@@ -135,11 +141,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = String(cfg.get('reasoningModel') || '')
     const completionModel = String(cfg.get('completionModel') || '')
-    this.view?.webview.postMessage({ type: 'status', payload: { ...s, reasoningModel, completionModel } })
+    this.view?.webview.postMessage({ 
+      type: 'status', 
+      payload: { 
+        ...s, 
+        reasoningModel, 
+        completionModel, 
+        directApplied: this.directApplied 
+      } 
+    })
   }
 
   private async postKeys() {
-    const providers = ['openrouter','openai','together','grok','custom']
+    const providers = ['openrouter','openai','together','deepseek','glm','custom']
     const map: Record<string, boolean> = {}
     for (const p of providers) {
       try {
@@ -223,7 +237,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const apiKey = await this.secrets.getProviderKey(provider) || ''
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
-      // Get base URL for custom providers
+      // Get base URL for model listing
+      // Note: Deepseek and GLM use OpenAI-compatible endpoints for model listing
+      // but Anthropic-native endpoints for actual API calls
       let baseUrl = 'https://openrouter.ai/api'
       
       if (provider === 'custom') {
@@ -232,8 +248,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         baseUrl = 'https://api.openai.com/v1'
       } else if (provider === 'together') {
         baseUrl = 'https://api.together.xyz/v1'
-      } else if (provider === 'groq' || provider === 'grok') {
-        baseUrl = 'https://api.groq.com/openai/v1'
+      } else if (provider === 'deepseek') {
+        baseUrl = 'https://api.deepseek.com/v1'
+      } else if (provider === 'glm') {
+        baseUrl = 'https://api.z.ai/api/paas/v4'
       }
       
       this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
@@ -280,7 +298,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           provider,
           error: errorMessage,
           errorType,
-          canManuallyEnter: provider === 'custom'
+          canManuallyEnter: provider === 'custom' || provider === 'deepseek' || provider === 'glm'
         }
       })
     }
@@ -294,9 +312,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const completionModel = cfg.get<string>('completionModel')
       
       // Load featured combinations from our data
-      const fs = await import('fs')
+      const { promises: fs } = await import('fs')
       const pairingsPath = vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'data', 'model-pairings.json')
-      const pairingsContent = fs.readFileSync(pairingsPath.fsPath, 'utf8')
+      const pairingsContent = await fs.readFile(pairingsPath.fsPath, 'utf8')
       const pairingsData = JSON.parse(pairingsContent)
       
       this.view?.webview.postMessage({ 
@@ -421,13 +439,36 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         ? cfg.get<string>('customBaseUrl', '')
         : undefined
       
+      // Bypass proxy for Deepseek (Anthropic-native provider)
+      if (this.currentProvider === 'deepseek') {
+        const url = 'https://api.deepseek.com/anthropic'
+        this.log.appendLine(`[handleStartProxy] Deepseek is Anthropic-native, bypassing proxy`)
+        await applyAnthropicUrl({ url, provider: 'deepseek', secrets: this.secrets })
+        this.directApplied = true
+        vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
+        this.postStatus()
+        return
+      }
+      
+      // Bypass proxy for GLM (Anthropic-native provider)
+      if (this.currentProvider === 'glm') {
+        const url = 'https://api.z.ai/api/anthropic'
+        this.log.appendLine(`[handleStartProxy] GLM is Anthropic-native, bypassing proxy`)
+        await applyAnthropicUrl({ url, provider: 'glm', secrets: this.secrets })
+        this.directApplied = true
+        vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
+        this.postStatus()
+        return
+      }
+      
       // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
-      if (this.currentProvider === 'custom' && customBaseUrl && this.isAnthropicEndpoint(customBaseUrl)) {
+      if (this.currentProvider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
         this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
         this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
         
         // Apply the Anthropic URL directly without starting proxy
-        await this.applyAnthropicUrlDirectly(customBaseUrl)
+        await applyAnthropicUrl({ url: customBaseUrl, provider: 'custom', secrets: this.secrets })
+        this.directApplied = true
         
         vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
         this.postStatus()
@@ -491,40 +532,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private isAnthropicEndpoint(url: string): boolean {
-    if (!url) return false
-    const patterns = [
-      /anthropic\.com/i,
-      /\/anthropic$/i,
-      /\/api\/anthropic/i,
-      /claude\.ai/i,
-      /bedrock.*anthropic/i
-    ]
-    return patterns.some(pattern => pattern.test(url))
-  }
 
-  private async applyAnthropicUrlDirectly(url: string) {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const scopeStr = cfg.get<string>('applyScope', 'workspace')
-    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
-    
-    // Apply to known Claude/Anthropic extension settings
-    const candidates: { section: string; key: string }[] = [
-      { section: 'anthropic', key: 'baseUrl' },
-      { section: 'claude', key: 'baseUrl' },
-      { section: 'claudeCode', key: 'baseUrl' },
-      { section: 'claude-code', key: 'baseUrl' },
-      { section: 'claude', key: 'apiBaseUrl' },
-      { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
-    
-    for (const c of candidates) {
-      try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        await s.update(c.key, url, scope)
-      } catch {}
-    }
-  }
+
+
 
   private async handleStopProxy() {
     try {
@@ -550,6 +560,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (err) {
       console.error('Failed to stop proxy:', err)
+    }
+  }
+
+  private async handleRevertApply() {
+    try {
+      this.log.appendLine('[handleRevertApply] Reverting direct Anthropic endpoint application')
+      await vscode.commands.executeCommand('claudeThrone.revertApply')
+      this.directApplied = false
+      this.postStatus()
+      vscode.window.showInformationMessage('Reverted Claude Code settings to defaults')
+    } catch (err) {
+      this.log.appendLine(`[handleRevertApply] Error: ${err}`)
+      vscode.window.showErrorMessage(`Failed to revert settings: ${err}`)
     }
   }
 
@@ -600,7 +623,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
     this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
     
-    await cfg.update('twoModelMode', enabled)
+    await cfg.update('twoModelMode', enabled, vscode.ConfigurationTarget.Workspace)
     
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
@@ -642,7 +665,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               <option value="openrouter">OpenRouter</option>
               <option value="openai">OpenAI</option>
               <option value="together">Together AI</option>
-              <option value="grok">Grok</option>
+              <option value="deepseek">Deepseek</option>
+              <option value="glm">GLM (Z.AI)</option>
               <option value="custom">Custom Provider</option>
             </select>
             <div id="providerHelp" class="provider-help"></div>

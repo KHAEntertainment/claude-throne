@@ -20,15 +20,7 @@ export class SecretsService {
   }
 
   async getProviderKey(provider: string): Promise<string | undefined> {
-    // Normal lookup
-    const key = await this.getRaw(this.providerKey(provider))
-    if (key) return key
-    // Legacy fallback: if renamed from 'groq' → 'grok', check old slot
-    if (provider === 'grok') {
-      const legacy = await this.getRaw(this.providerKey('groq'))
-      if (legacy) return legacy
-    }
-    return undefined
+    return this.getRaw(this.providerKey(provider))
   }
 
   async setProviderKey(provider: string, value: string): Promise<void> {
