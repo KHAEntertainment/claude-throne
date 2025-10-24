@@ -7,8 +7,8 @@ export function isAnthropicEndpoint(url: string): boolean {
     /\/api\/anthropic/i,
     /claude\.ai/i,
     /bedrock.*anthropic/i,
-    /deepseek\.com/i,
-    /z\.ai/i
+    /deepseek\.com\/anthropic/i,
+    /z\.ai\/api\/anthropic/i
   ]
   
   return patterns.some(pattern => pattern.test(url))
