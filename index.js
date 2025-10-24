@@ -373,10 +373,10 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
 
 fastify.post('/v1/messages', async (request, reply) => {
   try {
-    console.log(`[Route] *** /v1/messages CALLED *** provider: ${provider}, baseUrl: ${baseUrl}`);
-    console.log(`[Route] Request method: ${request.method}, headers:`, request.headers);
+
+
     const payload = request.body
-    console.log(`[Route] Request body:`, JSON.stringify(payload, null, 2));
+
 
 
 
@@ -612,7 +612,7 @@ fastify.post('/v1/messages', async (request, reply) => {
     // If stream is not enabled, process the complete response.
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json()
-      debug('OpenAI response:', data)
+
       
       // Log token usage and timing for non-streaming
       const logInputTokens = data.usage?.prompt_tokens || 0
@@ -642,17 +642,17 @@ fastify.post('/v1/messages', async (request, reply) => {
       try {
         if (needsXMLTools) {
           // Parse XML tool calls from response content
-          debug('Parsing XML content:', openaiMessage.content)
+
           contentBlocks = parseAssistantMessage(openaiMessage.content || '')
-          debug('Parsed XML content blocks:', contentBlocks)
+
         } else {
           // Parse native OpenAI tool response format
           debug('Parsing native tool response')
           contentBlocks = parseNativeToolResponse(openaiMessage)
-          debug('Parsed native content blocks:', contentBlocks)
+
         }
       } catch (parseError) {
-        debug('Error parsing content:', parseError)
+
         // If parsing fails, create a simple text block with the raw content
         contentBlocks = [{
           type: 'text',
@@ -662,7 +662,7 @@ fastify.post('/v1/messages', async (request, reply) => {
 
       // Ensure we have at least one content block
       if (!contentBlocks || contentBlocks.length === 0) {
-        debug('No content blocks found, creating default text block')
+
         contentBlocks = [{
           type: 'text',
           text: openaiMessage.content || ''
@@ -762,7 +762,7 @@ fastify.post('/v1/messages', async (request, reply) => {
           
           // Log chunks only if DEBUG_CHUNKS is enabled
           if (process.env.DEBUG_CHUNKS) {
-            debug('OpenAI response chunk:', chunk)
+            
           }
           // OpenAI streaming responses are typically sent as lines prefixed with "data: "
           const lines = chunk.split('\n')
@@ -995,4 +995,9 @@ const start = async () => {
 console.log('[Startup] About to register routes and start server...');
 
 // Start the server
-start();
+try {
+  start();
+} catch (err) {
+  console.error('[Startup] Failed to start server:', err);
+  process.exit(1);
+}

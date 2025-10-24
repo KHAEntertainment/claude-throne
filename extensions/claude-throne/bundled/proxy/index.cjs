@@ -33983,10 +33983,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       });
       sendSSE(reply, "ping", { type: "ping" });
     };
-    console.log(`[Route] *** /v1/messages CALLED *** provider: ${provider}, baseUrl: ${baseUrl}`);
-    console.log(`[Route] Request method: ${request.method}, headers:`, request.headers);
     const payload = request.body;
-    console.log(`[Route] Request body:`, JSON.stringify(payload, null, 2));
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
       payload.system.forEach((sysMsg) => {
@@ -34157,7 +34154,6 @@ fastify.post("/v1/messages", async (request, reply) => {
     debug("OpenRouter response timing:", { requestUrl, elapsedMs, status: openaiResponse.status });
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json();
-      debug("OpenAI response:", data);
       const logInputTokens = data.usage?.prompt_tokens || 0;
       const logOutputTokens = data.usage?.completion_tokens || 0;
       const logTotalTokens = logInputTokens + logOutputTokens;
@@ -34175,23 +34171,18 @@ fastify.post("/v1/messages", async (request, reply) => {
       let contentBlocks = [];
       try {
         if (needsXMLTools) {
-          debug("Parsing XML content:", openaiMessage.content);
           contentBlocks = parseAssistantMessage(openaiMessage.content || "");
-          debug("Parsed XML content blocks:", contentBlocks);
         } else {
           debug("Parsing native tool response");
           contentBlocks = parseNativeToolResponse(openaiMessage);
-          debug("Parsed native content blocks:", contentBlocks);
         }
       } catch (parseError) {
-        debug("Error parsing content:", parseError);
         contentBlocks = [{
           type: "text",
           text: openaiMessage.content || ""
         }];
       }
       if (!contentBlocks || contentBlocks.length === 0) {
-        debug("No content blocks found, creating default text block");
         contentBlocks = [{
           type: "text",
           text: openaiMessage.content || ""
@@ -34239,7 +34230,6 @@ fastify.post("/v1/messages", async (request, reply) => {
             firstChunkLogged = true;
           }
           if (process.env.DEBUG_CHUNKS) {
-            debug("OpenAI response chunk:", chunk);
           }
           const lines = chunk.split("\n");
           for (const line of lines) {
@@ -34445,7 +34435,12 @@ var start = async () => {
   }
 };
 console.log("[Startup] About to register routes and start server...");
-start();
+try {
+  start();
+} catch (err) {
+  console.error("[Startup] Failed to start server:", err);
+  process.exit(1);
+}
 /*! Bundled license information:
 
 @fastify/proxy-addr/index.js:
