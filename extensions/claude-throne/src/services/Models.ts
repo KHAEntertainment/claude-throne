@@ -2,6 +2,62 @@ import { request } from 'undici'
 
 export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
 
+async function fetchModelsWithRetry(url: string, headers: Record<string, string>, maxRetries: number = 2): Promise<any> {
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    const controller = new AbortController()
+    
+    // Provider-specific timeouts
+    let timeoutMs = 15000 // 15 seconds default
+    if (url.includes('openrouter.ai')) {
+      timeoutMs = 15000
+    } else if (url.includes('api.openai.com')) {
+      timeoutMs = 10000
+    } else if (url.includes('api.together.xyz')) {
+      timeoutMs = 15000
+    }
+    
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    
+    try {
+      const res = await request(url, { 
+        method: 'GET', 
+        headers,
+        signal: controller.signal as any
+      })
+      
+      clearTimeout(timeoutId)
+      
+      if (res.statusCode !== 200) {
+        throw new Error(`Model list failed (${res.statusCode})`)
+      }
+
+      return await res.body.json()
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      
+      if (err.name === 'AbortError' || err.code === 'UND_ERR_ABORTED') {
+        const timeoutSeconds = Math.round(timeoutMs / 1000)
+        if (attempt <= maxRetries) {
+          // Wait before retry with exponential backoff
+          const delayMs = attempt * 1000
+          await new Promise(resolve => setTimeout(resolve, delayMs))
+          continue
+        }
+        throw new Error(`Model list request timed out after ${timeoutSeconds} seconds`)
+      }
+      
+      if (attempt <= maxRetries && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND')) {
+        // Network errors worth retrying
+        const delayMs = attempt * 1000
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+        continue
+      }
+      
+      throw err
+    }
+  }
+}
+
 export async function listModels(provider: ProviderId, baseUrl: string, apiKey: string): Promise<string[]> {
   if (provider === 'custom' && (!baseUrl || !baseUrl.trim())) {
     throw new Error('Custom provider requires a base URL')
@@ -16,24 +72,9 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
     ? 'https://openrouter.ai/api/v1/models'
     : `${base}/models`
 
-  // Add timeout using AbortController
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
-  
   try {
-    const res = await request(url, { 
-      method: 'GET', 
-      headers,
-      signal: controller.signal as any
-    })
+    const data = await fetchModelsWithRetry(url, headers)
     
-    clearTimeout(timeoutId)
-    
-    if (res.statusCode !== 200) {
-      throw new Error(`Model list failed (${res.statusCode})`)
-    }
-
-    const data = await res.body.json()
     // Try OpenAI-like shape first
     if (Array.isArray((data as any).data)) {
       return (data as any).data
@@ -50,11 +91,6 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
     const arr = Array.isArray(data) ? data : []
     return arr.map((m: any) => m?.id).filter((id: any) => typeof id === 'string')
   } catch (err: any) {
-    clearTimeout(timeoutId)
-    
-    if (err.name === 'AbortError' || err.code === 'UND_ERR_ABORTED') {
-      throw new Error('Model list request timed out after 5 seconds')
-    }
     throw err
   }
 }

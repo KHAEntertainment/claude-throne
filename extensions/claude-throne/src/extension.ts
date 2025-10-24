@@ -311,6 +311,7 @@ export function activate(context: vscode.ExtensionContext) {
     const baseUrl = `http://127.0.0.1:${port}`;
     const reasoningModel = cfg.get<string>('reasoningModel');
     const completionModel = cfg.get<string>('completionModel');
+    const valueModel = cfg.get<string>('valueModel');
     const scopeStr = cfg.get<string>('applyScope', 'workspace');
     const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
 
@@ -318,21 +319,31 @@ export function activate(context: vscode.ExtensionContext) {
     const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
 
     log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
-    log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', completion='${completionModel || 'EMPTY'}'`);
+    log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', coding='${completionModel || 'EMPTY'}', value='${valueModel || 'EMPTY'}'`);
     
-    if (twoModelMode && reasoningModel && completionModel) {
-        // Two-model mode: use reasoning model for complex tasks, completion model for fast execution
-        log.appendLine(`[applyToClaudeCode] Two-model mode enabled`);
+    if (twoModelMode && reasoningModel && completionModel && valueModel) {
+        // Three-model mode: use specific models for each task type
+        log.appendLine(`[applyToClaudeCode] Three-model mode enabled`);
         log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${reasoningModel}`);
-        log.appendLine(`[applyToClaudeCode] - SONNET (balanced tasks): ${completionModel}`);
-        log.appendLine(`[applyToClaudeCode] - HAIKU (fast execution): ${completionModel}`);
+        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${completionModel}`);
+        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${valueModel}`);
+        env.ANTHROPIC_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = valueModel;
+    } else if (twoModelMode && reasoningModel && completionModel && !valueModel) {
+        // Legacy two-model mode: fallback for partial configuration
+        log.appendLine(`[applyToClaudeCode] Two-model mode (legacy): using reasoning for Opus, completion for Sonnet/Haiku`);
+        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${reasoningModel}`);
+        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${completionModel}`);
+        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${completionModel}`);
         env.ANTHROPIC_MODEL = reasoningModel;
         env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
         env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel;
         env.ANTHROPIC_DEFAULT_HAIKU_MODEL = completionModel;
     } else if (reasoningModel) {
         // Single-model mode: use reasoning model for everything
-        log.appendLine(`[applyToClaudeCode] Single-model mode: using ${reasoningModel} for all roles`);
+        log.appendLine(`[applyToClaudeCode] Single-model mode: using ${reasoningModel} for all tiers (Opus/Sonnet/Haiku)`);
         env.ANTHROPIC_MODEL = reasoningModel;
         env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
         env.ANTHROPIC_DEFAULT_SONNET_MODEL = reasoningModel;

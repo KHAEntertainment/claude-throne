@@ -22,14 +22,23 @@ export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   const twoModelMode = cfg.get<boolean>('twoModelMode', false)
   const reasoningModel = cfg.get<string>('reasoningModel')
   const completionModel = cfg.get<string>('completionModel')
+  const valueModel = cfg.get<string>('valueModel')
   
   if (reasoningModel) {
-    if (twoModelMode && completionModel) {
+    if (twoModelMode && reasoningModel && completionModel && valueModel) {
+      // Three-model mode: use specific models for each task type
+      env.ANTHROPIC_MODEL = reasoningModel
+      env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel
+      env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel
+      env.ANTHROPIC_DEFAULT_HAIKU_MODEL = valueModel
+    } else if (twoModelMode && reasoningModel && completionModel && !valueModel) {
+      // Legacy two-model mode: fallback for partial configuration
       env.ANTHROPIC_MODEL = reasoningModel
       env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel
       env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel
       env.ANTHROPIC_DEFAULT_HAIKU_MODEL = completionModel
     } else {
+      // Single-model mode: use reasoning model for everything
       env.ANTHROPIC_MODEL = reasoningModel
       env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel
       env.ANTHROPIC_DEFAULT_SONNET_MODEL = reasoningModel

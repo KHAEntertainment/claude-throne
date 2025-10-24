@@ -105,7 +105,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
           case 'saveModels':
-            await this.handleSaveModels(msg.reasoning, msg.completion)
+            await this.handleSaveModels(msg.reasoning, msg.coding, msg.value)
             break
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
@@ -123,7 +123,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await this.handleUpdatePort(msg.port)
             break
           case 'saveCombo':
-            await this.handleSaveCombo(msg.name, msg.primaryModel, msg.secondaryModel)
+            await this.handleSaveCombo(msg.name, msg.reasoningModel, msg.codingModel, msg.valueModel)
             break
           default:
             this.log.appendLine(`Unknown message type received: ${msg.type}`)
@@ -141,12 +141,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = String(cfg.get('reasoningModel') || '')
     const completionModel = String(cfg.get('completionModel') || '')
+    const valueModel = String(cfg.get('valueModel') || '')
     this.view?.webview.postMessage({ 
       type: 'status', 
       payload: { 
         ...s, 
         reasoningModel, 
         completionModel, 
+        valueModel,
         directApplied: this.directApplied 
       } 
     })
@@ -173,15 +175,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const provider = config.get('provider');
     const reasoningModel = config.get('reasoningModel');
     const completionModel = config.get('completionModel');
+    const valueModel = config.get('valueModel');
     const twoModelMode = config.get('twoModelMode', false);
     const port = config.get('proxy.port');
     const customBaseUrl = config.get('customBaseUrl', '');
     
-    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}`);
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`);
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, reasoningModel, completionModel, twoModelMode, port, customBaseUrl }
+      payload: { provider, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl }
     });
   }
 
@@ -298,7 +301,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           provider,
           error: errorMessage,
           errorType,
-          canManuallyEnter: provider === 'custom' || provider === 'deepseek' || provider === 'glm'
+          canManuallyEnter: true // Enable manual entry for all providers on errors
         }
       })
     }
@@ -372,15 +375,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.postConfig()
   }
 
-  private async handleSaveCombo(name: string, primaryModel: string, secondaryModel: string) {
+  private async handleSaveCombo(name: string, reasoningModel: string, codingModel: string, valueModel: string) {
     try {
       const config = vscode.workspace.getConfiguration('claudeThrone')
       const savedCombos = config.get<any[]>('savedCombos', [])
       
       const newCombo = {
         name,
-        reasoning: primaryModel,
-        completion: secondaryModel
+        reasoning: reasoningModel,
+        completion: codingModel,
+        value: valueModel
       }
       
       const updatedCombos = [...savedCombos, newCombo]
@@ -576,16 +580,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleSaveModels(reasoning: string, completion: string) {
+  private async handleSaveModels(reasoning: string, coding: string, value: string) {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
-      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, completion=${completion}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, coding=${coding}, value=${value}, twoModelMode=${twoModelMode}`)
       
       // Explicitly save to Workspace configuration to ensure persistence
       await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('completionModel', completion, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('completionModel', coding, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('valueModel', value, vscode.ConfigurationTarget.Workspace)
       
       this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config`)
       
@@ -602,14 +607,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     // Implementation depends on existing model data
   }
 
-  private async handleSetModelFromList(modelId: string, modelType: 'primary' | 'secondary') {
+  private async handleSetModelFromList(modelId: string, modelType: 'reasoning' | 'coding' | 'value') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    if (modelType === 'primary') {
+    if (modelType === 'reasoning') {
       await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved primary model: ${modelId}`)
-    } else if (modelType === 'secondary') {
+      this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId}`)
+    } else if (modelType === 'coding') {
       await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved secondary model: ${modelId}`)
+      this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId}`)
+    } else if (modelType === 'value') {
+      await cfg.update('valueModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId}`)
     }
     this.postConfig()
   }
@@ -696,12 +704,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             
             <div class="two-model-toggle">
               <input type="checkbox" id="twoModelToggle">
-              <label for="twoModelToggle">Use two models (reasoning + execution)</label>
+              <label for="twoModelToggle">Use separate models for different task types (Reasoning/Coding/Value)</label>
             </div>
             
             <div id="selectedModelsDisplay" class="selected-models-display" style="margin-top: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);">
-              <div id="primaryModelDisplay" style="margin-bottom: 4px;"></div>
-              <div id="secondaryModelDisplay"></div>
+              <div id="reasoningModelDisplay" style="margin-bottom: 4px;"></div>
+              <div id="codingModelDisplay" style="margin-bottom: 4px;"></div>
+              <div id="valueModelDisplay"></div>
             </div>
           </div>
         </div>

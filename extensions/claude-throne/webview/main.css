@@ -351,9 +351,24 @@ body {
   color: var(--vscode-list-activeSelectionForeground);
 }
 
+.model-item.selected-reasoning {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
 .model-item.selected-secondary {
   background-color: var(--vscode-list-inactiveSelectionBackground);
   color: var(--vscode-list-inactiveSelectionForeground);
+}
+
+.model-item.selected-coding {
+  background-color: var(--vscode-list-inactiveSelectionBackground);
+  color: var(--vscode-list-inactiveSelectionForeground);
+}
+
+.model-item.selected-value {
+  background-color: var(--vscode-inputOption-activeBackground);
+  color: var(--vscode-inputOption-activeForeground);
 }
 
 .model-info {
@@ -404,7 +419,24 @@ body {
   color: var(--vscode-button-foreground);
 }
 
+.model-btn.reasoning-selected {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
 .model-btn.secondary-selected {
+  background-color: var(--vscode-inputOption-activeBackground);
+  color: var(--vscode-inputOption-activeForeground);
+  border: 1px solid var(--vscode-inputOption-activeBorder);
+}
+
+.model-btn.coding-selected {
+  background-color: var(--vscode-inputOption-activeBackground);
+  color: var(--vscode-inputOption-activeForeground);
+  border: 1px solid var(--vscode-inputOption-activeBorder);
+}
+
+.model-btn.value-selected {
   background-color: var(--vscode-inputOption-activeBackground);
   color: var(--vscode-inputOption-activeForeground);
   border: 1px solid var(--vscode-inputOption-activeBorder);
