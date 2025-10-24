@@ -72,8 +72,12 @@
         "title": "Claude Throne: Store Together API Key"
       },
       {
-        "command": "claudeThrone.storeGrokKey",
-        "title": "Claude Throne: Store Grok API Key"
+        "command": "claudeThrone.storeDeepseekKey",
+        "title": "Claude Throne: Store Deepseek API Key"
+      },
+      {
+        "command": "claudeThrone.storeGlmKey",
+        "title": "Claude Throne: Store GLM API Key"
       },
       {
         "command": "claudeThrone.storeCustomKey",
@@ -200,7 +204,8 @@
             "openrouter",
             "openai",
             "together",
-            "grok",
+            "deepseek",
+            "glm",
             "custom"
           ],
           "scope": "window",

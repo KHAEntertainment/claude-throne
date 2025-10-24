@@ -12,7 +12,8 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
 
 ### 🚀 VS Code Extension
 - **Modern React Webview**: Feature-rich configuration panel with real-time model loading
-- **Multi-Provider Support**: Configure OpenRouter, OpenAI, Together, Grok, and custom providers
+- **Multi-Provider Support**: Configure OpenRouter, OpenAI, Together, Deepseek, GLM, and custom providers
+- **Anthropic-Native Providers**: Deepseek and GLM bypass proxy and connect directly as Anthropic-compatible endpoints
 - **Secure Credential Storage**: Integration with VS Code secrets API and optional Python backend
 - **Two-Model Mode**: Separate reasoning and execution models for optimal performance
 - **Model Management**: Search, filter, and save custom model combinations
@@ -47,9 +48,10 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
    - Or use the Command Palette: `Thronekeeper: Open Panel`
 
 3. **Configure your provider**:
-   - Select your AI provider (OpenRouter, OpenAI, Together, Grok, or Custom)
+   - Select your AI provider (OpenRouter, OpenAI, Together, Deepseek, GLM, or Custom)
    - Add your API key using the secure storage button
    - Choose your preferred models or use the recommended pairings
+   - Note: Deepseek and GLM connect directly as Anthropic-native providers (no proxy needed)
 
 4. **Start the proxy**:
    - Click "Start Your AI Throne" in the panel
@@ -92,7 +94,7 @@ Thronekeeper was initially forked from [anthropic-proxy](https://github.com/maxn
 | Aspect | Original (`anthropic-proxy`) | Thronekeeper |
 |--------|------------------------------|---------------|
 | **Architecture** | Single-file CLI (~350 LOC) | Full VS Code extension ecosystem |
-| **Providers** | OpenRouter only | OpenRouter, OpenAI, Together, Grok, custom endpoints |
+| **Providers** | OpenRouter only | OpenRouter, OpenAI, Together, Deepseek, GLM, custom endpoints |
 | **Security** | Environment variables only | VS Code SecretStorage + optional Python keyring backend |
 | **UI** | Command-line only | Modern webview panel with real-time model loading |
 | **Model Support** | Single model | Two-model mode (reasoning + execution) |
@@ -195,10 +197,15 @@ Completion: google/gemini-2.0-flash-exp:free
 - Fast inference for supported models
 - Competitive pricing
 
-**Grok (via xAI):**
-- Access to Grok models
-- Good performance
-- Newer provider, growing ecosystem
+**Deepseek:**
+- Anthropic-native API (direct connection, no proxy)
+- DeepSeek R1 and other models
+- Cost-effective with strong performance
+
+**GLM (Z.AI):**
+- Anthropic-native API (direct connection, no proxy)
+- GLM-4.6 and other models from Zhipu AI
+- Good for Chinese language tasks
 
 ## Advanced Usage
 

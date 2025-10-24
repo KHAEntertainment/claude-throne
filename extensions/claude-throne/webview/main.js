@@ -19,7 +19,8 @@
       openrouter: { primary: '', secondary: '' },
       openai: { primary: '', secondary: '' },
       together: { primary: '', secondary: '' },
-      grok: { primary: '', secondary: '' },
+      deepseek: { primary: '', secondary: '' },
+      glm: { primary: '', secondary: '' },
       custom: { primary: '', secondary: '' }
     },
     proxyRunning: false,
@@ -48,11 +49,17 @@
       helpUrl: 'https://api.together.xyz/settings/api-keys',
       apiPrefix: 'together/'
         },
-        grok: {
-      name: 'Grok (Groq)',
-            description: 'Ultra-fast inference for open models',
-      helpUrl: 'https://console.groq.com/keys',
-      apiPrefix: 'groq/'
+        deepseek: {
+      name: 'Deepseek',
+            description: 'Anthropic-compatible API with DeepSeek models',
+      helpUrl: 'https://platform.deepseek.com/api_keys',
+      apiPrefix: ''
+        },
+        glm: {
+      name: 'GLM (Z.AI)',
+            description: 'Anthropic-compatible API with GLM models',
+      helpUrl: 'https://open.bigmodel.cn/',
+      apiPrefix: ''
         },
         custom: {
             name: 'Custom Provider',

@@ -268,8 +268,11 @@ export function activate(context: vscode.ExtensionContext) {
   const storeTogetherKey = vscode.commands.registerCommand('claudeThrone.storeTogetherKey', async () => {
     await storeKey('together', secrets)
   })
-  const storeGrokKey = vscode.commands.registerCommand('claudeThrone.storeGrokKey', async () => {
-    await storeKey('grok', secrets)
+  const storeDeepseekKey = vscode.commands.registerCommand('claudeThrone.storeDeepseekKey', async () => {
+    await storeKey('deepseek', secrets)
+  })
+  const storeGlmKey = vscode.commands.registerCommand('claudeThrone.storeGlmKey', async () => {
+    await storeKey('glm', secrets)
   })
   const storeCustomKey = vscode.commands.registerCommand('claudeThrone.storeCustomKey', async () => {
     await storeKey('custom', secrets)
@@ -279,7 +282,8 @@ export function activate(context: vscode.ExtensionContext) {
       { label: 'OpenRouter', id: 'openrouter' },
       { label: 'OpenAI', id: 'openai' },
       { label: 'Together', id: 'together' },
-      { label: 'Grok', id: 'grok' },
+      { label: 'Deepseek', id: 'deepseek' },
+      { label: 'GLM', id: 'glm' },
       { label: 'Custom', id: 'custom' },
     ], { title: 'Choose Provider', canPickMany: false })
     if (!pick) return
@@ -290,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const startTime = Date.now()
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const provider = cfg.get<'openrouter' | 'openai' | 'together' | 'grok' | 'custom'>('provider', 'openrouter')
+      const provider = cfg.get<'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'>('provider', 'openrouter')
       const customBaseUrl = cfg.get<string>('customBaseUrl', '')
       const port = cfg.get<number>('proxy.port', 3000)
       const debug = cfg.get<boolean>('proxy.debug', false)
@@ -300,6 +304,62 @@ export function activate(context: vscode.ExtensionContext) {
       
       log.appendLine(`[startProxy] Starting with config: provider=${provider}, port=${port}, twoModelMode=${twoModelMode}`)
       log.appendLine(`[startProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
+      
+      // Bypass proxy for Deepseek (Anthropic-native provider)
+      if (provider === 'deepseek') {
+        const url = 'https://api.deepseek.com/anthropic'
+        log.appendLine(`[startProxy] Deepseek is Anthropic-native, bypassing proxy and applying URL directly`)
+        
+        const scopeStr = cfg.get<string>('applyScope', 'workspace')
+        const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+        
+        const candidates: { section: string; key: string }[] = [
+          { section: 'anthropic', key: 'baseUrl' },
+          { section: 'claude', key: 'baseUrl' },
+          { section: 'claudeCode', key: 'baseUrl' },
+          { section: 'claude-code', key: 'baseUrl' },
+          { section: 'claude', key: 'apiBaseUrl' },
+          { section: 'claudeCode', key: 'apiBaseUrl' },
+        ]
+        
+        for (const c of candidates) {
+          try {
+            const s = vscode.workspace.getConfiguration(c.section)
+            await s.update(c.key, url, scope)
+          } catch {}
+        }
+        
+        vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
+        return
+      }
+      
+      // Bypass proxy for GLM (Anthropic-native provider)
+      if (provider === 'glm') {
+        const url = 'https://api.z.ai/api/anthropic'
+        log.appendLine(`[startProxy] GLM is Anthropic-native, bypassing proxy and applying URL directly`)
+        
+        const scopeStr = cfg.get<string>('applyScope', 'workspace')
+        const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+        
+        const candidates: { section: string; key: string }[] = [
+          { section: 'anthropic', key: 'baseUrl' },
+          { section: 'claude', key: 'baseUrl' },
+          { section: 'claudeCode', key: 'baseUrl' },
+          { section: 'claude-code', key: 'baseUrl' },
+          { section: 'claude', key: 'apiBaseUrl' },
+          { section: 'claudeCode', key: 'apiBaseUrl' },
+        ]
+        
+        for (const c of candidates) {
+          try {
+            const s = vscode.workspace.getConfiguration(c.section)
+            await s.update(c.key, url, scope)
+          } catch {}
+        }
+        
+        vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
+        return
+      }
       
       await proxy!.start({ provider, customBaseUrl, port, debug, reasoningModel, completionModel })
       
@@ -447,7 +507,8 @@ export function activate(context: vscode.ExtensionContext) {
     storeOpenRouterKey,
     storeOpenAIKey,
     storeTogetherKey,
-    storeGrokKey,
+    storeDeepseekKey,
+    storeGlmKey,
     storeCustomKey,
     storeAnyKey,
     startProxy,
@@ -469,12 +530,13 @@ async function tryOpenView(viewId: string): Promise<boolean> {
   }
 }
 
-async function storeKey(provider: 'openrouter' | 'openai' | 'together' | 'grok' | 'custom', secrets: SecretsService) {
+async function storeKey(provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom', secrets: SecretsService) {
   const titles: Record<typeof provider, string> = {
     openrouter: 'OpenRouter API Key',
     openai: 'OpenAI API Key',
     together: 'Together API Key',
-    grok: 'Grok API Key',
+    deepseek: 'Deepseek API Key',
+    glm: 'GLM API Key',
     custom: 'Custom Provider API Key',
   } as any
   const key = await vscode.window.showInputBox({

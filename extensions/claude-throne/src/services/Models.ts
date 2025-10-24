@@ -1,6 +1,6 @@
 import { request } from 'undici'
 
-export type ProviderId = 'openrouter' | 'openai' | 'together' | 'grok' | 'custom'
+export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
 
 export async function listModels(provider: ProviderId, baseUrl: string, apiKey: string): Promise<string[]> {
   if (provider === 'custom' && (!baseUrl || !baseUrl.trim())) {

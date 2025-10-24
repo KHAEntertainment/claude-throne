@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import { SecretsService } from './Secrets'
 
 export interface ProxyStartOptions {
-  provider: 'openrouter' | 'openai' | 'together' | 'grok' | 'custom'
+  provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
   customBaseUrl?: string
   port: number
   debug?: boolean
@@ -315,11 +315,18 @@ export class ProxyManager {
         setBaseUrl('https://api.together.xyz')
         break
       }
-      case 'grok': {
-        const key = await this.secrets.getProviderKey('grok')
-        if (!key) throw new Error('Grok API key not set')
-        base.GROQ_API_KEY = key
-        setBaseUrl('https://api.groq.com/openai')
+      case 'deepseek': {
+        const key = await this.secrets.getProviderKey('deepseek')
+        if (!key) throw new Error('Deepseek API key not set')
+        base.DEEPSEEK_API_KEY = key
+        setBaseUrl('https://api.deepseek.com/anthropic')
+        break
+      }
+      case 'glm': {
+        const key = await this.secrets.getProviderKey('glm')
+        if (!key) throw new Error('GLM API key not set')
+        base.ZAI_API_KEY = key
+        setBaseUrl('https://api.z.ai/api/anthropic')
         break
       }
       case 'custom': {
