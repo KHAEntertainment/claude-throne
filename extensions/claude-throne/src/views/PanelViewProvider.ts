@@ -30,7 +30,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     try {
       await vscode.commands.executeCommand('workbench.view.openView', 'claudeThrone.panel', true)
     } catch {
-      vscode.window.showInformationMessage('Open the Claude Throne view from the Panel (bottom) — it is movable like Output/Terminal.')
+      vscode.window.showInformationMessage('Open the Thronekeeper view from the Panel (bottom) — it is movable like Output/Terminal.')
     }
   }
 
@@ -127,7 +127,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         }
       } catch (err) {
         this.log.appendLine(`❌ Error handling message: ${err}`)
-        vscode.window.showErrorMessage(`Error in Claude Throne: ${err}`)
+        vscode.window.showErrorMessage(`Error in Thronekeeper: ${err}`)
       }
     });
     this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
@@ -726,13 +726,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src ${this.view!.webview.cspSource} https:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Throne</title>
+  <title>Thronekeeper</title>
   <link rel="stylesheet" href="${cssUri}">
 </head>
 <body>
   <div class="container">
     <header class="header">
-      <h1 class="header-title">Claude Throne</h1>
+      <h1 class="header-title">Thronekeeper</h1>
       <p class="header-subtitle">Configure and launch your local proxy for AI code completion.</p>
     </header>
 
@@ -840,7 +840,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
     <footer class="footer">
       <div class="footer-left">
-        <a href="https://github.com/KHAEntertainment/claude-throne" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
+        <a href="https://github.com/KHAEntertainment/thronekeeper" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
         <div class="status-text">
           Status: <strong id="statusText" class="status-stopped">Idle</strong>
         </div>
@@ -855,7 +855,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   <script nonce="${nonce}">
     // Bootstrap script - runs immediately to set up message handling
     (function() {
-      console.log('[BOOTSTRAP] Starting Claude Throne webview...');
+      console.log('[BOOTSTRAP] Starting Thronekeeper webview...');
       
       // Acquire VS Code API immediately
       const vscode = acquireVsCodeApi();
