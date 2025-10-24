@@ -21,7 +21,8 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
 - **Claude Code Integration**: Automatic configuration management with workspace/global scope
 
 ### 🎯 Core Proxy Server
-- **Smart Provider Detection**: Automatically识别 OpenRouter, OpenAI, Together AI, Groq, and custom endpoints
+- **Smart Provider Detection**: Automatically detects OpenRouter, OpenAI, Together AI, and custom endpoints
+- **Anthropic-Native Direct Connect**: Deepseek and GLM connect directly without the proxy
 - **Intelligent API Key Resolution**: Context-aware key selection with provider-specific fallbacks
 - **Model Selection Logic**: Support for separate reasoning and execution models
 - **Debug Endpoint**: `/v1/debug/echo` for request inspection and troubleshooting

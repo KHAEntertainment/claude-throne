@@ -1,80 +1,14 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as os from 'os';
 import { request } from 'undici';
 import { SecretsService } from './services/Secrets';
 import { ProxyManager } from './services/ProxyManager';
 import { PanelViewProvider } from './views/PanelViewProvider';
+import { updateClaudeSettings } from './services/ClaudeSettings';
+import { isAnthropicEndpoint } from './services/endpoints';
+import { applyAnthropicUrl } from './services/AnthropicApply';
 
 let proxy: ProxyManager | null = null;
-
-async function updateClaudeSettings(workspaceDir: string, newEnv: Record<string, any>, revert = false) {
-    const fileNames = ['.claude/settings.json', '.claude/settings.local.json'];
-    for (const fileName of fileNames) {
-        const filePath = path.join(workspaceDir, fileName);
-        let settings: any = {};
-        let fileExistedBefore = false;
-
-        try {
-            if (fs.existsSync(filePath)) {
-                const content = fs.readFileSync(filePath, 'utf-8');
-                settings = JSON.parse(content);
-                fileExistedBefore = true;
-            }
-
-            if (revert) {
-                if (settings.env) {
-                    // Only remove the keys that Thronekeeper added
-                    for (const key in newEnv) {
-                        delete settings.env[key];
-                    }
-                    // If env is now empty, remove the env key entirely
-                    if (Object.keys(settings.env).length === 0) {
-                        delete settings.env;
-                    }
-                }
-            } else {
-                settings.env = { ...(settings.env || {}), ...newEnv };
-            }
-
-            // Write the file if there's any content, or delete if completely empty after revert
-            const dir = path.dirname(filePath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            
-            if (Object.keys(settings).length > 0) {
-                // Settings file has content, write it
-                fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
-            } else if (fileExistedBefore && Object.keys(settings).length === 0 && revert) {
-                // Settings file is now empty after revert, delete it
-                try {
-                    fs.unlinkSync(filePath);
-                } catch (err) {
-                    // Ignore errors if file doesn't exist
-                }
-            }
-        } catch (error) {
-            console.error(`Failed to update ${fileName}:`, error);
-        }
-    }
-}
-
-function isAnthropicEndpoint(url: string): boolean {
-  if (!url) return false;
-  
-  // Patterns that indicate an Anthropic endpoint
-  const patterns = [
-    /anthropic\.com/i,
-    /\/anthropic$/i,
-    /\/api\/anthropic/i,
-    /claude\.ai/i,
-    /bedrock.*anthropic/i
-  ];
-  
-  return patterns.some(pattern => pattern.test(url));
-}
 
 async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string; haiku: string } | null> {
   try {
@@ -309,26 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (provider === 'deepseek') {
         const url = 'https://api.deepseek.com/anthropic'
         log.appendLine(`[startProxy] Deepseek is Anthropic-native, bypassing proxy and applying URL directly`)
-        
-        const scopeStr = cfg.get<string>('applyScope', 'workspace')
-        const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
-        
-        const candidates: { section: string; key: string }[] = [
-          { section: 'anthropic', key: 'baseUrl' },
-          { section: 'claude', key: 'baseUrl' },
-          { section: 'claudeCode', key: 'baseUrl' },
-          { section: 'claude-code', key: 'baseUrl' },
-          { section: 'claude', key: 'apiBaseUrl' },
-          { section: 'claudeCode', key: 'apiBaseUrl' },
-        ]
-        
-        for (const c of candidates) {
-          try {
-            const s = vscode.workspace.getConfiguration(c.section)
-            await s.update(c.key, url, scope)
-          } catch {}
-        }
-        
+        await applyAnthropicUrl({ url, provider: 'deepseek', secrets })
         vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
         return
       }
@@ -337,26 +252,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (provider === 'glm') {
         const url = 'https://api.z.ai/api/anthropic'
         log.appendLine(`[startProxy] GLM is Anthropic-native, bypassing proxy and applying URL directly`)
-        
-        const scopeStr = cfg.get<string>('applyScope', 'workspace')
-        const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
-        
-        const candidates: { section: string; key: string }[] = [
-          { section: 'anthropic', key: 'baseUrl' },
-          { section: 'claude', key: 'baseUrl' },
-          { section: 'claudeCode', key: 'baseUrl' },
-          { section: 'claude-code', key: 'baseUrl' },
-          { section: 'claude', key: 'apiBaseUrl' },
-          { section: 'claudeCode', key: 'apiBaseUrl' },
-        ]
-        
-        for (const c of candidates) {
-          try {
-            const s = vscode.workspace.getConfiguration(c.section)
-            await s.update(c.key, url, scope)
-          } catch {}
-        }
-        
+        await applyAnthropicUrl({ url, provider: 'glm', secrets })
         vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
         return
       }
@@ -530,15 +426,17 @@ async function tryOpenView(viewId: string): Promise<boolean> {
   }
 }
 
-async function storeKey(provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom', secrets: SecretsService) {
-  const titles: Record<typeof provider, string> = {
+type Provider = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
+
+async function storeKey(provider: Provider, secrets: SecretsService) {
+  const titles: Record<Provider, string> = {
     openrouter: 'OpenRouter API Key',
     openai: 'OpenAI API Key',
     together: 'Together API Key',
     deepseek: 'Deepseek API Key',
     glm: 'GLM API Key',
     custom: 'Custom Provider API Key',
-  } as any
+  }
   const key = await vscode.window.showInputBox({
     title: `Enter ${titles[provider]}`,
     prompt: 'Your key will be stored securely in your OS keychain via VS Code SecretStorage',

@@ -42,7 +42,7 @@ The extension will automatically detect and use the Python backend if available.
 
 - `ANTHROPIC_PROXY_BASE_URL`: Custom OpenAI-compatible base URL for the proxy (default: `https://openrouter.ai/api`)
 - `CUSTOM_API_KEY` / `API_KEY`: Preferred when using a custom base URL
-- `OPENROUTER_API_KEY` | `OPENAI_API_KEY` | `TOGETHER_API_KEY` | `XAI_API_KEY` (aka `GROK_API_KEY`, legacy `GROQ_API_KEY`): Provider keys
+- `OPENROUTER_API_KEY` | `OPENAI_API_KEY` | `TOGETHER_API_KEY` | `DEEPSEEK_API_KEY` | `GLM_API_KEY` (aka `ZAI_API_KEY`): Provider keys
 - `OPENROUTER_SITE_URL` and `OPENROUTER_APP_TITLE`: Optional headers recommended by OpenRouter
 - `PORT`: The port the proxy server should listen on (default: 3000)
 - `REASONING_MODEL`: The reasoning model to use (default: `google/gemini-2.0-pro-exp-02-05:free`)
@@ -55,14 +55,16 @@ The extension will automatically detect and use the Python backend if available.
 - OpenRouter URL: `OPENROUTER_API_KEY`
 - OpenAI URL: `OPENAI_API_KEY`
 - Together URL: `TOGETHER_API_KEY`
-- Grok (xAI) URL: `XAI_API_KEY` (also accepts `GROK_API_KEY` or legacy `GROQ_API_KEY`)
+- Deepseek URL: `DEEPSEEK_API_KEY`
+- GLM (Z.AI) URL: `GLM_API_KEY` (also accepts `ZAI_API_KEY`)
 
 ### Provider Endpoints
 
-- OpenAI: https://api.openai.com/v1/chat/completions
-- OpenRouter: https://openrouter.ai/api/v1/chat/completions
-- Together AI: https://api.together.xyz/v1/chat/completions
-- xAI (Grok): https://api.x.ai/v1/chat/completions
+- OpenAI: <https://api.openai.com/v1/chat/completions>
+- OpenRouter: <https://openrouter.ai/api/v1/chat/completions>
+- Together AI: <https://api.together.xyz/v1/chat/completions>
+- Deepseek: <https://api.deepseek.com/anthropic> (Anthropic-native, bypasses proxy)
+- GLM (Z.AI): <https://api.z.ai/api/anthropic> (Anthropic-native, bypasses proxy)
 
 ## Testing
 

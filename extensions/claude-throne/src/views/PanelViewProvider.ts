@@ -1,10 +1,9 @@
 import * as vscode from 'vscode'
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
+import { isAnthropicEndpoint } from '../services/endpoints'
+import { applyAnthropicUrl } from '../services/AnthropicApply'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
@@ -430,7 +429,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (this.currentProvider === 'deepseek') {
         const url = 'https://api.deepseek.com/anthropic'
         this.log.appendLine(`[handleStartProxy] Deepseek is Anthropic-native, bypassing proxy`)
-        await this.applyAnthropicUrlDirectly(url)
+        await applyAnthropicUrl({ url, provider: 'deepseek', secrets: this.secrets })
         vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
         this.postStatus()
         return
@@ -440,19 +439,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (this.currentProvider === 'glm') {
         const url = 'https://api.z.ai/api/anthropic'
         this.log.appendLine(`[handleStartProxy] GLM is Anthropic-native, bypassing proxy`)
-        await this.applyAnthropicUrlDirectly(url)
+        await applyAnthropicUrl({ url, provider: 'glm', secrets: this.secrets })
         vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
         this.postStatus()
         return
       }
       
       // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
-      if (this.currentProvider === 'custom' && customBaseUrl && this.isAnthropicEndpoint(customBaseUrl)) {
+      if (this.currentProvider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
         this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
         this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
         
         // Apply the Anthropic URL directly without starting proxy
-        await this.applyAnthropicUrlDirectly(customBaseUrl)
+        await applyAnthropicUrl({ url: customBaseUrl })
         
         vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
         this.postStatus()
@@ -516,121 +515,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private isAnthropicEndpoint(url: string): boolean {
-    if (!url) return false
-    const patterns = [
-      /anthropic\.com/i,
-      /\/anthropic$/i,
-      /\/api\/anthropic/i,
-      /claude\.ai/i,
-      /bedrock.*anthropic/i,
-      /deepseek\.com/i,
-      /z\.ai/i
-    ]
-    return patterns.some(pattern => pattern.test(url))
-  }
 
-  private async applyAnthropicUrlDirectly(url: string) {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const scopeStr = cfg.get<string>('applyScope', 'workspace')
-    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
-    
-    const env: Record<string, any> = { ANTHROPIC_BASE_URL: url }
-    
-    // Update .claude/settings.json
-    let settingsDir: string | undefined
-    if (scopeStr === 'global') {
-      settingsDir = os.homedir()
-    } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-      settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath
-    }
-    
-    if (settingsDir) {
-      await this.updateClaudeSettings(settingsDir, env)
-    }
-    
-    // Apply to known Claude/Anthropic extension settings
-    const candidates: { section: string; key: string }[] = [
-      { section: 'anthropic', key: 'baseUrl' },
-      { section: 'claude', key: 'baseUrl' },
-      { section: 'claudeCode', key: 'baseUrl' },
-      { section: 'claude-code', key: 'baseUrl' },
-      { section: 'claude', key: 'apiBaseUrl' },
-      { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
-    
-    for (const c of candidates) {
-      try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        await s.update(c.key, url, scope)
-      } catch {}
-    }
-    
-    // Apply to VS Code integrated terminal env for CLI usage
-    const termKeys = [
-      'terminal.integrated.env.osx',
-      'terminal.integrated.env.linux',
-      'terminal.integrated.env.windows',
-    ]
-    
-    for (const key of termKeys) {
-      try {
-        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
-        if (current['ANTHROPIC_BASE_URL'] === url) {
-          continue
-        }
-        const updated = { ...current, ANTHROPIC_BASE_URL: url }
-        await vscode.workspace.getConfiguration().update(key, updated, scope)
-      } catch {}
-    }
-  }
-  
-  private async updateClaudeSettings(workspaceDir: string, newEnv: Record<string, any>, revert = false) {
-    const fileNames = ['.claude/settings.json', '.claude/settings.local.json']
-    for (const fileName of fileNames) {
-      const filePath = path.join(workspaceDir, fileName)
-      let settings: any = {}
-      let fileExistedBefore = false
-      
-      try {
-        if (fs.existsSync(filePath)) {
-          const content = fs.readFileSync(filePath, 'utf-8')
-          settings = JSON.parse(content)
-          fileExistedBefore = true
-        }
-        
-        if (revert) {
-          if (settings.env) {
-            for (const key in newEnv) {
-              delete settings.env[key]
-            }
-            if (Object.keys(settings.env).length === 0) {
-              delete settings.env
-            }
-          }
-        } else {
-          settings.env = { ...(settings.env || {}), ...newEnv }
-        }
-        
-        const dir = path.dirname(filePath)
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true })
-        }
-        
-        if (Object.keys(settings).length > 0) {
-          fs.writeFileSync(filePath, JSON.stringify(settings, null, 2))
-        } else if (fileExistedBefore && Object.keys(settings).length === 0 && revert) {
-          try {
-            fs.unlinkSync(filePath)
-          } catch (err) {
-            // Ignore errors if file doesn't exist
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to update ${fileName}:`, error)
-      }
-    }
-  }
+
+
 
   private async handleStopProxy() {
     try {
