@@ -10,6 +10,17 @@ export interface ApplyOptions {
   scope?: vscode.ConfigurationTarget
 }
 
+/**
+ * Propagates Anthropic/Claude connection and model settings to editor configuration, terminal environments, and the Claude settings file.
+ *
+ * Builds environment entries (including ANTHROPIC_BASE_URL, model selection keys, and ANTHROPIC_API_KEY when a provider key is available), updates the .claude/settings.json in the target directory, updates known Claude/Anthropic extension settings, and sets ANTHROPIC_BASE_URL in integrated terminal environment settings for the chosen scope.
+ *
+ * @param options - Options controlling what and where to apply settings
+ * @param options.url - The Anthropic/Claude base URL to apply
+ * @param options.provider - Optional provider identifier used to look up a provider API key via `secrets`
+ * @param options.secrets - Optional SecretsService used to retrieve the provider API key
+ * @param options.scope - Optional VS Code configuration scope override (defaults to configured scope or workspace)
+ */
 export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   const { url, provider, secrets } = options
   const cfg = vscode.workspace.getConfiguration('claudeThrone')
@@ -84,7 +95,10 @@ export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   for (const key of termKeys) {
     try {
       const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
-      const updated = { ...current, ...env }
+      if (current['ANTHROPIC_BASE_URL'] === url) {
+        continue
+      }
+      const updated = { ...current, ANTHROPIC_BASE_URL: url }
       await vscode.workspace.getConfiguration().update(key, updated, scope)
     } catch {}
   }
