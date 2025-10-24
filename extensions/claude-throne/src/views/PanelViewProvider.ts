@@ -6,13 +6,18 @@ import { listModels, type ProviderId } from '../services/Models'
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
+  private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
     private readonly secrets: SecretsService,
     private readonly proxy: ProxyManager | null,
     private readonly log: vscode.OutputChannel,
-  ) {}
+  ) {
+    // Initialize provider from configuration
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    this.currentProvider = cfg.get<string>('provider', 'openrouter')
+  }
 
   async reveal() {
     if (this.view) {
@@ -47,92 +52,81 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             this.postModels()
             await this.postPopularModels()
             break
-            
           case 'requestStatus':
             this.postStatus()
             break
-            
           case 'requestKeys':
             await this.postKeys()
             break
-            
           case 'requestConfig':
             this.postConfig()
             break
-            
           case 'requestModels':
-            await this.postModels()
+            await this.handleListModels(false)
             break
-            
           case 'listPublicModels':
             await this.handleListModels(false)
             break
-            
           case 'listFreeModels':
             await this.handleListModels(true)
             break
-            
           case 'requestPopularModels':
             await this.postPopularModels()
             break
-            
           case 'updateProvider':
             await this.handleUpdateProvider(msg.provider)
             break
-            
           case 'updateCustomBaseUrl':
             await this.handleUpdateCustomUrl(msg.url)
+            if (this.currentProvider === 'custom') {
+              if (msg.url && msg.url.trim()) {
+                await this.handleListModels(false)
+              } else {
+                this.postModels()
+              }
+            }
             break
-            
           case 'storeKey':
             await this.handleStoreKey(msg.provider, msg.key)
             break
-            
           case 'startProxy':
             await this.handleStartProxy()
             break
-            
           case 'stopProxy':
             await this.handleStopProxy()
             break
-            
           case 'openSettings':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
-            
           case 'saveModels':
             await this.handleSaveModels(msg.reasoning, msg.completion)
             break
-            
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
             break
-            
           case 'toggleTwoModelMode':
             await this.handleToggleTwoModelMode(msg.enabled)
             break
-            
           case 'filterModels':
             await this.handleFilterModels(msg.filter)
             break
-            
           case 'openExternal':
-            await vscode.env.openExternal(vscode.Uri.parse(msg.url))
+            vscode.env.openExternal(vscode.Uri.parse(msg.url))
             break
-            
+          case 'updatePort':
+            await this.handleUpdatePort(msg.port)
+            break
+          case 'saveCombo':
+            await this.handleSaveCombo(msg.name, msg.primaryModel, msg.secondaryModel)
+            break
           default:
-            this.log.appendLine(`⚠️ Unknown message type: ${msg.type}`)
+            this.log.appendLine(`Unknown message type received: ${msg.type}`)
         }
-      } catch (err: any) {
-        this.log.appendLine(`❌ Error handling message: ${err?.message || String(err)}`)
-        vscode.window.showErrorMessage(err?.message || String(err))
-        this.view?.webview.postMessage({ 
-          type: 'error', 
-          payload: err?.message || String(err)
-        })
+      } catch (err) {
+        this.log.appendLine(`❌ Error handling message: ${err}`)
+        vscode.window.showErrorMessage(`Error in Claude Throne: ${err}`)
       }
-    })
-
+    });
     this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
   }
 
@@ -145,7 +139,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async postKeys() {
-    const providers = ['openrouter','openai','together','groq','custom']
+    const providers = ['openrouter','openai','together','grok','custom']
     const map: Record<string, boolean> = {}
     for (const p of providers) {
       try {
@@ -159,29 +153,70 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
 
-  private postConfig() {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const config = {
-      provider: 'openrouter',
-      customUrl: '',
-      reasoningModel: String(cfg.get('reasoningModel') || ''),
-      completionModel: String(cfg.get('completionModel') || ''),
-      twoModelMode: Boolean(cfg.get('twoModelMode')),
-      autoApply: Boolean(cfg.get('autoApply')),
-      customEndpointKind: String(cfg.get('customEndpointKind') || 'auto')
-    }
-    this.view?.webview.postMessage({ type: 'config', payload: config })
+  public postConfig() {
+    if (!this.view) return;
+    const config = vscode.workspace.getConfiguration('claudeThrone');
+    const provider = config.get('provider');
+    const reasoningModel = config.get('reasoningModel');
+    const completionModel = config.get('completionModel');
+    const twoModelMode = config.get('twoModelMode', false);
+    const port = config.get('proxy.port');
+    const customBaseUrl = config.get('customBaseUrl', '');
+    
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}`);
+    
+    this.view.webview.postMessage({
+      type: 'config',
+      payload: { provider, reasoningModel, completionModel, twoModelMode, port, customBaseUrl }
+    });
   }
 
   private async postModels() {
-    // Send available models if we have them cached
-    // Otherwise, the webview will request them via listPublicModels
-    this.view?.webview.postMessage({ type: 'models', payload: [] })
+    const provider = this.currentProvider || 'openrouter'
+    const CACHE_TTL_MS = 5 * 60 * 1000
+    const cached = this.modelsCache.get(provider)
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.view?.webview.postMessage({ 
+        type: 'models', 
+        payload: { models: cached.models, provider } 
+      })
+    } else {
+      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+    }
   }
 
   private async handleListModels(freeOnly: boolean) {
     const provider = this.currentProvider || 'openrouter'
     this.log.appendLine(`📋 Loading models for provider: ${provider}`)
+    
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
+    if (provider === 'custom') {
+      const baseUrl = cfg.get<string>('customBaseUrl', '')
+      if (!baseUrl || !baseUrl.trim()) {
+        this.view?.webview.postMessage({ 
+          type: 'models', 
+          payload: { models: [], provider } 
+        })
+        return
+      }
+    }
+    
+    const CACHE_TTL_MS = 5 * 60 * 1000
+    const cached = this.modelsCache.get(provider)
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      this.log.appendLine(`📦 Using cached models for ${provider}`)
+      this.view?.webview.postMessage({ 
+        type: 'models', 
+        payload: {
+          models: cached.models,
+          provider,
+          freeOnly
+        }
+      })
+      return
+    }
     
     try {
       // Get API key for the provider
@@ -189,12 +224,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
       // Get base URL for custom providers
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
       let baseUrl = 'https://openrouter.ai/api'
       
       if (provider === 'custom') {
-        // For custom provider, we'd need to get the custom URL
-        // For now, use OpenRouter as default
+        baseUrl = cfg.get<string>('customBaseUrl', '')
       } else if (provider === 'openai') {
         baseUrl = 'https://api.openai.com/v1'
       } else if (provider === 'together') {
@@ -215,6 +248,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         provider
       }))
       
+      this.modelsCache.set(provider, { models, timestamp: Date.now() })
+      
       this.log.appendLine(`📤 Sending ${models.length} models to webview`)
       this.view?.webview.postMessage({ 
         type: 'models', 
@@ -224,11 +259,29 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           freeOnly
         }
       })
-    } catch (err) {
+    } catch (err: any) {
       this.log.appendLine(`❌ Failed to load models: ${err}`)
+      
+      // Send specific error for timeout or connection issues
+      let errorMessage = `Failed to load models: ${err}`
+      let errorType = 'generic'
+      
+      if (err.message?.includes('timed out')) {
+        errorType = 'timeout'
+        errorMessage = 'Model list request timed out. You can enter model IDs manually.'
+      } else if (err.message?.includes('ECONNREFUSED') || err.message?.includes('ENOTFOUND')) {
+        errorType = 'connection'
+        errorMessage = 'Could not connect to the API endpoint. Please check your URL and enter model IDs manually.'
+      }
+      
       this.view?.webview.postMessage({ 
-        type: 'error', 
-        payload: `Failed to load models: ${err}`
+        type: 'modelsError', 
+        payload: {
+          provider,
+          error: errorMessage,
+          errorType,
+          canManuallyEnter: provider === 'custom'
+        }
       })
     }
   }
@@ -264,24 +317,66 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleUpdateProvider(provider: string) {
+    // Clear the cache for the old provider before changing
+    this.modelsCache.delete(this.currentProvider)
+    
     // Store current provider for model loading
     this.currentProvider = provider
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
     try {
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
       await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
     } catch (err) {
       console.error('Failed to update provider config:', err)
     }
     
     // Reload models for new provider
-    this.handleListModels(false)
+    if (provider === 'custom') {
+      const customBaseUrl = cfg.get<string>('customBaseUrl', '')
+      if (!customBaseUrl || !customBaseUrl.trim()) {
+        this.postModels()
+      } else {
+        this.handleListModels(false)
+      }
+    } else {
+      this.handleListModels(false)
+    }
     this.postPopularModels()
   }
 
   private async handleUpdateCustomUrl(url: string) {
-    // Update custom base URL
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    // This sets the environment variable indirectly via settings
+    await cfg.update('customBaseUrl', url, vscode.ConfigurationTarget.Workspace)
+  }
+
+  private async handleUpdatePort(port: number) {
+    await vscode.workspace.getConfiguration('claudeThrone').update('proxy.port', port, vscode.ConfigurationTarget.Workspace)
+    this.postConfig()
+  }
+
+  private async handleSaveCombo(name: string, primaryModel: string, secondaryModel: string) {
+    try {
+      const config = vscode.workspace.getConfiguration('claudeThrone')
+      const savedCombos = config.get<any[]>('savedCombos', [])
+      
+      const newCombo = {
+        name,
+        reasoning: primaryModel,
+        completion: secondaryModel
+      }
+      
+      const updatedCombos = [...savedCombos, newCombo]
+      await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
+      
+      vscode.window.showInformationMessage('Model combo saved successfully')
+      this.view?.webview.postMessage({ 
+        type: 'combosLoaded', 
+        payload: { combos: updatedCombos } 
+      })
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to save combo: ${err}`)
+      vscode.window.showErrorMessage(`Failed to save combo: ${err}`)
+    }
   }
 
   private async handleStoreKey(provider: string, key: string) {
@@ -321,33 +416,72 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleStartProxy() {
     try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const customBaseUrl = this.currentProvider === 'custom' 
+        ? cfg.get<string>('customBaseUrl', '')
+        : undefined
+      
+      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
+      if (this.currentProvider === 'custom' && customBaseUrl && this.isAnthropicEndpoint(customBaseUrl)) {
+        this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
+        this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
+        
+        // Apply the Anthropic URL directly without starting proxy
+        await this.applyAnthropicUrlDirectly(customBaseUrl)
+        
+        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
+        this.postStatus()
+        return
+      }
+      
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
       }
-      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const startTime = Date.now()
       const port = cfg.get<number>('proxy.port', 3000)
       const debug = cfg.get<boolean>('proxy.debug', false)
+      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
+      
+      // Log model configuration (but don't block startup - proxy has fallback defaults)
+      if (!reasoningModel || !completionModel) {
+        this.log.appendLine(`[handleStartProxy] INFO: Models not configured, proxy will use fallback defaults`)
+        this.log.appendLine(`[handleStartProxy] - reasoningModel: ${reasoningModel || 'EMPTY (will use fallback)'}`)
+        this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel || 'EMPTY (will use fallback)'}`)
+      }
+      
+      this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleStartProxy] Models: reasoning=${reasoningModel || 'NOT SET'}, completion=${completionModel || 'NOT SET'}`)
+      if (customBaseUrl) {
+        this.log.appendLine(`[handleStartProxy] Custom Base URL: ${customBaseUrl}`)
+      }
+      this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
       await this.proxy.start({
         provider: this.currentProvider as any,
         port,
         debug,
         reasoningModel,
-        completionModel
+        completionModel,
+        ...(this.currentProvider === 'custom' && { customBaseUrl })
       })
+      
+      const elapsed = Date.now() - startTime
+      this.log.appendLine(`[handleStartProxy] Proxy started successfully in ${elapsed}ms`)
       
       vscode.window.showInformationMessage(`Proxy started on port ${port}`)
       this.postStatus()
       
-      // Auto-apply to Claude Code if enabled
-      const autoApply = cfg.get<boolean>('autoApply', true)
-      if (autoApply) {
-        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
-      }
+      // ALWAYS apply settings to Claude Code when proxy starts
+      // (The autoApply flag only controls whether we revert on stop)
+      this.log.appendLine(`[handleStartProxy] Applying proxy settings to Claude Code...`)
+      // Wait a moment for proxy to fully initialize and start accepting connections
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
     } catch (err) {
+      this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
       vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
       this.view?.webview.postMessage({ 
@@ -357,13 +491,63 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private isAnthropicEndpoint(url: string): boolean {
+    if (!url) return false
+    const patterns = [
+      /anthropic\.com/i,
+      /\/anthropic$/i,
+      /\/api\/anthropic/i,
+      /claude\.ai/i,
+      /bedrock.*anthropic/i
+    ]
+    return patterns.some(pattern => pattern.test(url))
+  }
+
+  private async applyAnthropicUrlDirectly(url: string) {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const scopeStr = cfg.get<string>('applyScope', 'workspace')
+    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+    
+    // Apply to known Claude/Anthropic extension settings
+    const candidates: { section: string; key: string }[] = [
+      { section: 'anthropic', key: 'baseUrl' },
+      { section: 'claude', key: 'baseUrl' },
+      { section: 'claudeCode', key: 'baseUrl' },
+      { section: 'claude-code', key: 'baseUrl' },
+      { section: 'claude', key: 'apiBaseUrl' },
+      { section: 'claudeCode', key: 'apiBaseUrl' },
+    ]
+    
+    for (const c of candidates) {
+      try {
+        const s = vscode.workspace.getConfiguration(c.section)
+        await s.update(c.key, url, scope)
+      } catch {}
+    }
+  }
+
   private async handleStopProxy() {
     try {
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
       }
       await this.proxy.stop()
+      
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const autoApply = cfg.get<boolean>('autoApply', false)
+      if (autoApply) {
+        await vscode.commands.executeCommand('claudeThrone.revertApply')
+      }
+      
+      // Clear models cache and refresh webview config after stopping
+      this.modelsCache.clear()
+      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      this.postConfig()
       this.postStatus()
+      
+      if (autoApply) {
+        vscode.window.showInformationMessage('Proxy stopped and Claude Code settings reverted')
+      }
     } catch (err) {
       console.error('Failed to stop proxy:', err)
     }
@@ -372,9 +556,20 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveModels(reasoning: string, completion: string) {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      await cfg.update('reasoningModel', reasoning)
-      await cfg.update('completionModel', completion)
+      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
+      
+      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, completion=${completion}, twoModelMode=${twoModelMode}`)
+      
+      // Explicitly save to Workspace configuration to ensure persistence
+      await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('completionModel', completion, vscode.ConfigurationTarget.Workspace)
+      
+      this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config`)
+      
+      // Immediately send updated config back to webview to confirm save
+      this.postConfig()
     } catch (err) {
+      this.log.appendLine(`[handleSaveModels] Error: ${err}`)
       console.error('Failed to save models:', err)
     }
   }
@@ -387,9 +582,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSetModelFromList(modelId: string, modelType: 'primary' | 'secondary') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     if (modelType === 'primary') {
-      await cfg.update('reasoningModel', modelId)
+      await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved primary model: ${modelId}`)
     } else if (modelType === 'secondary') {
-      await cfg.update('completionModel', modelId)
+      await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved secondary model: ${modelId}`)
     }
     this.postConfig()
   }
@@ -397,7 +594,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleToggleTwoModelMode(enabled: boolean) {
     // Store the two-model mode preference
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const reasoningModel = cfg.get<string>('reasoningModel')
+    const completionModel = cfg.get<string>('completionModel')
+    
+    this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
+    this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
+    
     await cfg.update('twoModelMode', enabled)
+    
+    this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
 
   private getHtml(): string {
@@ -413,7 +618,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src https://openrouter.ai;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.view!.webview.cspSource}; script-src 'nonce-${nonce}' ${this.view!.webview.cspSource}; connect-src ${this.view!.webview.cspSource} https:;">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Throne</title>
   <link rel="stylesheet" href="${cssUri}">
@@ -477,11 +682,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           </div>
         </div>
 
+        <!-- Save Combo Button -->
+        <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection" style="margin-bottom: 16px;">+ Save Model Combo</button>
+
         <!-- Popular Combos Card (OpenRouter only) -->
         <div id="popularCombosCard" class="card popular-combos-card">
           <div class="combos-header">
             <h2 class="card-title">Popular Combos</h2>
-            <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection">+ Save</button>
           </div>
           <div id="combosGrid" class="combos-grid">
             <div class="loading-container">

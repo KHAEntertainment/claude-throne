@@ -2,6 +2,9 @@
 import Fastify from 'fastify'
 import { TextDecoder } from 'util'
 import { detectProvider, resolveApiKey, providerSpecificHeaders } from './key-resolver.js'
+import { normalizeContent, removeUriFormat } from './transform.js'
+import { injectXMLToolInstructions } from './xml-tool-formatter.js'
+import { parseAssistantMessage } from './xml-tool-parser.js'
 
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
 const provider = detectProvider(baseUrl)
@@ -12,6 +15,78 @@ const models = {
   completion: process.env.COMPLETION_MODEL || model,
 }
 
+// Models that require XML tool calling (don't support native OpenAI tool format)
+const MODELS_REQUIRING_XML_TOOLS = new Set([
+  'inclusionai/ling-1t',
+  'z-ai/glm-4.6',
+  'z-ai/glm-4.5',
+  'deepseek-v2',
+  'deepseek-v3',
+])
+
+/**
+ * Check if a model requires XML tool calling instead of native OpenAI format
+ */
+function modelNeedsXMLTools(modelName) {
+  if (!modelName) return false
+  const lowerModel = modelName.toLowerCase()
+  for (const pattern of MODELS_REQUIRING_XML_TOOLS) {
+    if (lowerModel.includes(pattern.toLowerCase())) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Parse native OpenAI tool response format (for models that support it)
+ */
+function parseNativeToolResponse(openaiMessage) {
+  const blocks = []
+  
+  // Add text content if present
+  if (openaiMessage.content) {
+    blocks.push({
+      type: 'text',
+      text: openaiMessage.content
+    })
+  }
+  
+  // Add native tool calls if present
+  if (openaiMessage.tool_calls && openaiMessage.tool_calls.length > 0) {
+    openaiMessage.tool_calls.forEach(tc => {
+      try {
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.function.name,
+          input: JSON.parse(tc.function.arguments)
+        })
+      } catch (err) {
+        console.warn('[Tool Parse] Failed to parse native tool call:', err)
+      }
+    })
+  }
+  
+  // Return at least one block (empty text if nothing else)
+  return blocks.length > 0 ? blocks : [{type: 'text', text: ''}]
+}
+
+// Startup diagnostics
+console.log('[Startup] Claude Throne Proxy initializing...')
+console.log('[Startup] Configuration:')
+console.log(`[Startup] - Provider: ${provider}`)
+console.log(`[Startup] - Base URL: ${baseUrl}`)
+console.log(`[Startup] - Reasoning Model: ${models.reasoning}`)
+console.log(`[Startup] - Completion Model: ${models.completion}`)
+console.log(`[Startup] - API Key: ${key ? 'present' : 'MISSING'}`)
+console.log(`[Startup] - Debug Mode: ${process.env.DEBUG ? 'enabled' : 'disabled'}`)
+if (models.reasoning !== models.completion) {
+  console.log('[Startup] - Two-model mode detected')
+} else {
+  console.log('[Startup] - Single-model mode')
+}
+
 const fastify = Fastify({
   logger: true
 })
@@ -19,6 +94,17 @@ function debug(...args) {
   if (!process.env.DEBUG) return
   console.log(...args)
 }
+
+// Helper to roughly count tokens; tolerates undefined/null.
+function countTokens(text) {
+  if (typeof text !== 'string' || !text) {
+    return 0;
+  }
+  return text.split(' ').length;
+}
+
+// Safe word count for usage fallback
+const safeWords = (v) => typeof v === 'string' ? v.split(/\s+/).filter(Boolean).length : 0;
 
 // Helper function to send SSE events and flush immediately.
 const sendSSE = (reply, event, data) => {
@@ -49,7 +135,10 @@ fastify.get('/v1/models', async (request, reply) => {
     }
     if (key) headers['Authorization'] = `Bearer ${key}`
 
-    const resp = await fetch(`${baseUrl}/v1/models`, { method: 'GET', headers })
+    const resp = await fetch(`${baseUrl}/v1/models`, { 
+      method: 'GET', 
+      headers
+    })
     const text = await resp.text()
     reply.code(resp.status)
     // Pass-through upstream JSON as-is; many clients expect OpenAI-style { data: [...] }
@@ -63,23 +152,204 @@ fastify.get('/v1/models', async (request, reply) => {
   }
 })
 
+fastify.get('/healthz', async (request, reply) => {
+    return {
+        status: 'ok',
+        version: '1.4.19',
+        provider,
+        baseUrl,
+        models,
+    }
+})
+
+fastify.get('/health', async (request, reply) => {
+    return {
+        status: 'healthy',
+        provider,
+        baseUrl,
+        hasApiKey: !!key,
+        models: {
+            reasoning: models.reasoning || 'not set',
+            completion: models.completion || 'not set'
+        },
+        timestamp: Date.now(),
+        uptime: process.uptime()
+    }
+});
+
+fastify.post('/v1/messages/count_tokens', async (request, reply) => {
+  try {
+    const { messages, system, tools } = request.body
+    
+    let totalTokens = 0
+    
+    // Count system message
+    if (system) {
+      const systemText = Array.isArray(system) 
+        ? system.map(s => s.text || s.content || '').join(' ')
+        : (typeof system === 'string' ? system : '')
+      totalTokens += Math.ceil(systemText.length / 4)
+    }
+    
+    // Count messages
+    if (messages && Array.isArray(messages)) {
+      for (const msg of messages) {
+        if (typeof msg.content === 'string') {
+          totalTokens += Math.ceil(msg.content.length / 4)
+        } else if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === 'text' && block.text) {
+              totalTokens += Math.ceil(block.text.length / 4)
+            } else if (block.type === 'tool_result' && block.content) {
+              totalTokens += Math.ceil(block.content.length / 4)
+            }
+          }
+        }
+      }
+    }
+    
+    // Count tools (rough estimate)
+    if (tools && Array.isArray(tools)) {
+      const toolsJson = JSON.stringify(tools)
+      totalTokens += Math.ceil(toolsJson.length / 4)
+    }
+    
+    return {
+      input_tokens: totalTokens
+    }
+  } catch (err) {
+    console.error('[count_tokens error]', err)
+    reply.code(500)
+    return { error: { message: err.message, type: 'internal_error' } }
+  }
+})
+
+fastify.post('/v1/debug/echo', async (request, reply) => {
+  try {
+    const payload = request.body
+
+
+
+    const messages = []
+    if (payload.system && Array.isArray(payload.system)) {
+      payload.system.forEach(sysMsg => {
+        const normalized = normalizeContent(sysMsg.text || sysMsg.content)
+        if (normalized) {
+          messages.push({
+            role: 'system',
+            content: normalized
+          })
+        }
+      })
+    }
+    if (payload.messages && Array.isArray(payload.messages)) {
+      payload.messages.forEach(msg => {
+        const items = Array.isArray(msg.content) ? msg.content : []
+        const toolUseItems = items.filter(item => item.type === 'tool_use')
+        const toolResultItems = items.filter(item => item.type === 'tool_result')
+
+        const normalized = normalizeContent(msg.content)
+        const newMsg = { role: msg.role }
+        if (normalized) newMsg.content = normalized
+
+        if (msg.role === 'assistant' && toolUseItems.length > 0) {
+          newMsg.tool_calls = toolUseItems.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.input ?? {}),
+            },
+          }))
+        }
+
+        if (newMsg.content || newMsg.tool_calls) {
+          messages.push(newMsg)
+        }
+
+        if (toolResultItems.length > 0) {
+          toolResultItems.forEach(tr => {
+            messages.push({
+              role: 'tool',
+              content: typeof tr.text === 'string' ? tr.text : (tr.content ?? ''),
+              tool_call_id: tr.tool_use_id,
+            })
+          })
+        }
+      })
+    }
+
+
+
+    const tools = (payload.tools || []).filter(tool => !['BatchTool'].includes(tool.name)).map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: removeUriFormat(tool.input_schema),
+      },
+    }))
+
+    const selectedModel = payload.model 
+      || (payload.thinking ? models.reasoning : models.completion)
+
+    // Conditionally inject XML tool instructions for models that need them
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const messagesWithXML = needsXMLTools
+      ? injectXMLToolInstructions(messages, tools)
+      : messages
+    
+    const openaiPayload = {
+      model: selectedModel,
+      messages: messagesWithXML,
+      max_tokens: payload.max_tokens,
+      temperature: payload.temperature !== undefined ? payload.temperature : 1,
+      stream: payload.stream === true,
+    }
+    
+    // Add native tools parameter for models that support it
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      ...providerSpecificHeaders(provider)
+    }
+    if (key) {
+      headers['Authorization'] = 'Bearer ***REDACTED***'
+    }
+
+    return {
+      debug: true,
+      modelSelection: {
+        requestedModel: payload.model || null,
+        selectedModel,
+        reasoningModel: models.reasoning,
+        completionModel: models.completion,
+        wasOverridden: !payload.model,
+        thinking: payload.thinking || false
+      },
+      configuration: {
+        provider,
+        baseUrl,
+        hasApiKey: !!key
+      },
+      headers,
+      openaiPayload
+    }
+  } catch (err) {
+    console.error(err)
+    reply.code(500)
+    return { error: err.message }
+  }
+})
+
 fastify.post('/v1/messages', async (request, reply) => {
   try {
     const payload = request.body
 
-    // Helper to normalize a message's content.
-    // If content is a string, return it directly.
-    // If it's an array (of objects with text property), join them.
-    const normalizeContent = (content) => {
-      if (typeof content === 'string') return content
-      if (Array.isArray(content)) {
-        return content
-          .filter(item => item && item.type === 'text' && typeof item.text === 'string')
-          .map(item => item.text)
-          .join(' ')
-      }
-      return null
-    }
+
 
     // Build messages array for the OpenAI payload.
     // Start with system messages if provided.
@@ -136,42 +406,7 @@ fastify.post('/v1/messages', async (request, reply) => {
       })
     }
 
-    // Prepare the OpenAI payload.
-    // Helper function to recursively traverse JSON schema and remove format: 'uri'
-    const removeUriFormat = (schema) => {
-      if (!schema || typeof schema !== 'object') return schema;
 
-      // If this is a string type with uri format, remove the format
-      if (schema.type === 'string' && schema.format === 'uri') {
-        const { format, ...rest } = schema;
-        return rest;
-      }
-
-      // Handle array of schemas (like in anyOf, allOf, oneOf)
-      if (Array.isArray(schema)) {
-        return schema.map(item => removeUriFormat(item));
-      }
-
-      // Recursively process all properties
-      const result = {};
-      for (const key in schema) {
-      if (key === 'properties' && typeof schema[key] === 'object') {
-        result[key] = {};
-        for (const propKey in schema[key]) {
-          result[key][propKey] = removeUriFormat(schema[key][propKey]);
-        }
-      } else if (key === 'items' && typeof schema[key] === 'object') {
-        result[key] = removeUriFormat(schema[key]);
-      } else if (key === 'additionalProperties' && typeof schema[key] === 'object') {
-        result[key] = removeUriFormat(schema[key]);
-      } else if (['anyOf', 'allOf', 'oneOf'].includes(key) && Array.isArray(schema[key])) {
-        result[key] = schema[key].map(item => removeUriFormat(item));
-      } else {
-        result[key] = removeUriFormat(schema[key]);
-      }
-      }
-      return result;
-    };
 
     const tools = (payload.tools || []).filter(tool => !['BatchTool'].includes(tool.name)).map(tool => ({
       type: 'function',
@@ -181,17 +416,74 @@ fastify.post('/v1/messages', async (request, reply) => {
         parameters: removeUriFormat(tool.input_schema),
       },
     }))
+    const selectedModel = payload.model 
+      || (payload.thinking ? models.reasoning : models.completion)
+    
+    // Enhanced model selection logging
+    const modelSource = payload.model ? 'explicit request' 
+      : (payload.thinking ? 'REASONING_MODEL env var' : 'COMPLETION_MODEL env var')
+    
+    debug('Model selection:', {
+      requestedModel: payload.model || 'none',
+      selectedModel,
+      source: modelSource,
+      reasoning: models.reasoning,
+      completion: models.completion,
+      wasOverridden: !payload.model,
+      thinking: payload.thinking || false
+    })
+    
+    // Log model selection even without DEBUG for troubleshooting
+    if (!payload.model) {
+      console.log(`[Model] Auto-selected ${selectedModel} (${modelSource})`)
+    } else {
+      console.log(`[Model] Using requested model: ${selectedModel}`)
+    }
+
+    // Conditionally inject XML tool instructions for models that need them
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const messagesWithXML = needsXMLTools
+      ? injectXMLToolInstructions(messages, tools)
+      : messages
+    
     const openaiPayload = {
-      model: payload.thinking ? models.reasoning : models.completion,
-      messages,
+      model: selectedModel,
+      messages: messagesWithXML,
       max_tokens: payload.max_tokens,
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
-    if (tools.length > 0) openaiPayload.tools = tools
+    
+    // Add native tools parameter for models that support it
+    if (!needsXMLTools && tools.length > 0) {
+      openaiPayload.tools = tools
+    }
+    
     debug('OpenAI payload:', openaiPayload)
 
-    // Build headers
+    // Tool mode logging and detection
+    if (tools.length > 0) {
+      if (needsXMLTools) {
+        console.log(`[Tool Mode] XML tool calling enabled for ${selectedModel}`)
+        console.log(`[Tool Info] ${tools.length} tools available (XML format)`)
+      } else {
+        console.log(`[Tool Mode] Native tool calling for ${selectedModel}`)
+        console.log(`[Tool Info] ${tools.length} tools available (native format)`)
+      }
+      
+      // Warn about tool concurrency for models that may have issues
+      if (tools.length > 1 && needsXMLTools) {
+        const problematicModels = ['glm-4.6', 'glm-4.5', 'deepseek']
+        const hasKnownIssue = problematicModels.some(m => selectedModel.includes(m))
+        
+        if (hasKnownIssue) {
+          console.log(`[Tool Warning] Model ${selectedModel} may not support concurrent tool calls`)
+          console.log(`[Tool Warning] Consider using Claude Haiku/Opus for tool-heavy tasks`)
+        }
+      }
+    }
+
+    // Build headers (let fetch handle connection management automatically)
     const headers = {
       'Content-Type': 'application/json',
       ...providerSpecificHeaders(provider)
@@ -211,22 +503,99 @@ fastify.post('/v1/messages', async (request, reply) => {
       }
     }
     
+    const requestStartMs = Date.now()
+    let firstChunkLogged = false
+    let ttfbMs = null
+    
+    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`)
+    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`)
+    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`)
+    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || 'default'}, Temperature: ${openaiPayload.temperature}`)
+    
+    // No timeout - let reasoning models take the time they need
+    // System TCP timeout (75-120s) will handle truly hung connections
     const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(openaiPayload)
     });
+    
+    const elapsedMs = Date.now() - requestStartMs
+    
+    console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`)
 
     if (!openaiResponse.ok) {
       const errorDetails = await openaiResponse.text()
+      
+      // Parse error response
+      let errorJson
+      try {
+        errorJson = JSON.parse(errorDetails)
+      } catch {
+        errorJson = { 
+          error: { 
+            message: errorDetails,
+            type: 'upstream_error'
+          } 
+        }
+      }
+      
+      // Enhanced logging for debugging
+      console.error('[OpenRouter Error]', {
+        status: openaiResponse.status,
+        model: openaiPayload.model,
+        provider,
+        messageCount: messages.length,
+        toolCount: tools.length,
+        error: errorJson.error?.message || errorDetails.substring(0, 200)
+      })
+      
+      // Specific handling for common errors
+      if (openaiResponse.status === 400) {
+        console.error('[400 Bad Request Details]', {
+          possibleCauses: [
+            'Tool concurrency not supported by model',
+            'Invalid tool schema',
+            'Message format incompatibility',
+            'Context length exceeded'
+          ],
+          suggestion: 'Try with fewer tools or different model'
+        })
+      }
+      
+      debug('OpenRouter error response:', {
+        status: openaiResponse.status,
+        statusText: openaiResponse.statusText,
+        baseUrl,
+        requestedModel: payload.model,
+        selectedModel: openaiPayload.model,
+        elapsedMs,
+        errorBody: errorDetails
+      })
+      
       reply.code(openaiResponse.status)
-      return { error: errorDetails }
+      return errorJson
     }
+    
+    debug('OpenRouter response timing:', { baseUrl, elapsedMs, status: openaiResponse.status })
 
     // If stream is not enabled, process the complete response.
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json()
       debug('OpenAI response:', data)
+      
+      // Log token usage and timing for non-streaming
+      const logInputTokens = data.usage?.prompt_tokens || 0
+      const logOutputTokens = data.usage?.completion_tokens || 0
+      const logTotalTokens = logInputTokens + logOutputTokens
+      console.log(`[Tokens] Input: ${logInputTokens}, Output: ${logOutputTokens}, Total: ${logTotalTokens}`)
+      console.log(`[Timing] Total request time: ${elapsedMs}ms (${(logOutputTokens / (elapsedMs / 1000)).toFixed(1)} tokens/sec)`)
+      
+      // Add context for slow responses (reasoning models)
+      if (elapsedMs > 15000) {
+        console.log(`[Info] Long response time is normal for reasoning models (thinking tokens, multi-step reasoning)`)
+      }
+      
       if (data.error) {
         throw new Error(data.error.message)
       }
@@ -237,39 +606,62 @@ fastify.post('/v1/messages', async (request, reply) => {
 
       // Map finish_reason to anthropic stop_reason.
       const stopReason = mapStopReason(choice.finish_reason)
-      const toolCalls = openaiMessage.tool_calls || []
+      
+      // Parse response based on tool mode (XML vs native)
+      let contentBlocks = []
+      try {
+        if (needsXMLTools) {
+          // Parse XML tool calls from response content
+          debug('Parsing XML content:', openaiMessage.content)
+          contentBlocks = parseAssistantMessage(openaiMessage.content || '')
+          debug('Parsed XML content blocks:', contentBlocks)
+        } else {
+          // Parse native OpenAI tool response format
+          debug('Parsing native tool response')
+          contentBlocks = parseNativeToolResponse(openaiMessage)
+          debug('Parsed native content blocks:', contentBlocks)
+        }
+      } catch (parseError) {
+        debug('Error parsing content:', parseError)
+        // If parsing fails, create a simple text block with the raw content
+        contentBlocks = [{
+          type: 'text',
+          text: openaiMessage.content || ''
+        }]
+      }
+
+      // Ensure we have at least one content block
+      if (!contentBlocks || contentBlocks.length === 0) {
+        debug('No content blocks found, creating default text block')
+        contentBlocks = [{
+          type: 'text',
+          text: openaiMessage.content || ''
+        }]
+      }
 
       // Create a message id; if available, replace prefix, otherwise generate one.
       const messageId = data.id
         ? data.id.replace('chatcmpl', 'msg')
         : 'msg_' + Math.random().toString(36).substr(2, 24)
 
+      // Safe usage calculation with fallbacks
+      const inputTokens = data.usage?.prompt_tokens || 
+        messagesWithXML.reduce((acc, msg) => acc + safeWords(msg.content), 0)
+      
+      const outputTokens = data.usage?.completion_tokens || 
+        safeWords(openaiMessage.content)
+
       const anthropicResponse = {
-        content: [
-          {
-            text: openaiMessage.content,
-            type: 'text'
-          },
-          ...toolCalls.map(toolCall => ({
-            type: 'tool_use',
-            id: toolCall.id,
-            name: toolCall.function.name,
-            input: JSON.parse(toolCall.function.arguments),
-          })),
-        ],
+        content: contentBlocks,
         id: messageId,
         model: openaiPayload.model,
-        role: openaiMessage.role,
+        role: 'assistant',
         stop_reason: stopReason,
         stop_sequence: null,
         type: 'message',
         usage: {
-          input_tokens: data.usage
-            ? data.usage.prompt_tokens
-            : messages.reduce((acc, msg) => acc + msg.content.split(' ').length, 0),
-          output_tokens: data.usage
-            ? data.usage.completion_tokens
-            : openaiMessage.content.split(' ').length,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
         }
       }
 
@@ -314,29 +706,74 @@ fastify.post('/v1/messages', async (request, reply) => {
     // Prepare for reading streamed data.
     let accumulatedContent = ''
     let accumulatedReasoning = ''
+    let fullContent = ''  // Accumulate full content for XML parsing at end
     let usage = null
     let textBlockStarted = false
     let encounteredToolCall = false
     const toolCallAccumulators = {}  // key: tool call index, value: accumulated arguments string
+    let chunkBuffer = ''  // Buffer for incomplete JSON chunks
     const decoder = new TextDecoder('utf-8')
     const reader = openaiResponse.body.getReader()
     let done = false
 
-    while (!done) {
-      const { value, done: doneReading } = await reader.read()
-      done = doneReading
-      if (value) {
-        const chunk = decoder.decode(value)
-        debug('OpenAI response chunk:', chunk)
-        // OpenAI streaming responses are typically sent as lines prefixed with "data: "
-        const lines = chunk.split('\n')
+    try {
+      while (!done) {
+        const { value, done: doneReading } = await reader.read()
+        done = doneReading
+        if (value) {
+          const chunk = decoder.decode(value)
+          
+          // Track first-byte timing
+          if (!firstChunkLogged && chunk.trim()) {
+            ttfbMs = Date.now() - requestStartMs
+            debug('Streaming first-byte timing:', { ttfbMs, chunkLength: chunk.length })
+            firstChunkLogged = true
+          }
+          
+          // Log chunks only if DEBUG_CHUNKS is enabled
+          if (process.env.DEBUG_CHUNKS) {
+            debug('OpenAI response chunk:', chunk)
+          }
+          // OpenAI streaming responses are typically sent as lines prefixed with "data: "
+          const lines = chunk.split('\n')
 
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed === '' || !trimmed.startsWith('data:')) continue
-          const dataStr = trimmed.replace(/^data:\s*/, '')
-          if (dataStr === '[DONE]') {
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (trimmed === '' || !trimmed.startsWith('data:')) continue
+            const dataStr = trimmed.replace(/^data:\s*/, '')
+            if (dataStr === '[DONE]') {
+              // Try to flush any buffered data before ending
+              if (chunkBuffer) {
+                debug('[Streaming] Attempting to parse buffered data on stream end')
+                try {
+                  const finalParsed = JSON.parse(chunkBuffer)
+                  // Process final chunk if it has content
+                  if (finalParsed.choices?.[0]?.delta?.content) {
+                    accumulatedContent += finalParsed.choices[0].delta.content
+                    if (textBlockStarted) {
+                      sendSSE(reply, 'content_block_delta', {
+                        type: 'content_block_delta',
+                        index: 0,
+                        delta: {
+                          type: 'text_delta',
+                          text: finalParsed.choices[0].delta.content
+                        }
+                      })
+                    }
+                  }
+                } catch (err) {
+                  debug('[Streaming] Could not parse buffered data, discarding:', chunkBuffer.substring(0, 100))
+                }
+                chunkBuffer = ''
+              }
+            const totalStreamMs = Date.now() - requestStartMs
+            debug('Streaming completion timing:', { 
+              totalStreamMs, 
+              ttfbMs, 
+              totalResponseTime: totalStreamMs,
+              serverProcessingMs: ttfbMs ? ttfbMs - elapsedMs : null
+            })
             // Finalize the stream with stop events.
             if (encounteredToolCall) {
               for (const idx in toolCallAccumulators) {
@@ -359,7 +796,7 @@ fastify.post('/v1/messages', async (request, reply) => {
               },
               usage: usage
                 ? { output_tokens: usage.completion_tokens }
-                : { output_tokens: accumulatedContent.split(' ').length + accumulatedReasoning.split(' ').length }
+                : { output_tokens: safeWords(accumulatedContent) + safeWords(accumulatedReasoning) }
             })
             sendSSE(reply, 'message_stop', {
               type: 'message_stop'
@@ -368,7 +805,27 @@ fastify.post('/v1/messages', async (request, reply) => {
             return
           }
 
-          const parsed = JSON.parse(dataStr)
+          // Try to parse JSON, buffer if incomplete
+          let parsed
+          try {
+            // Try buffered + new chunk first
+            const attemptStr = chunkBuffer + dataStr
+            parsed = JSON.parse(attemptStr)
+            chunkBuffer = '' // Success, clear buffer
+          } catch (parseError) {
+            // JSON incomplete - buffer and wait for next chunk
+            if (process.env.DEBUG) {
+              debug('[Streaming] Incomplete JSON chunk, buffering:', {
+                error: parseError.message,
+                position: parseError.message.match(/position (\d+)/)?.[1],
+                chunkLength: dataStr.length,
+                bufferLength: chunkBuffer.length
+              })
+            }
+            chunkBuffer += dataStr
+            continue // Skip to next line
+          }
+
           if (parsed.error) {
             throw new Error(parsed.error.message)
           }
@@ -411,6 +868,10 @@ fastify.post('/v1/messages', async (request, reply) => {
               }
             }
           } else if (delta && delta.content) {
+            // Accumulate for both immediate sending and XML parsing at end
+            accumulatedContent += delta.content
+            fullContent += delta.content
+            
             if (!textBlockStarted) {
               textBlockStarted = true
               sendSSE(reply, 'content_block_start', {
@@ -422,7 +883,6 @@ fastify.post('/v1/messages', async (request, reply) => {
                 }
               })
             }
-            accumulatedContent += delta.content
             sendSSE(reply, 'content_block_delta', {
               type: 'content_block_delta',
               index: 0,
@@ -456,8 +916,34 @@ fastify.post('/v1/messages', async (request, reply) => {
         }
       }
     }
-
+    
     reply.raw.end()
+  } catch (streamError) {
+    console.error('[Error] Stream processing failed:', streamError)
+    
+    // Send error event to client instead of crashing
+    if (!reply.raw.writableEnded) {
+      try {
+        sendSSE(reply, 'error', {
+          type: 'error',
+          error: {
+            type: 'internal_error',
+            message: streamError.message
+          }
+        })
+        reply.raw.end()
+      } catch (sendError) {
+        // If we can't send SSE, just end the response
+        console.error('[Error] Could not send error event:', sendError)
+        if (!reply.raw.writableEnded) {
+          reply.raw.end()
+        }
+      }
+    }
+    
+    // Don't re-throw - just log and close gracefully
+    return
+  }
   } catch (err) {
     console.error(err)
     reply.code(500)
@@ -467,9 +953,11 @@ fastify.post('/v1/messages', async (request, reply) => {
 
 const start = async () => {
   try {
-    await fastify.listen({ port: process.env.PORT || 3000 })
+    const portArg = process.argv.indexOf('--port');
+    const port = portArg > -1 ? parseInt(process.argv[portArg + 1], 10) : (process.env.PORT || 3000);
+    await fastify.listen({ port });
   } catch (err) {
-    process.exit(1)
+    process.exit(1);
   }
 }
 

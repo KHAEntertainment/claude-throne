@@ -1,20 +1,141 @@
-import * as vscode from 'vscode'
-import { SecretsService } from './services/Secrets'
-import { ProxyManager } from './services/ProxyManager'
-import { PanelViewProvider } from './views/PanelViewProvider'
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { request } from 'undici';
+import { SecretsService } from './services/Secrets';
+import { ProxyManager } from './services/ProxyManager';
+import { PanelViewProvider } from './views/PanelViewProvider';
 
-let proxy: ProxyManager | null = null
+let proxy: ProxyManager | null = null;
+
+async function updateClaudeSettings(workspaceDir: string, newEnv: Record<string, any>, revert = false) {
+    const fileNames = ['.claude/settings.json', '.claude/settings.local.json'];
+    for (const fileName of fileNames) {
+        const filePath = path.join(workspaceDir, fileName);
+        let settings: any = {};
+        let fileExistedBefore = false;
+
+        try {
+            if (fs.existsSync(filePath)) {
+                const content = fs.readFileSync(filePath, 'utf-8');
+                settings = JSON.parse(content);
+                fileExistedBefore = true;
+            }
+
+            if (revert) {
+                if (settings.env) {
+                    // Only remove the keys that Claude Throne added
+                    for (const key in newEnv) {
+                        delete settings.env[key];
+                    }
+                    // If env is now empty, remove the env key entirely
+                    if (Object.keys(settings.env).length === 0) {
+                        delete settings.env;
+                    }
+                }
+            } else {
+                settings.env = { ...(settings.env || {}), ...newEnv };
+            }
+
+            // Write the file if there's any content, or delete if completely empty after revert
+            const dir = path.dirname(filePath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            
+            if (Object.keys(settings).length > 0) {
+                // Settings file has content, write it
+                fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+            } else if (fileExistedBefore && Object.keys(settings).length === 0 && revert) {
+                // Settings file is now empty after revert, delete it
+                try {
+                    fs.unlinkSync(filePath);
+                } catch (err) {
+                    // Ignore errors if file doesn't exist
+                }
+            }
+        } catch (error) {
+            console.error(`Failed to update ${fileName}:`, error);
+        }
+    }
+}
+
+function isAnthropicEndpoint(url: string): boolean {
+  if (!url) return false;
+  
+  // Patterns that indicate an Anthropic endpoint
+  const patterns = [
+    /anthropic\.com/i,
+    /\/anthropic$/i,
+    /\/api\/anthropic/i,
+    /claude\.ai/i,
+    /bedrock.*anthropic/i
+  ];
+  
+  return patterns.some(pattern => pattern.test(url));
+}
+
+async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string; haiku: string } | null> {
+  try {
+    const response = await request('https://api.anthropic.com/v1/models', {
+      method: 'GET',
+      headers: {
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data: any = await response.body.json();
+    const models = data.data || [];
+    
+    // Find latest Opus model (filter by 'opus', sort descending, take first)
+    const opusModels = models.filter((m: any) => m.id.includes('opus')).sort((a: any, b: any) => b.id.localeCompare(a.id));
+    const opus = opusModels.length > 0 ? opusModels[0].id : 'claude-opus-4-0';
+    
+    // Find latest Sonnet model
+    const sonnetModels = models.filter((m: any) => m.id.includes('sonnet')).sort((a: any, b: any) => b.id.localeCompare(a.id));
+    const sonnet = sonnetModels.length > 0 ? sonnetModels[0].id : 'claude-sonnet-4-0';
+    
+    // Find latest Haiku model
+    const haikuModels = models.filter((m: any) => m.id.includes('haiku')).sort((a: any, b: any) => b.id.localeCompare(a.id));
+    const haiku = haikuModels.length > 0 ? haikuModels[0].id : 'claude-3-5-haiku-latest';
+    
+    return { opus, sonnet, haiku };
+  } catch (error) {
+    console.error('Failed to fetch Anthropic defaults:', error);
+    // Return hardcoded fallbacks if fetch fails
+    return { opus: 'claude-opus-4-0', sonnet: 'claude-sonnet-4-0', haiku: 'claude-3-5-haiku-latest' };
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Claude-Throne')
   log.appendLine('🚀 Claude-Throne extension activating...')
-  log.show()
+  
+  // Only show output channel if debug mode is enabled
+  const cfg = vscode.workspace.getConfiguration('claudeThrone')
+  const debug = cfg.get<boolean>('proxy.debug', false)
+  if (debug) {
+    log.show()
+  }
   
   const secrets = new SecretsService(context.secrets)
   log.appendLine('✅ Secrets service initialized')
   
   proxy = new ProxyManager(context, log, secrets)
   log.appendLine('✅ Proxy manager initialized')
+
+  // Cache Anthropic defaults in background
+  fetchAnthropicDefaults().then(async (defaults) => {
+    if (defaults) {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
+      log.appendLine(`✅ Cached Anthropic defaults: opus=${defaults.opus}, sonnet=${defaults.sonnet}, haiku=${defaults.haiku}`)
+    }
+  }).catch((err) => {
+    log.appendLine(`⚠️ Failed to cache Anthropic defaults: ${err}`)
+  })
 
   // Register the sidebar/activity bar panel view
   log.appendLine('📋 Registering webview view providers...')
@@ -38,7 +159,53 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   const revertApply = vscode.commands.registerCommand('claudeThrone.revertApply', async () => {
-    // Remove base URL overrides from known extension settings
+    const cfg = vscode.workspace.getConfiguration('claudeThrone');
+    const scopeStr = cfg.get<string>('applyScope', 'workspace');
+    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+
+    let settingsDir: string | undefined;
+    if (scopeStr === 'global') {
+        settingsDir = os.homedir();
+    } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    }
+
+    // Get cached Anthropic defaults
+    const defaults = cfg.get<any>('anthropicDefaults', null);
+    
+    // First remove Claude Throne settings, then restore Anthropic defaults
+    if (settingsDir) {
+        // Remove Claude Throne env vars
+        await updateClaudeSettings(settingsDir, {
+            ANTHROPIC_BASE_URL: null,
+            ANTHROPIC_MODEL: null,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: null,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: null,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: null,
+        }, /*revert*/ true);
+        
+        // Restore Anthropic defaults if available
+        if (defaults && defaults.opus && defaults.sonnet && defaults.haiku) {
+            await updateClaudeSettings(settingsDir, {
+                ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+                ANTHROPIC_MODEL: defaults.sonnet,
+                ANTHROPIC_DEFAULT_OPUS_MODEL: defaults.opus,
+                ANTHROPIC_DEFAULT_SONNET_MODEL: defaults.sonnet,
+                ANTHROPIC_DEFAULT_HAIKU_MODEL: defaults.haiku
+            }, /*revert*/ false);
+        } else {
+            // Fallback to just base URL if defaults not cached
+            await updateClaudeSettings(settingsDir, {
+                ANTHROPIC_BASE_URL: 'https://api.anthropic.com'
+            }, /*revert*/ false);
+        }
+    }
+    
+    // NOTE: We do NOT clear reasoningModel/completionModel here anymore
+    // User's saved model preferences should persist across proxy stop/start cycles
+    // Only .claude/settings.json is reverted to Anthropic defaults for Claude Code CLI
+    
+    // Restore base URL to Anthropic defaults in extension settings
     const candidates: { section: string; key: string }[] = [
       { section: 'anthropic', key: 'baseUrl' },
       { section: 'claude', key: 'baseUrl' },
@@ -46,47 +213,49 @@ export function activate(context: vscode.ExtensionContext) {
       { section: 'claude-code', key: 'baseUrl' },
       { section: 'claude', key: 'apiBaseUrl' },
       { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
-    const removed: string[] = []
+    ];
+    const restored: string[] = [];
     for (const c of candidates) {
       try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        const current = s.get(c.key)
+        const s = vscode.workspace.getConfiguration(c.section);
+        const current = s.get(c.key);
         if (current !== undefined) {
-          await s.update(c.key, undefined, vscode.ConfigurationTarget.Workspace)
-          removed.push(`${c.section}.${c.key}`)
+          // Restore to Anthropic default instead of just removing
+          await s.update(c.key, 'https://api.anthropic.com', scope);
+          restored.push(`${c.section}.${c.key}`);
         }
       } catch {}
     }
 
-    // Remove ANTHROPIC_BASE_URL from terminal env
+    // Restore ANTHROPIC_BASE_URL to Anthropic default in terminal env
     const termKeys = [
       'terminal.integrated.env.osx',
       'terminal.integrated.env.linux',
       'terminal.integrated.env.windows',
-    ]
-    let termTouched = 0
+    ];
+    let termTouched = 0;
     for (const key of termKeys) {
       try {
-        const cfg = vscode.workspace.getConfiguration()
-        const cur = (cfg.get<Record<string, string>>(key) || {})
+        const cfg = vscode.workspace.getConfiguration();
+        const cur = (cfg.get<Record<string, string>>(key) || {});
         if ('ANTHROPIC_BASE_URL' in cur) {
-          const next = { ...cur }
-          delete next['ANTHROPIC_BASE_URL']
-          const hasAny = Object.keys(next).length > 0
-          await cfg.update(key, hasAny ? next : undefined, vscode.ConfigurationTarget.Workspace)
-          termTouched++
+          const next = { ...cur, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' };
+          await cfg.update(key, next, scope);
+          termTouched++;
         }
       } catch {}
     }
 
     const parts: string[] = []
-    if (removed.length) parts.push(`extensions: ${removed.join(', ')}`)
+    if (restored.length) parts.push(`extensions: ${restored.join(', ')}`)
     if (termTouched) parts.push(`terminal env: ${termTouched} target(s)`)
+    if (defaults && defaults.opus && defaults.sonnet && defaults.haiku) {
+      parts.push(`models: ${defaults.opus.split('-').slice(-1)[0]} (Opus), ${defaults.sonnet.split('-').slice(-1)[0]} (Sonnet), ${defaults.haiku.split('-').slice(-1)[0]} (Haiku)`)
+    }
     if (parts.length) {
-      vscode.window.showInformationMessage(`Reverted Claude overrides (${parts.join(' | ')}). Open a new terminal for env changes to take effect.`)
+      vscode.window.showInformationMessage(`Restored Anthropic defaults (${parts.join(' | ')}). Open a new terminal for env changes to take effect.`)
     } else {
-      vscode.window.showInformationMessage('No Claude overrides were found to revert.')
+      vscode.window.showInformationMessage('No Claude overrides were found to restore.')
     }
   })
 
@@ -119,6 +288,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const startProxy = vscode.commands.registerCommand('claudeThrone.startProxy', async () => {
     try {
+      const startTime = Date.now()
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const provider = cfg.get<'openrouter' | 'openai' | 'together' | 'grok' | 'custom'>('provider', 'openrouter')
       const customBaseUrl = cfg.get<string>('customBaseUrl', '')
@@ -126,11 +296,21 @@ export function activate(context: vscode.ExtensionContext) {
       const debug = cfg.get<boolean>('proxy.debug', false)
       const reasoningModel = cfg.get<string>('reasoningModel')
       const completionModel = cfg.get<string>('completionModel')
+      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
+      
+      log.appendLine(`[startProxy] Starting with config: provider=${provider}, port=${port}, twoModelMode=${twoModelMode}`)
+      log.appendLine(`[startProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
+      
       await proxy!.start({ provider, customBaseUrl, port, debug, reasoningModel, completionModel })
+      
+      const elapsed = Date.now() - startTime
+      log.appendLine(`[startProxy] Proxy started in ${elapsed}ms`)
       vscode.window.showInformationMessage(`Claude-Throne: proxy started on port ${port}`)
 
-      const auto = cfg.get<boolean>('autoApply', true)
+      const auto = cfg.get<boolean>('autoApply', false)
       if (auto) {
+        // Wait for proxy to be fully ready before applying settings
+        await new Promise(resolve => setTimeout(resolve, 1000))
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
       }
     } catch (err: any) {
@@ -145,7 +325,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (not running)'}`)
 
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const auto = cfg.get<boolean>('autoApply', true)
+      const auto = cfg.get<boolean>('autoApply', false)
       if (auto) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
@@ -161,9 +341,56 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   const applyToClaudeCode = vscode.commands.registerCommand('claudeThrone.applyToClaudeCode', async () => {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const port = cfg.get<number>('proxy.port', 3000)
-    const baseUrl = `http://127.0.0.1:${port}`
+    const cfg = vscode.workspace.getConfiguration('claudeThrone');
+    const port = cfg.get<number>('proxy.port', 3000);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const reasoningModel = cfg.get<string>('reasoningModel');
+    const completionModel = cfg.get<string>('completionModel');
+    const scopeStr = cfg.get<string>('applyScope', 'workspace');
+    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+
+    const twoModelMode = cfg.get<boolean>('twoModelMode', false);
+    const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
+
+    log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
+    log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', completion='${completionModel || 'EMPTY'}'`);
+    
+    if (twoModelMode && reasoningModel && completionModel) {
+        // Two-model mode: use reasoning model for complex tasks, completion model for fast execution
+        log.appendLine(`[applyToClaudeCode] Two-model mode enabled`);
+        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${reasoningModel}`);
+        log.appendLine(`[applyToClaudeCode] - SONNET (balanced tasks): ${completionModel}`);
+        log.appendLine(`[applyToClaudeCode] - HAIKU (fast execution): ${completionModel}`);
+        env.ANTHROPIC_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = completionModel;
+    } else if (reasoningModel) {
+        // Single-model mode: use reasoning model for everything
+        log.appendLine(`[applyToClaudeCode] Single-model mode: using ${reasoningModel} for all roles`);
+        env.ANTHROPIC_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = reasoningModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = reasoningModel;
+    } else {
+        log.appendLine(`[applyToClaudeCode] ⚠️ WARNING: No reasoning model configured!`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ Models will NOT be written to .claude/settings.json`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ File will retain previous values or Anthropic defaults`);
+    }
+    
+    log.appendLine(`[applyToClaudeCode] Env vars to write: ${JSON.stringify(Object.keys(env))}`);
+    log.appendLine(`[applyToClaudeCode] Will write models to settings.json: ${!!reasoningModel}`);
+
+    let settingsDir: string | undefined;
+    if (scopeStr === 'global') {
+        settingsDir = os.homedir();
+    } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    }
+
+    if (settingsDir) {
+        await updateClaudeSettings(settingsDir, env);
+    }
 
     // 1) Try to apply to known Claude/Anthropic extension settings
     const candidates: { section: string; key: string }[] = [
@@ -173,14 +400,14 @@ export function activate(context: vscode.ExtensionContext) {
       { section: 'claude-code', key: 'baseUrl' },
       { section: 'claude', key: 'apiBaseUrl' },
       { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
+    ];
 
-    const applied: string[] = []
+    const applied: string[] = [];
     for (const c of candidates) {
       try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        await s.update(c.key, baseUrl, vscode.ConfigurationTarget.Workspace)
-        applied.push(`${c.section}.${c.key}`)
+        const s = vscode.workspace.getConfiguration(c.section);
+        await s.update(c.key, baseUrl, scope);
+        applied.push(`${c.section}.${c.key}`);
       } catch {}
     }
 
@@ -189,18 +416,18 @@ export function activate(context: vscode.ExtensionContext) {
       'terminal.integrated.env.osx',
       'terminal.integrated.env.linux',
       'terminal.integrated.env.windows',
-    ]
-    const termApplied: string[] = []
+    ];
+    const termApplied: string[] = [];
     for (const key of termKeys) {
       try {
-        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
+        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {};
         if (current['ANTHROPIC_BASE_URL'] === baseUrl) {
-          termApplied.push(key)
-          continue
+          termApplied.push(key);
+          continue;
         }
-        const updated = { ...current, ANTHROPIC_BASE_URL: baseUrl }
-        await vscode.workspace.getConfiguration().update(key, updated, vscode.ConfigurationTarget.Workspace)
-        termApplied.push(key)
+        const updated = { ...current, ANTHROPIC_BASE_URL: baseUrl };
+        await vscode.workspace.getConfiguration().update(key, updated, scope);
+        termApplied.push(key);
       } catch {}
     }
 

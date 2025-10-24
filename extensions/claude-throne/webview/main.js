@@ -14,6 +14,14 @@
     secondaryModel: '',
     models: [],
     modelsCache: {},
+    // Provider-specific model storage
+    modelsByProvider: {
+      openrouter: { primary: '', secondary: '' },
+      openai: { primary: '', secondary: '' },
+      together: { primary: '', secondary: '' },
+      grok: { primary: '', secondary: '' },
+      custom: { primary: '', secondary: '' }
+    },
     proxyRunning: false,
     port: 3000,
     customCombos: [],
@@ -111,6 +119,9 @@
     const stopBtn = document.getElementById('stopProxyBtn');
     stopBtn?.addEventListener('click', stopProxy);
 
+    const portInput = document.getElementById('portInput');
+    portInput?.addEventListener('input', onPortChange);
+
     // GitHub Link
     const repoLink = document.getElementById('repoLink');
     repoLink?.addEventListener('click', (e) => {
@@ -155,6 +166,9 @@
       case 'proxyError':
         showError(message.payload);
         break;
+      case 'modelsError':
+        handleModelsError(message.payload);
+        break;
       case 'combosLoaded':
         handleCombosLoaded(message.payload);
         break;
@@ -174,11 +188,6 @@
       updateTwoModelUI();
       updateProviderUI();
     }
-
-    // Request initial data
-    vscode.postMessage({ type: 'requestConfig' });
-            vscode.postMessage({ type: 'requestStatus' });
-            vscode.postMessage({ type: 'requestKeys' });
   }
 
   function saveState() {
@@ -187,12 +196,30 @@
 
   // Provider handling
     function onProviderChange(e) {
-    state.provider = e.target.value;
+    // Save current models for the old provider
+    if (state.provider && state.modelsByProvider[state.provider]) {
+      state.modelsByProvider[state.provider].primary = state.primaryModel;
+      state.modelsByProvider[state.provider].secondary = state.secondaryModel;
+    }
+    
+    // Clear the specific provider's cache before changing
+    delete state.modelsCache[state.provider];
+    
+    const newProvider = e.target.value;
+    state.provider = newProvider;
     state.models = [];
-    state.primaryModel = '';
-    state.secondaryModel = '';
+    
+    // Restore models for the new provider
+    if (state.modelsByProvider[newProvider]) {
+      state.primaryModel = state.modelsByProvider[newProvider].primary || '';
+      state.secondaryModel = state.modelsByProvider[newProvider].secondary || '';
+    } else {
+      state.primaryModel = '';
+      state.secondaryModel = '';
+    }
     
     updateProviderUI();
+    updateSelectedModelsDisplay();
     loadModels();
     saveState();
 
@@ -300,18 +327,107 @@
   }
 
   function showNotification(message, type = 'info') {
-    // For now, just log it - we could add a toast notification later
     console.log(`[${type.toUpperCase()}] ${message}`);
+    
+    // Create or update inline notification
+    let notificationEl = document.getElementById('inlineNotification');
+    if (!notificationEl) {
+      // Create notification element if it doesn't exist
+      const container = document.querySelector('.container');
+      if (container) {
+        notificationEl = document.createElement('div');
+        notificationEl.id = 'inlineNotification';
+        notificationEl.style.cssText = `
+          position: fixed;
+          top: 10px;
+          right: 10px;
+          padding: 8px 16px;
+          border-radius: 4px;
+          z-index: 1000;
+          transition: opacity 0.3s;
+          font-size: 13px;
+        `;
+        container.appendChild(notificationEl);
+      }
+    }
+    
+    if (notificationEl) {
+      // Set color based on type
+      const colors = {
+        'success': 'var(--vscode-testing-iconPassed)',
+        'error': 'var(--vscode-errorForeground)',
+        'info': 'var(--vscode-foreground)'
+      };
+      
+      notificationEl.textContent = message;
+      notificationEl.style.backgroundColor = 'var(--vscode-editor-background)';
+      notificationEl.style.color = colors[type] || colors.info;
+      notificationEl.style.border = `1px solid ${colors[type] || colors.info}`;
+      notificationEl.style.opacity = '1';
+      notificationEl.style.display = 'block';
+      
+      // Auto-hide after 3 seconds
+      setTimeout(() => {
+        notificationEl.style.opacity = '0';
+        setTimeout(() => {
+          notificationEl.style.display = 'none';
+        }, 300);
+      }, 3000);
+    }
   }
 
   function requestSaveCombo() {
-    console.log('[requestSaveCombo] TODO: Implement save combo dialog');
-    // TODO: Show dialog to name combo and choose scope (workspace/global)
+    const name = prompt('Enter a name for this model combo:');
+    if (!name || !name.trim()) {
+      return;
+    }
+    
+    console.log('[requestSaveCombo] Saving combo:', name);
+    
+    // Show saving state on button
+    const saveBtn = document.getElementById('saveComboBtn');
+    if (saveBtn) {
+      const originalText = saveBtn.textContent;
+      saveBtn.textContent = '✓ Saving...';
+      saveBtn.disabled = true;
+      
+      // Reset after a delay
+      setTimeout(() => {
+        saveBtn.textContent = originalText;
+        saveBtn.disabled = false;
+      }, 2000);
+    }
+    
+    vscode.postMessage({
+      type: 'saveCombo',
+      name: name.trim(),
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel
+    });
   }
 
   function handleCombosLoaded(payload) {
-    console.log('[handleCombosLoaded] TODO: Implement combos display');
-    // TODO: Display user-saved combos + featured combos
+    console.log('[handleCombosLoaded] Combos loaded:', payload);
+    
+    // Show success feedback when combo is saved
+    const saveBtn = document.getElementById('saveComboBtn');
+    if (saveBtn && saveBtn.textContent.includes('Saving')) {
+      saveBtn.textContent = '✓ Saved!';
+      saveBtn.style.backgroundColor = 'var(--vscode-testing-iconPassed)';
+      
+      // Also show inline notification
+      showNotification('Model combo saved successfully!', 'success');
+      
+      setTimeout(() => {
+        saveBtn.textContent = '+ Save Model Combo';
+        saveBtn.style.backgroundColor = '';
+      }, 2000);
+    }
+    
+    // Store the combos for later display
+    if (payload.combos) {
+      state.customCombos = payload.combos;
+    }
   }
 
   function handleKeysLoaded(keys) {
@@ -350,6 +466,10 @@
     state.twoModelMode = e.target.checked;
     updateTwoModelUI();
     saveState();
+    
+    // Notify backend to update twoModelMode config
+    console.log('[onTwoModelToggle] Sending toggleTwoModelMode message:', state.twoModelMode);
+    vscode.postMessage({ type: 'toggleTwoModelMode', enabled: state.twoModelMode });
   }
 
   function updateTwoModelUI() {
@@ -386,6 +506,10 @@
   function setModelFromList(modelId, type) {
     if (type === 'primary') {
       state.primaryModel = modelId;
+      // Save to provider-specific storage
+      if (state.modelsByProvider[state.provider]) {
+        state.modelsByProvider[state.provider].primary = modelId;
+      }
       vscode.postMessage({
         type: 'saveModels',
         reasoning: modelId,
@@ -393,6 +517,10 @@
       });
     } else if (type === 'secondary') {
       state.secondaryModel = modelId;
+      // Save to provider-specific storage
+      if (state.modelsByProvider[state.provider]) {
+        state.modelsByProvider[state.provider].secondary = modelId;
+      }
       vscode.postMessage({
         type: 'saveModels',
         reasoning: state.primaryModel,
@@ -437,8 +565,61 @@
     if (state.modelsCache[state.provider]) {
       state.models = state.modelsCache[state.provider];
       renderModelList();
-      updateModelDropdowns();
       return;
+    }
+    
+    // Check if custom provider without URL
+    if (state.provider === 'custom') {
+      const customUrl = document.getElementById('customUrl')?.value;
+      if (!customUrl || !customUrl.trim()) {
+        // Clear cached models for custom provider
+        state.modelsCache[state.provider] = [];
+        
+        const container = document.getElementById('modelListContainer');
+        if (container) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <p>Enter custom endpoint URL to load models, or enter model names manually:</p>
+              <input type="text" id="manualModelInput" placeholder="e.g., gpt-4, claude-3-opus" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border);" />
+              <button id="addManualModelBtn" style="margin-top: 8px; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Model</button>
+            </div>
+          `;
+          
+          // Add event listener for manual model entry
+          const addBtn = container.querySelector('#addManualModelBtn');
+          const input = container.querySelector('#manualModelInput');
+          
+          if (addBtn && input) {
+            addBtn.addEventListener('click', () => {
+              const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
+              if (modelNames.length > 0) {
+                // Create model objects
+                const newModels = modelNames.map(name => ({
+                  id: name,
+                  name: name,
+                  provider: 'custom'
+                }));
+                
+                // Add to state.models
+                state.models = [...state.models, ...newModels];
+                
+                // Render the updated list
+                renderModelList();
+                
+                // Clear input
+                input.value = '';
+              }
+            });
+            
+            input.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') {
+                addBtn.click();
+              }
+            });
+          }
+        }
+        return;
+      }
     }
     
     // Show loading state
@@ -448,29 +629,8 @@
     }
 
     try {
-      // Fetch from OpenRouter API
-      const response = await fetch('https://openrouter.ai/api/v1/models');
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error?.message || 'Failed to load models');
-      }
-
-      let models = data.data || [];
-      
-      // Filter by provider if not OpenRouter
-      if (state.provider !== 'openrouter' && state.provider !== 'custom') {
-        const prefix = providers[state.provider]?.apiPrefix || '';
-        if (prefix) {
-          models = models.filter(m => m.id.startsWith(prefix));
-        }
-      }
-
-      // Cache models
-      state.models = models;
-      state.modelsCache[state.provider] = models;
-      
-      renderModelList();
+      // Request models from backend
+      vscode.postMessage({ type: 'requestModels', provider: state.provider });
     } catch (error) {
       console.error('Failed to load models:', error);
       if (container) {
@@ -603,6 +763,9 @@
     saveState();
     renderModelList();
 
+    // Notify backend that two-model mode is enabled
+    vscode.postMessage({ type: 'toggleTwoModelMode', enabled: true });
+
     vscode.postMessage({
       type: 'saveModels',
       reasoning: reasoning,
@@ -610,8 +773,21 @@
     });
   }
 
+  function onPortChange(e) {
+    const port = e.target.value;
+    vscode.postMessage({ type: 'updatePort', port: parseInt(port, 10) });
+  }
+
   // Proxy Controls
   function startProxy() {
+    // Log diagnostic info before starting proxy
+    console.log('[startProxy] Starting proxy with config:', {
+      twoModelMode: state.twoModelMode,
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel,
+      provider: state.provider,
+      port: state.port
+    });
     vscode.postMessage({ type: 'startProxy' });
   }
 
@@ -651,6 +827,10 @@
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
+    // Clear models and cache when config is reloaded (e.g., after revert)
+    state.models = [];
+    state.modelsCache = {};
+    
     // Update UI with config
     if (config.provider) {
       state.provider = config.provider;
@@ -658,13 +838,28 @@
       updateProviderUI();
     }
 
-    if (config.reasoningModel) {
-      state.primaryModel = config.reasoningModel;
+    if (config.port) {
+        state.port = config.port;
+        document.getElementById('portInput').value = config.port;
     }
 
-    if (config.completionModel) {
-      state.secondaryModel = config.completionModel;
+    // Set customBaseUrl input value if present
+    if (config.customBaseUrl) {
+      const customUrlInput = document.getElementById('customUrl');
+      if (customUrlInput) {
+        customUrlInput.value = config.customBaseUrl;
+      }
     }
+
+    // Always update state to match config, even if empty (prevents stale cached values)
+    state.primaryModel = config.reasoningModel || '';
+    state.secondaryModel = config.completionModel || '';
+    
+    console.log('[handleConfigLoaded] Updated model state:', {
+      primaryModel: state.primaryModel,
+      secondaryModel: state.secondaryModel,
+      fromConfig: true
+    });
 
     // Check if two-model mode should be enabled
     if (config.twoModelMode !== undefined) {
@@ -687,10 +882,67 @@
 
   function handleModelsLoaded(payload) {
     if (payload.models && Array.isArray(payload.models)) {
+      if (payload.models.length === 0) {
+        return;
+      }
       state.models = payload.models;
       state.modelsCache[state.provider] = payload.models;
       renderModelList();
-      updateModelDropdowns();
+      
+      // Update save combo button visibility after models are loaded
+      updateSaveComboButton();
+    }
+  }
+
+  function handleModelsError(payload) {
+    const container = document.getElementById('modelListContainer');
+    if (!container) return;
+    
+    // Show error with manual entry option for custom provider
+    if (payload.canManuallyEnter) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
+          <div style="margin-top: 16px;">
+            <p>Enter model IDs manually (comma-separated):</p>
+            <input type="text" id="manualModelInput" placeholder="e.g., gpt-4, claude-3-opus" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border);" />
+            <button id="addManualModelBtn" style="margin-top: 8px; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Models</button>
+          </div>
+        </div>
+      `;
+      
+      // Add event listeners for manual entry
+      const addBtn = container.querySelector('#addManualModelBtn');
+      const input = container.querySelector('#manualModelInput');
+      
+      if (addBtn && input) {
+        const addModels = () => {
+          const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
+          if (modelNames.length > 0) {
+            const newModels = modelNames.map(name => ({
+              id: name,
+              name: name,
+              provider: state.provider
+            }));
+            
+            state.models = [...state.models, ...newModels];
+            state.modelsCache[state.provider] = state.models;
+            renderModelList();
+            input.value = '';
+          }
+        };
+        
+        addBtn.addEventListener('click', addModels);
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') addModels();
+        });
+      }
+    } else {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
+        </div>
+      `;
     }
   }
 
