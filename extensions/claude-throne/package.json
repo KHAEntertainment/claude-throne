@@ -1,13 +1,14 @@
 {
   "name": "claude-throne",
-  "displayName": "Claude Throne",
+  "displayName": "Thronekeeper",
   "publisher": "thehive",
-  "description": "Configure and run Claude-Throne proxy with secure credential storage and model routing.",
+  "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
   "version": "1.5.0",
+  "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/KHAEntertainment/claude-throne"
+    "url": "https://github.com/KHAEntertainment/thronekeeper"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -28,13 +29,13 @@
       "panel": [
         {
           "id": "claudeThronePanel",
-          "title": "Claude Throne"
+          "title": "Thronekeeper"
         }
       ],
       "activitybar": [
         {
           "id": "claudeThrone",
-          "title": "Claude Throne"
+          "title": "Thronekeeper"
         }
       ]
     },
@@ -42,14 +43,14 @@
       "claudeThronePanel": [
         {
           "id": "claudeThrone.panel",
-          "name": "Claude Throne",
+          "name": "Thronekeeper",
           "type": "webview"
         }
       ],
       "claudeThrone": [
         {
           "id": "claudeThrone.activity",
-          "name": "Claude Throne",
+          "name": "Thronekeeper",
           "type": "webview"
         }
       ]
@@ -57,67 +58,67 @@
     "commands": [
       {
         "command": "claudeThrone.openPanel",
-        "title": "Claude Throne: Open Panel"
+        "title": "Thronekeeper: Open Panel"
       },
       {
         "command": "claudeThrone.storeOpenRouterKey",
-        "title": "Claude Throne: Store OpenRouter API Key"
+        "title": "Thronekeeper: Store OpenRouter API Key"
       },
       {
         "command": "claudeThrone.storeOpenAIKey",
-        "title": "Claude Throne: Store OpenAI API Key"
+        "title": "Thronekeeper: Store OpenAI API Key"
       },
       {
         "command": "claudeThrone.storeTogetherKey",
-        "title": "Claude Throne: Store Together API Key"
+        "title": "Thronekeeper: Store Together API Key"
       },
       {
         "command": "claudeThrone.storeGrokKey",
-        "title": "Claude Throne: Store Grok API Key"
+        "title": "Thronekeeper: Store Grok API Key"
       },
       {
         "command": "claudeThrone.storeCustomKey",
-        "title": "Claude Throne: Store Custom Provider API Key"
+        "title": "Thronekeeper: Store Custom Provider API Key"
       },
       {
         "command": "claudeThrone.storeAnyKey",
-        "title": "Claude Throne: Store Provider API Key"
+        "title": "Thronekeeper: Store Provider API Key"
       },
       {
         "command": "claudeThrone.startProxy",
-        "title": "Claude Throne: Start Proxy"
+        "title": "Thronekeeper: Start Proxy"
       },
       {
         "command": "claudeThrone.stopProxy",
-        "title": "Claude Throne: Stop Proxy"
+        "title": "Thronekeeper: Stop Proxy"
       },
       {
         "command": "claudeThrone.status",
-        "title": "Claude Throne: Show Status"
+        "title": "Thronekeeper: Show Status"
       },
       {
         "command": "claudeThrone.applyToClaudeCode",
-        "title": "Claude Throne: Apply Base URL to Claude Code"
+        "title": "Thronekeeper: Apply Base URL to Claude Code"
       },
       {
         "command": "claudeThrone.revertApply",
-        "title": "Claude Throne: Revert to Claude Defaults"
+        "title": "Thronekeeper: Revert to Claude Defaults"
       }
     ],
     "configuration": {
-      "title": "Claude Throne",
+      "title": "Thronekeeper",
       "properties": {
         "claudeThrone.proxy.port": {
           "type": "number",
           "default": 3000,
           "minimum": 1,
           "maximum": 65535,
-          "markdownDescription": "Port for the bundled proxy server. Other configuration (provider, custom URL, models) is now handled in the Claude Throne panel (View → Claude Throne)."
+          "markdownDescription": "Port for the bundled proxy server. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
         },
         "claudeThrone.proxy.debug": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable DEBUG=1 for the bundled proxy. Other configuration (provider, custom URL, models) is now handled in the Claude Throne panel (View → Claude Throne)."
+          "markdownDescription": "Enable DEBUG=1 for the bundled proxy. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
         },
         "claudeThrone.proxy.skipHealthCheck": {
           "type": "boolean",

@@ -25,7 +25,7 @@ async function updateClaudeSettings(workspaceDir: string, newEnv: Record<string,
 
             if (revert) {
                 if (settings.env) {
-                    // Only remove the keys that Claude Throne added
+                    // Only remove the keys that Thronekeeper added
                     for (const key in newEnv) {
                         delete settings.env[key];
                     }
@@ -110,8 +110,8 @@ async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string;
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const log = vscode.window.createOutputChannel('Claude-Throne')
-  log.appendLine('🚀 Claude-Throne extension activating...')
+  const log = vscode.window.createOutputChannel('Thronekeeper')
+  log.appendLine('🚀 Thronekeeper extension activating...')
   
   // Only show output channel if debug mode is enabled
   const cfg = vscode.workspace.getConfiguration('claudeThrone')
@@ -173,9 +173,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Get cached Anthropic defaults
     const defaults = cfg.get<any>('anthropicDefaults', null);
     
-    // First remove Claude Throne settings, then restore Anthropic defaults
+    // First remove Thronekeeper settings, then restore Anthropic defaults
     if (settingsDir) {
-        // Remove Claude Throne env vars
+        // Remove Thronekeeper env vars
         await updateClaudeSettings(settingsDir, {
             ANTHROPIC_BASE_URL: null,
             ANTHROPIC_MODEL: null,
@@ -305,7 +305,7 @@ export function activate(context: vscode.ExtensionContext) {
       
       const elapsed = Date.now() - startTime
       log.appendLine(`[startProxy] Proxy started in ${elapsed}ms`)
-      vscode.window.showInformationMessage(`Claude-Throne: proxy started on port ${port}`)
+      vscode.window.showInformationMessage(`Thronekeeper: proxy started on port ${port}`)
 
       const auto = cfg.get<boolean>('autoApply', false)
       if (auto) {
@@ -322,7 +322,7 @@ export function activate(context: vscode.ExtensionContext) {
   const stopProxy = vscode.commands.registerCommand('claudeThrone.stopProxy', async () => {
     try {
       const ok = await proxy!.stop()
-      vscode.window.showInformationMessage(`Claude-Throne: proxy stopped${ok ? '' : ' (not running)'}`)
+      vscode.window.showInformationMessage(`Thronekeeper: proxy stopped${ok ? '' : ' (not running)'}`)
 
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const auto = cfg.get<boolean>('autoApply', false)
@@ -337,7 +337,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const status = vscode.commands.registerCommand('claudeThrone.status', async () => {
     const s = proxy!.getStatus()
-    vscode.window.showInformationMessage(`Claude-Throne: proxy ${s.running ? 'running' : 'stopped'}${s.port ? ' on ' + s.port : ''}`)
+    vscode.window.showInformationMessage(`Thronekeeper: proxy ${s.running ? 'running' : 'stopped'}${s.port ? ' on ' + s.port : ''}`)
   })
 
   const applyToClaudeCode = vscode.commands.registerCommand('claudeThrone.applyToClaudeCode', async () => {
@@ -457,7 +457,7 @@ export function activate(context: vscode.ExtensionContext) {
     revertApply,
     log,
   )
-  log.appendLine('✅ Claude-Throne extension fully activated and ready')
+  log.appendLine('✅ Thronekeeper extension fully activated and ready')
 }
 
 async function tryOpenView(viewId: string): Promise<boolean> {
