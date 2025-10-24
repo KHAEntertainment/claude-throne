@@ -23,7 +23,7 @@ export async function updateClaudeSettings(
       }
 
       if (revert) {
-        if (settings.env) {
+        if (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) {
           for (const key in newEnv) {
             delete settings.env[key]
           }
@@ -32,7 +32,8 @@ export async function updateClaudeSettings(
           }
         }
       } else {
-        settings.env = { ...(settings.env || {}), ...newEnv }
+        const baseEnv = (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) ? settings.env : {}
+        settings.env = { ...baseEnv, ...newEnv }
       }
 
       const dir = path.dirname(filePath)

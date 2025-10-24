@@ -312,9 +312,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const completionModel = cfg.get<string>('completionModel')
       
       // Load featured combinations from our data
-      const fs = await import('fs')
+      const { promises: fs } = await import('fs')
       const pairingsPath = vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'data', 'model-pairings.json')
-      const pairingsContent = fs.readFileSync(pairingsPath.fsPath, 'utf8')
+      const pairingsContent = await fs.readFile(pairingsPath.fsPath, 'utf8')
       const pairingsData = JSON.parse(pairingsContent)
       
       this.view?.webview.postMessage({ 
@@ -623,7 +623,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
     this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
     
-    await cfg.update('twoModelMode', enabled)
+    await cfg.update('twoModelMode', enabled, vscode.ConfigurationTarget.Workspace)
     
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
