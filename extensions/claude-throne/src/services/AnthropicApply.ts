@@ -47,12 +47,11 @@ export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   
   // Update .claude/settings.json
   let settingsDir: string | undefined
-  if (scopeStr === 'global') {
+  if (scope === vscode.ConfigurationTarget.Global) {
     settingsDir = os.homedir()
-  } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+  } else if (scope === vscode.ConfigurationTarget.Workspace && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
     settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath
   }
-  
   if (settingsDir) {
     await updateClaudeSettings(settingsDir, env)
   }
