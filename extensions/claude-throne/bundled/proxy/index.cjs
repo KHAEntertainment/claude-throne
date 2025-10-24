@@ -33307,8 +33307,8 @@ var PROVIDERS = {
   openrouter: "openrouter",
   openai: "openai",
   together: "together",
-  groq: "groq",
-  grok: "grok",
+  deepseek: "deepseek",
+  glm: "glm",
   custom: "custom"
 };
 function detectProvider(baseUrl2) {
@@ -33318,8 +33318,8 @@ function detectProvider(baseUrl2) {
     if (host.includes("openrouter.ai")) return PROVIDERS.openrouter;
     if (host.includes("api.openai.com")) return PROVIDERS.openai;
     if (host.includes("together.ai") || host.includes("together.xyz")) return PROVIDERS.together;
-    if (host.includes("api.groq.com")) return PROVIDERS.groq;
-    if (host.includes("api.x.ai")) return PROVIDERS.grok;
+    if (host.includes("deepseek.com")) return PROVIDERS.deepseek;
+    if (host.includes("z.ai")) return PROVIDERS.glm;
     return PROVIDERS.custom;
   } catch {
     return PROVIDERS.custom;
@@ -33330,15 +33330,15 @@ function resolveApiKey(provider2, env = process.env) {
   if (provider2 === PROVIDERS.custom && custom) return custom;
   if (provider2 === PROVIDERS.openai && env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (provider2 === PROVIDERS.together && env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (provider2 === PROVIDERS.groq && (env.GROQ_API_KEY || env.GROK_API_KEY)) return env.GROQ_API_KEY || env.GROK_API_KEY;
-  if (provider2 === PROVIDERS.grok && (env.XAI_API_KEY || env.GROK_API_KEY)) return env.XAI_API_KEY || env.GROK_API_KEY;
+  if (provider2 === PROVIDERS.deepseek && env.DEEPSEEK_API_KEY) return env.DEEPSEEK_API_KEY;
+  if (provider2 === PROVIDERS.glm && (env.GLM_API_KEY || env.ZAI_API_KEY)) return env.GLM_API_KEY || env.ZAI_API_KEY;
   if (provider2 === PROVIDERS.openrouter && env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
   if (custom) return custom;
   if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (env.GROQ_API_KEY || env.GROK_API_KEY) return env.GROQ_API_KEY || env.GROK_API_KEY;
-  if (env.XAI_API_KEY) return env.XAI_API_KEY;
+  if (env.DEEPSEEK_API_KEY) return env.DEEPSEEK_API_KEY;
+  if (env.GLM_API_KEY || env.ZAI_API_KEY) return env.GLM_API_KEY || env.ZAI_API_KEY;
   return null;
 }
 function providerSpecificHeaders(provider2, env = process.env) {
@@ -33786,7 +33786,8 @@ fastify.get("/health", async (request, reply) => {
     status: "healthy",
     provider,
     baseUrl,
-    hasApiKey: !!key,
+    hasApiKey: true,
+    // Key is available from provider detection
     models: {
       reasoning: models.reasoning || "not set",
       completion: models.completion || "not set"
@@ -33956,7 +33957,10 @@ fastify.post("/v1/messages", async (request, reply) => {
       });
       sendSSE(reply, "ping", { type: "ping" });
     };
+    console.log(`[Route] *** /v1/messages CALLED *** provider: ${provider}, baseUrl: ${baseUrl}`);
+    console.log(`[Route] Request method: ${request.method}, headers:`, request.headers);
     const payload = request.body;
+    console.log(`[Route] Request body:`, JSON.stringify(payload, null, 2));
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
       payload.system.forEach((sysMsg) => {
@@ -34073,11 +34077,12 @@ fastify.post("/v1/messages", async (request, reply) => {
     const requestStartMs = Date.now();
     let firstChunkLogged = false;
     let ttfbMs = null;
-    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`);
+    console.log(`[Request] Starting request to ${requestUrl}`);
     console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`);
     console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`);
     console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || "default"}, Temperature: ${openaiPayload.temperature}`);
-    const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const requestUrl = provider === "glm" && baseUrl.includes("api.z.ai/api/anthropic") ? `${baseUrl}/v1/messages` : `${baseUrl}/v1/chat/completions`;
+    const openaiResponse = await fetch(requestUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(openaiPayload)
@@ -34119,7 +34124,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       debug("OpenRouter error response:", {
         status: openaiResponse.status,
         statusText: openaiResponse.statusText,
-        baseUrl,
+        requestUrl,
         requestedModel: payload.model,
         selectedModel: openaiPayload.model,
         elapsedMs,
@@ -34128,7 +34133,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       reply.code(openaiResponse.status);
       return errorJson;
     }
-    debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
+    debug("OpenRouter response timing:", { requestUrl, elapsedMs, status: openaiResponse.status });
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json();
       debug("OpenAI response:", data);
@@ -34418,6 +34423,7 @@ var start = async () => {
     process.exit(1);
   }
 };
+console.log("[Startup] About to register routes and start server...");
 start();
 /*! Bundled license information:
 

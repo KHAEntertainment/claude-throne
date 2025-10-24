@@ -248,14 +248,8 @@ export function activate(context: vscode.ExtensionContext) {
         return
       }
       
-      // Bypass proxy for GLM (Anthropic-native provider)
-      if (provider === 'glm') {
-        const url = 'https://api.z.ai/api/anthropic'
-        log.appendLine(`[startProxy] GLM is Anthropic-native, bypassing proxy and applying URL directly`)
-        await applyAnthropicUrl({ url, provider: 'glm', secrets })
-        vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
-        return
-      }
+      // Use proxy for all providers including GLM (unified approach)
+      // GLM will use proxy for API key management and session handling
       
       // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
       if (provider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {

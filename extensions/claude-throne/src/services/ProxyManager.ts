@@ -173,8 +173,14 @@ export class ProxyManager {
     this.log.appendLine(`[ProxyManager] - Environment variables set: ${envKeys.join(', ')}`)
 
     this.log.appendLine(`[proxy] starting via ${nodeBin} ${entry} on port ${opts.port}`)
+    // Explicitly add ZAI_API_KEY to environment if it exists
+    const proxyEnv = { ...env }
+    if (process.env.ZAI_API_KEY) {
+      proxyEnv.ZAI_API_KEY = process.env.ZAI_API_KEY
+    }
+    
     this.proc = cp.spawn(nodeBin, [entry, '--port', String(opts.port)], {
-      env,
+      env: proxyEnv,
       stdio: 'pipe',
       detached: false,
     })

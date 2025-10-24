@@ -1,19 +1,32 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "",
-  "claudeThrone.completionModel": "",
+  "claudeThrone.reasoningModel": "glm-4.5",
+  "claudeThrone.completionModel": "glm-4.6",
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
   "terminal.integrated.env.osx": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+    "ANTHROPIC_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air"
   },
   "terminal.integrated.env.linux": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+    "ANTHROPIC_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air"
   },
   "terminal.integrated.env.windows": {
-    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+    "ANTHROPIC_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air"
   },
-  "claudeThrone.provider": "openrouter"
+  "claudeThrone.provider": "glm",
+  "claudeThrone.valueModel": "glm-4.5-air"
 }

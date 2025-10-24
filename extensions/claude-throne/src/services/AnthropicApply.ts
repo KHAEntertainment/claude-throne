@@ -46,13 +46,8 @@ export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
     }
   }
   
-  // Apply API key for Anthropic-native providers (deepseek/glm)
-  if (provider && secrets) {
-    const apiKey = await secrets.getProviderKey(provider)
-    if (apiKey) {
-      env.ANTHROPIC_API_KEY = apiKey
-    }
-  }
+  // NOTE: We no longer set ANTHROPIC_API_KEY for any providers
+  // The proxy now handles all API key injection to avoid OAuth conflicts
   
   // Update .claude/settings.json
   let settingsDir: string | undefined
