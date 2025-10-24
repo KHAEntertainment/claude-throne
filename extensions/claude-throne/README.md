@@ -1,8 +1,8 @@
-# Claude Throne - Universal AI Model Routing for VS Code
+# Thronekeeper - Universal AI Model Routing for VS Code
 
 **Seamlessly use any AI model provider with Claude Code and other Anthropic-compatible clients.**
 
-Claude Throne is a powerful VS Code extension that acts as an intelligent proxy, allowing you to use OpenRouter, OpenAI, Together AI, Groq, or any OpenAI-compatible endpoint with tools that expect the Anthropic API format.
+Thronekeeper is a powerful VS Code extension that acts as an intelligent proxy, allowing you to use OpenRouter, OpenAI, Together AI, Groq, or any OpenAI-compatible endpoint with tools that expect the Anthropic API format.
 
 ## ✨ Features
 
@@ -24,8 +24,8 @@ Claude Throne is a powerful VS Code extension that acts as an intelligent proxy,
 - **Live Status Monitoring**: See proxy status, selected models, and health checks
 
 <!-- Screenshot placeholders -->
-![Claude Throne Panel](images/panel-overview.png)
-*The Claude Throne configuration panel - manage providers, models, and settings*
+![Thronekeeper Panel](images/panel-overview.png)
+*The Thronekeeper configuration panel - manage providers, models, and settings*
 
 ![Model Selection](images/model-selection.png)
 *Browse and search hundreds of available models with real-time loading*
@@ -37,7 +37,7 @@ Claude Throne is a powerful VS Code extension that acts as an intelligent proxy,
 
 ### Installation
 1. Install from VS Code Marketplace or download the `.vsix` file
-2. Open the Claude Throne panel: **View → Panel → Claude Throne**
+2. Open the Thronekeeper panel: **View → Panel → Thronekeeper**
 3. Select your AI provider and add your API key
 4. Choose your models and click **Start Proxy**
 5. Claude Code will automatically use your configured models!
@@ -70,12 +70,12 @@ Connect to any OpenAI-compatible endpoint:
 
 Access these commands via the Command Palette (`Cmd/Ctrl + Shift + P`):
 
-- `Claude Throne: Open Panel` - Open the configuration panel
-- `Claude Throne: Start Proxy` - Start the proxy server
-- `Claude Throne: Stop Proxy` - Stop the proxy server
-- `Claude Throne: Show Status` - Display current proxy status
-- `Claude Throne: Apply to Claude Code` - Configure Claude Code to use the proxy
-- `Claude Throne: Revert Claude Code` - Restore original Claude Code settings
+- `Thronekeeper: Open Panel` - Open the configuration panel
+- `Thronekeeper: Start Proxy` - Start the proxy server
+- `Thronekeeper: Stop Proxy` - Stop the proxy server
+- `Thronekeeper: Show Status` - Display current proxy status
+- `Thronekeeper: Apply to Claude Code` - Configure Claude Code to use the proxy
+- `Thronekeeper: Revert Claude Code` - Restore original Claude Code settings
 
 ## ⚙️ Configuration
 
@@ -124,15 +124,15 @@ The proxy includes health checks with automatic recovery and detailed logging.
 
 ### Proxy won't start
 - Check if port 3000 (or configured port) is available
-- Look for errors in the Output panel (Claude-Throne channel)
+- Look for errors in the Output panel (Thronekeeper channel)
 - Try stopping and restarting the proxy
 
 ## 📚 Resources
 
-- [GitHub Repository](https://github.com/KHAEntertainment/claude-throne)
-- [Issue Tracker](https://github.com/KHAEntertainment/claude-throne/issues)
+- [GitHub Repository](https://github.com/KHAEntertainment/thronekeeper)
+- [Issue Tracker](https://github.com/KHAEntertainment/thronekeeper/issues)
 - [OpenRouter Models](https://openrouter.ai/models)
-- [API Documentation](https://github.com/KHAEntertainment/claude-throne#api-documentation)
+- [API Documentation](https://github.com/KHAEntertainment/thronekeeper#api-documentation)
 
 ## 📄 License
 
@@ -140,7 +140,7 @@ MIT License - See [LICENSE](LICENSE) for details
 
 ## 🙏 Acknowledgments
 
-Claude Throne evolved from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by Max Nowack. Special thanks to the open-source community and all contributors.
+Thronekeeper evolved from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by Max Nowack. Special thanks to the open-source community and all contributors.
 
 ---
 

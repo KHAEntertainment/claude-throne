@@ -1,17 +1,11 @@
-# Claude Throne
+# Thronekeeper
 
-Claude Throne is a sophisticated fork and evolution of anthropic-proxy that provides universal AI model routing for Claude Code and other Anthropic-compatible clients. It maintains the Anthropic-style API surface while intelligently routing to OpenAI-compatible providers, with a focus on enhanced authentication, provider ergonomics, and developer experience.
+Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provides universal AI model routing for Claude Code and other Anthropic-compatible clients. It maintains the Anthropic-style API surface while intelligently routing to OpenAI-compatible providers, with a focus on enhanced authentication, provider ergonomics, and developer experience.
 
 **Version 1.4.5 - Production Ready** ✅
 
 <p align="center">
-  <!-- TODO: Replace with actual hero image -->
-  <!-- Example syntax when ready: 
-  <img src="docs/images/hero-image.png" alt="Claude Throne - Universal AI Model Routing" width="800">
-  -->
-  <br>
-  <em>[Hero Image Placeholder - Universal AI Model Routing for Claude Code]</em>
-  <br>
+  <img src="docs/images/thronekeeper-hero.png" alt="Thronekeeper - Universal AI Model Routing" width="800">
 </p>
 
 ## Features
@@ -41,11 +35,11 @@ Claude Throne is a sophisticated fork and evolution of anthropic-proxy that prov
 
 ## Origins & Attribution
 
-Claude Throne was initially forked from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by [Max Nowack](https://github.com/maxnowack) — a clean, focused CLI tool for proxying Anthropic API requests to OpenRouter. We're deeply grateful for Max's foundational work, which inspired this project.
+Thronekeeper was initially forked from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by [Max Nowack](https://github.com/maxnowack) — a clean, focused CLI tool for proxying Anthropic API requests to OpenRouter. We're deeply grateful for Max's foundational work, which inspired this project.
 
 **What started as a fork has evolved into a complete rebuild:**
 
-| Aspect | Original (`anthropic-proxy`) | Claude Throne |
+| Aspect | Original (`anthropic-proxy`) | Thronekeeper |
 |--------|------------------------------|---------------|
 | **Architecture** | Single-file CLI (~350 LOC) | Full VS Code extension ecosystem |
 | **Providers** | OpenRouter only | OpenRouter, OpenAI, Together, Grok, custom endpoints |
@@ -55,7 +49,7 @@ Claude Throne was initially forked from [anthropic-proxy](https://github.com/max
 | **Testing** | None | Comprehensive test suite |
 | **Configuration** | Environment variables | Workspace/global settings, saved combinations |
 
-While the core proxy concept remains, the architecture, scope, and implementation have diverged significantly. We've detached from the fork network to establish Claude Throne's independent identity, but we'll always acknowledge Max's work as the inspiration that got this started.
+While the core proxy concept remains, the architecture, scope, and implementation have diverged significantly. We've detached from the fork network to establish Thronekeeper's independent identity, but we'll always acknowledge Max's work as the inspiration that got this started.
 
 **Original License:** MIT License  
 **Original Author:** Max Nowack  
@@ -72,9 +66,9 @@ Thank you, Max! 🙏
    code --install-extension claude-throne-1.4.5.vsix
    ```
 
-2. **Open the Claude Throne panel**:
-   - View → Claude Throne (Panel)
-   - Or use the Command Palette: `Claude Throne: Open Panel`
+2. **Open the Thronekeeper panel**:
+   - View → Thronekeeper (Panel)
+   - Or use the Command Palette: `Thronekeeper: Open Panel`
 
 3. **Configure your provider**:
    - Select your AI provider (OpenRouter, OpenAI, Together, Grok, or Custom)
@@ -186,10 +180,10 @@ ANTHROPIC_BASE_URL=http://0.0.0.0:3000 claude
 The webview's two-model toggle was updating local state but not notifying the backend, so the `twoModelMode` config remained false.
 
 **Solution:**
-1. In the Claude Throne panel, toggle "Use Two Models" **off** and then back **on**
+1. In the Thronekeeper panel, toggle "Use Two Models" **off** and then back **on**
 2. Stop the proxy if running
 3. Start the proxy again
-4. Verify in Output panel (View → Output → Claude-Throne) that you see logs like:
+4. Verify in Output panel (View → Output → Thronekeeper) that you see logs like:
    ```
    [applyToClaudeCode] Two-model mode enabled
    [applyToClaudeCode] - OPUS (complex reasoning): deepseek/deepseek-r1
@@ -215,14 +209,14 @@ Check `.claude/settings.json` - you should see both models:
 
 **Symptoms:**
 - Pre-existing `.claude/settings.json` content (like `mcpServers`, custom config) disappears after stopping the proxy
-- Only happens when the file had other settings besides Claude Throne's env vars
+- Only happens when the file had other settings besides Thronekeeper's env vars
 
 **Cause:**
 The revert logic was too aggressive and deleted the entire file if it became empty after removing env vars.
 
 **Solution:**
 Update to v1.4.6 or later. The fix:
-- Only removes Claude Throne's env variables during revert
+- Only removes Thronekeeper's env variables during revert
 - Preserves all other settings in `.claude/settings.json`
 - Never deletes the file entirely if it existed before
 
@@ -234,7 +228,7 @@ If you have important config in `.claude/settings.json`, **back it up** before f
 #### Issue 3: Claude Code Still Using Proxy After Stop
 
 **Symptoms:**
-- After stopping Claude Throne proxy, Claude Code shows connection errors
+- After stopping Thronekeeper proxy, Claude Code shows connection errors
 - Messages like "Failed to connect to http://127.0.0.1:3000"
 - Claude Code doesn't automatically switch back to Anthropic's API
 
@@ -278,7 +272,7 @@ Or in VS Code settings, set the base URL to `https://api.anthropic.com` for your
 1. **Enable Debug Logging**:
    - In extension settings: `claudeThrone.proxy.debug: true`
    - Or via environment: `DEBUG=1`
-   - Check Output panel (View → Output → Claude-Throne)
+   - Check Output panel (View → Output → Thronekeeper)
 
 2. **Check Timing Logs** (v1.4.6+):
    Look for timing information in the logs:
@@ -506,9 +500,9 @@ Completion: google/gemini-2.0-flash-exp:free
 
 ### Comparing with Other Clients
 
-If a model works in KiloCode or another client but not Claude Throne:
+If a model works in KiloCode or another client but not Thronekeeper:
 
-1. Use `/v1/debug/echo` to see what Claude Throne would send
+1. Use `/v1/debug/echo` to see what Thronekeeper would send
 2. Compare the `model` field, `messages` structure, and `tools` formatting
 3. Check that headers match what the working client sends
 4. Enable `DEBUG=1` to see the full request/response cycle
@@ -520,7 +514,7 @@ If a model works in KiloCode or another client but not Claude Throne:
 
 **License:** MIT License
 - Original work © 2025 Max Nowack
-- Claude Throne extensions and modifications © 2025 KHA Entertainment and contributors
+- Thronekeeper extensions and modifications © 2025 KHA Entertainment and contributors
 
 See the full [Origins & Attribution](#origins--attribution) section above for details on the evolution from the original project.
 
@@ -555,17 +549,17 @@ Key settings in `settings.json` or Settings UI:
 ```
 
 ### Extension Commands
-- `Claude Throne: Open Panel` - Open the configuration panel
-- `Claude Throne: Store [Provider] API Key` - Store API keys securely
-- `Claude Throne: Start/Stop Proxy` - Control proxy lifecycle
-- `Claude Throne: Apply/Revert Base URL` - Configure Claude Code
+- `Thronekeeper: Open Panel` - Open the configuration panel
+- `Thronekeeper: Store [Provider] API Key` - Store API keys securely
+- `Thronekeeper: Start/Stop Proxy` - Control proxy lifecycle
+- `Thronekeeper: Apply/Revert Base URL` - Configure Claude Code
 
 ## Development
 
 ### Local Development Setup
 ```bash
 # Clone and install dependencies
-git clone https://github.com/KHAEntertainment/claude-throne.git
+git clone https://github.com/KHAEntertainment/thronekeeper.git
 cd claude-throne
 npm install
 
