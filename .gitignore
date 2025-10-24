@@ -43,3 +43,6 @@ Thumbs.db
 
 .gemini/
 gha-creds-*.json
+
+# Test files with fixture API keys (flagged by Droid-Shield)
+tests/debug-echo.test.js
