@@ -2,6 +2,17 @@ import { request } from 'undici'
 
 export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
 
+/**
+ * Fetches available model IDs from the specified provider.
+ *
+ * @param provider - Provider identifier (e.g., 'openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'). When `'custom'`, a non-empty `baseUrl` is required.
+ * @param baseUrl - Base URL of the provider's API; required and must be non-empty when `provider` is `'custom'`.
+ * @param apiKey - Optional API key sent in the `Authorization` header as a Bearer token.
+ * @returns An array of model `id` strings available from the provider.
+ * @throws Error('Custom provider requires a base URL') - If `provider` is `'custom'` and `baseUrl` is missing or empty.
+ * @throws Error('Model list failed (<statusCode>)') - If the HTTP response status is not 200.
+ * @throws Error('Model list request timed out after 5 seconds') - If the request is aborted due to the 5-second timeout.
+ */
 export async function listModels(provider: ProviderId, baseUrl: string, apiKey: string): Promise<string[]> {
   if (provider === 'custom' && (!baseUrl || !baseUrl.trim())) {
     throw new Error('Custom provider requires a base URL')
@@ -58,4 +69,3 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
     throw err
   }
 }
-

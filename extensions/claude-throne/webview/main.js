@@ -786,7 +786,12 @@
     vscode.postMessage({ type: 'updatePort', port: parseInt(port, 10) });
   }
 
-  // Proxy Controls
+  /**
+   * Request the extension host to start the local proxy using the current UI configuration.
+   *
+   * Sends a message to start the proxy with the current provider, selected primary/secondary models,
+   * two-model mode flag, and configured port.
+   */
   function startProxy() {
     // Log diagnostic info before starting proxy
     console.log('[startProxy] Starting proxy with config:', {
@@ -799,6 +804,11 @@
     vscode.postMessage({ type: 'startProxy' });
   }
 
+  /**
+   * Stops the running proxy or reverts a direct connection based on the current state.
+   *
+   * If the UI is in a direct-applied state, requests a revert; otherwise requests the proxy to stop.
+   */
   function stopProxy() {
     if (state.directApplied) {
       vscode.postMessage({ type: 'revertApply' });
@@ -807,6 +817,17 @@
     }
   }
 
+  /**
+   * Update internal proxy state and reflect the current proxy status in the UI.
+   *
+   * Sets state.proxyRunning, state.port, and state.directApplied from the provided payload,
+   * then updates the status text and the visibility/labels of the start/stop buttons accordingly.
+   *
+   * @param {Object} status - Status payload from the backend.
+   * @param {boolean} [status.running] - `true` if the proxy is currently running.
+   * @param {number} [status.port] - Port number the proxy is using.
+   * @param {boolean} [status.directApplied] - `true` if a direct connection is currently applied.
+   */
   function updateStatus(status) {
     state.proxyRunning = status.running || false;
     state.port = status.port || 3000;
