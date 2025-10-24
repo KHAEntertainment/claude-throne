@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (provider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
         log.appendLine(`[startProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
         log.appendLine(`[startProxy] Bypassing proxy and applying URL directly`)
-        await applyAnthropicUrl({ url: customBaseUrl })
+        await applyAnthropicUrl({ url: customBaseUrl, provider: 'custom', secrets })
         vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
         return
       }

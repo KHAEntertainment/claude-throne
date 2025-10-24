@@ -465,7 +465,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
         
         // Apply the Anthropic URL directly without starting proxy
-        await applyAnthropicUrl({ url: customBaseUrl })
+        await applyAnthropicUrl({ url: customBaseUrl, provider: 'custom', secrets: this.secrets })
         this.directApplied = true
         
         vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
