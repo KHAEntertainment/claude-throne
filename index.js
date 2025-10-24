@@ -88,7 +88,33 @@ if (models.reasoning !== models.completion) {
 }
 
 const fastify = Fastify({
-  logger: true
+  logger: {
+    level: 'info',
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.body.system',
+        'req.body.messages',
+        'req.body.tools',
+        'req.body.metadata',
+        'res.headers["set-cookie"]'
+      ],
+      censor: '[REDACTED]'
+    },
+    serializers: {
+      req(req) { 
+        return { 
+          id: req.id, 
+          method: req.method, 
+          url: req.url, 
+          headers: { host: req.headers.host } 
+        }; 
+      },
+      res(res) { 
+        return { statusCode: res.statusCode }; 
+      }
+    }
+  }
 })
 function debug(...args) {
   if (!process.env.DEBUG) return
@@ -497,9 +523,7 @@ fastify.post('/v1/messages', async (request, reply) => {
     }
 
     // Validate configuration early
-    debug('API key check:', { provider, hasKey: !!key })
     if (!key) {
-      debug('No API key found, returning 400')
       reply.code(400)
       return {
         error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`,
@@ -510,18 +534,15 @@ fastify.post('/v1/messages', async (request, reply) => {
     let firstChunkLogged = false
     let ttfbMs = null
     
-    console.log(`[Request] Starting request to ${requestUrl}`)
-    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`)
-    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`)
-    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || 'default'}, Temperature: ${openaiPayload.temperature}`)
-    
-    // No timeout - let reasoning models take the time they need
-    // System TCP timeout (75-120s) will handle truly hung connections
-    
     // Use different URL for z.ai passthrough mode
     const requestUrl = (provider === 'glm' && baseUrl.includes('api.z.ai/api/anthropic')) 
       ? `${baseUrl}/v1/messages` 
       : `${baseUrl}/v1/chat/completions`;
+    
+    console.log(`[Request] Starting request to ${requestUrl}`)
+    
+    // No timeout - let reasoning models take the time they need
+    // System TCP timeout (75-120s) will handle truly hung connections
     
     const openaiResponse = await fetch(requestUrl, {
       method: 'POST',
@@ -549,10 +570,10 @@ fastify.post('/v1/messages', async (request, reply) => {
         }
       }
       
-      // Enhanced logging for debugging
+      // Enhanced logging for debugging (redacted)
       console.error('[OpenRouter Error]', {
         status: openaiResponse.status,
-        model: openaiPayload.model,
+        model: '[REDACTED]',
         provider,
         messageCount: messages.length,
         toolCount: tools.length,

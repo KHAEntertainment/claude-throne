@@ -33719,7 +33719,33 @@ if (models.reasoning !== models.completion) {
   console.log("[Startup] - Single-model mode");
 }
 var fastify = (0, import_fastify.default)({
-  logger: true
+  logger: {
+    level: "info",
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.body.system",
+        "req.body.messages",
+        "req.body.tools",
+        "req.body.metadata",
+        'res.headers["set-cookie"]'
+      ],
+      censor: "[REDACTED]"
+    },
+    serializers: {
+      req(req) {
+        return {
+          id: req.id,
+          method: req.method,
+          url: req.url,
+          headers: { host: req.headers.host }
+        };
+      },
+      res(res) {
+        return { statusCode: res.statusCode };
+      }
+    }
+  }
 });
 function debug(...args) {
   if (!process.env.DEBUG) return;
@@ -34066,9 +34092,7 @@ fastify.post("/v1/messages", async (request, reply) => {
     if (key) {
       headers["Authorization"] = `Bearer ${key}`;
     }
-    debug("API key check:", { provider, hasKey: !!key });
     if (!key) {
-      debug("No API key found, returning 400");
       reply.code(400);
       return {
         error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`
@@ -34077,11 +34101,8 @@ fastify.post("/v1/messages", async (request, reply) => {
     const requestStartMs = Date.now();
     let firstChunkLogged = false;
     let ttfbMs = null;
-    console.log(`[Request] Starting request to ${requestUrl}`);
-    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`);
-    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`);
-    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || "default"}, Temperature: ${openaiPayload.temperature}`);
     const requestUrl = provider === "glm" && baseUrl.includes("api.z.ai/api/anthropic") ? `${baseUrl}/v1/messages` : `${baseUrl}/v1/chat/completions`;
+    console.log(`[Request] Starting request to ${requestUrl}`);
     const openaiResponse = await fetch(requestUrl, {
       method: "POST",
       headers,
@@ -34104,7 +34125,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       }
       console.error("[OpenRouter Error]", {
         status: openaiResponse.status,
-        model: openaiPayload.model,
+        model: "[REDACTED]",
         provider,
         messageCount: messages.length,
         toolCount: tools.length,

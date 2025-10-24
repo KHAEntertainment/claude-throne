@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.9",
+  "version": "1.5.10",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
