@@ -106,7 +106,7 @@ While the core proxy concept remains, the architecture, scope, and implementatio
 
 **Original License:** MIT License  
 **Original Author:** Max Nowack  
-**Original Repo:** https://github.com/maxnowack/anthropic-proxy
+**Original Repo:** <https://github.com/maxnowack/anthropic-proxy>
 
 Thank you, Max! 🙏
 
@@ -158,25 +158,25 @@ Access these commands via the Command Palette (`Cmd/Ctrl + Shift + P`):
 ### Recommended Model Pairings
 
 #### Speed-Focused Development
-```
+```text
 Reasoning: qwen/qwen-2.5-coder-32b-instruct
 Completion: qwen/qwen-2.5-coder-32b-instruct
 ```
 
 #### Quality-Focused Development
-```
+```text
 Reasoning: deepseek/deepseek-r1
 Completion: deepseek/deepseek-r1
 ```
 
 #### Balanced Two-Model Setup (Recommended)
-```
+```text
 Reasoning: deepseek/deepseek-r1
 Completion: qwen/qwen-2.5-coder-32b-instruct
 ```
 
 #### Budget-Friendly Setup
-```
+```text
 Reasoning: google/gemini-2.0-flash-exp:free
 Completion: google/gemini-2.0-flash-exp:free
 ```

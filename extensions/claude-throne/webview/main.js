@@ -24,6 +24,7 @@
       custom: { primary: '', secondary: '' }
     },
     proxyRunning: false,
+    directApplied: false,
     port: 3000,
     customCombos: [],
     workspaceCombos: []
@@ -799,19 +800,27 @@
   }
 
   function stopProxy() {
-    vscode.postMessage({ type: 'stopProxy' });
+    if (state.directApplied) {
+      vscode.postMessage({ type: 'revertApply' });
+    } else {
+      vscode.postMessage({ type: 'stopProxy' });
+    }
   }
 
   function updateStatus(status) {
     state.proxyRunning = status.running || false;
     state.port = status.port || 3000;
+    state.directApplied = status.directApplied || false;
 
     const statusText = document.getElementById('statusText');
     const startBtn = document.getElementById('startProxyBtn');
     const stopBtn = document.getElementById('stopProxyBtn');
 
     if (statusText) {
-      if (status.running) {
+      if (status.directApplied) {
+        statusText.textContent = 'Connected (Direct)';
+        statusText.className = 'status-running';
+      } else if (status.running) {
         statusText.textContent = `Running on port ${status.port}`;
         statusText.className = 'status-running';
       } else {
@@ -821,9 +830,14 @@
     }
 
     if (startBtn && stopBtn) {
-      if (status.running) {
+      if (status.directApplied) {
         startBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');
+        stopBtn.textContent = 'Disconnect';
+      } else if (status.running) {
+        startBtn.classList.add('hidden');
+        stopBtn.classList.remove('hidden');
+        stopBtn.textContent = 'Stop Proxy';
       } else {
         startBtn.classList.remove('hidden');
         stopBtn.classList.add('hidden');

@@ -9,6 +9,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
+  private directApplied: boolean = false
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -97,6 +98,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'stopProxy':
             await this.handleStopProxy()
             break
+          case 'revertApply':
+            await this.handleRevertApply()
+            break
           case 'openSettings':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
@@ -137,7 +141,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = String(cfg.get('reasoningModel') || '')
     const completionModel = String(cfg.get('completionModel') || '')
-    this.view?.webview.postMessage({ type: 'status', payload: { ...s, reasoningModel, completionModel } })
+    this.view?.webview.postMessage({ 
+      type: 'status', 
+      payload: { 
+        ...s, 
+        reasoningModel, 
+        completionModel, 
+        directApplied: this.directApplied 
+      } 
+    })
   }
 
   private async postKeys() {
@@ -235,9 +247,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       } else if (provider === 'together') {
         baseUrl = 'https://api.together.xyz/v1'
       } else if (provider === 'deepseek') {
-        baseUrl = 'https://api.deepseek.com/anthropic/v1'
+        baseUrl = 'https://api.deepseek.com/anthropic'
       } else if (provider === 'glm') {
-        baseUrl = 'https://api.z.ai/api/anthropic/v1'
+        baseUrl = 'https://api.z.ai/api/anthropic'
       }
       
       this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
@@ -430,6 +442,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const url = 'https://api.deepseek.com/anthropic'
         this.log.appendLine(`[handleStartProxy] Deepseek is Anthropic-native, bypassing proxy`)
         await applyAnthropicUrl({ url, provider: 'deepseek', secrets: this.secrets })
+        this.directApplied = true
         vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
         this.postStatus()
         return
@@ -440,6 +453,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const url = 'https://api.z.ai/api/anthropic'
         this.log.appendLine(`[handleStartProxy] GLM is Anthropic-native, bypassing proxy`)
         await applyAnthropicUrl({ url, provider: 'glm', secrets: this.secrets })
+        this.directApplied = true
         vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
         this.postStatus()
         return
@@ -452,6 +466,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         
         // Apply the Anthropic URL directly without starting proxy
         await applyAnthropicUrl({ url: customBaseUrl })
+        this.directApplied = true
         
         vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
         this.postStatus()
@@ -543,6 +558,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (err) {
       console.error('Failed to stop proxy:', err)
+    }
+  }
+
+  private async handleRevertApply() {
+    try {
+      this.log.appendLine('[handleRevertApply] Reverting direct Anthropic endpoint application')
+      await vscode.commands.executeCommand('claudeThrone.revertApply')
+      this.directApplied = false
+      this.postStatus()
+      vscode.window.showInformationMessage('Reverted Claude Code settings to defaults')
+    } catch (err) {
+      this.log.appendLine(`[handleRevertApply] Error: ${err}`)
+      vscode.window.showErrorMessage(`Failed to revert settings: ${err}`)
     }
   }
 
