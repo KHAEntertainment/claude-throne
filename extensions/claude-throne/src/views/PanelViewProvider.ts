@@ -237,7 +237,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const apiKey = await this.secrets.getProviderKey(provider) || ''
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
-      // Get base URL for custom providers
+      // Get base URL for model listing
+      // Note: Deepseek and GLM use OpenAI-compatible endpoints for model listing
+      // but Anthropic-native endpoints for actual API calls
       let baseUrl = 'https://openrouter.ai/api'
       
       if (provider === 'custom') {
@@ -247,9 +249,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       } else if (provider === 'together') {
         baseUrl = 'https://api.together.xyz/v1'
       } else if (provider === 'deepseek') {
-        baseUrl = 'https://api.deepseek.com/anthropic'
+        baseUrl = 'https://api.deepseek.com/v1'
       } else if (provider === 'glm') {
-        baseUrl = 'https://api.z.ai/api/anthropic'
+        baseUrl = 'https://api.z.ai/api/paas/v4'
       }
       
       this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
