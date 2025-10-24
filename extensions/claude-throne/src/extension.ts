@@ -257,6 +257,15 @@ export function activate(context: vscode.ExtensionContext) {
         return
       }
       
+      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
+      if (provider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
+        log.appendLine(`[startProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
+        log.appendLine(`[startProxy] Bypassing proxy and applying URL directly`)
+        await applyAnthropicUrl({ url: customBaseUrl })
+        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
+        return
+      }
+      
       await proxy!.start({ provider, customBaseUrl, port, debug, reasoningModel, completionModel })
       
       const elapsed = Date.now() - startTime

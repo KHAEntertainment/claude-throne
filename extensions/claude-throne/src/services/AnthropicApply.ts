@@ -84,10 +84,7 @@ export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   for (const key of termKeys) {
     try {
       const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {}
-      if (current['ANTHROPIC_BASE_URL'] === url) {
-        continue
-      }
-      const updated = { ...current, ANTHROPIC_BASE_URL: url }
+      const updated = { ...current, ...env }
       await vscode.workspace.getConfiguration().update(key, updated, scope)
     } catch {}
   }
