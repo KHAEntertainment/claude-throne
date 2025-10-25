@@ -168,6 +168,13 @@ export class ProxyManager {
     this.log.appendLine(`[ProxyManager] - Completion Model: ${opts.completionModel || 'not set'} ${opts.completionModel && cfg.get<string>('completionModel') === opts.completionModel ? '(from config)' : ''}`)
     this.log.appendLine(`[ProxyManager] - Custom Base URL: ${opts.customBaseUrl || 'none'}`)
     
+    // Log Anthropic-native provider mode
+    if (opts.provider === 'deepseek' || opts.provider === 'glm') {
+      this.log.appendLine(`[ProxyManager] Anthropic-native provider detected: ${opts.provider}`)
+      this.log.appendLine(`[ProxyManager] Proxy will inject x-api-key header and forward to provider endpoint`)
+      this.log.appendLine(`[ProxyManager] Provider endpoint: ${opts.provider === 'deepseek' ? 'https://api.deepseek.com/anthropic' : 'https://api.z.ai/api/anthropic'}`)
+    }
+    
     // Log environment variable keys (without exposing sensitive values)
     const envKeys = Object.keys(env).filter(k => k.includes('API_KEY') || k.includes('MODEL') || k.includes('BASE_URL'))
     this.log.appendLine(`[ProxyManager] - Environment variables set: ${envKeys.join(', ')}`)

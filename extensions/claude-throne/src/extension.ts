@@ -5,8 +5,6 @@ import { SecretsService } from './services/Secrets';
 import { ProxyManager } from './services/ProxyManager';
 import { PanelViewProvider } from './views/PanelViewProvider';
 import { updateClaudeSettings } from './services/ClaudeSettings';
-import { isAnthropicEndpoint } from './services/endpoints';
-import { applyAnthropicUrl } from './services/AnthropicApply';
 
 let proxy: ProxyManager | null = null;
 
@@ -239,26 +237,8 @@ export function activate(context: vscode.ExtensionContext) {
       log.appendLine(`[startProxy] Starting with config: provider=${provider}, port=${port}, twoModelMode=${twoModelMode}`)
       log.appendLine(`[startProxy] Models: reasoning=${reasoningModel}, completion=${completionModel}`)
       
-      // Bypass proxy for Deepseek (Anthropic-native provider)
-      if (provider === 'deepseek') {
-        const url = 'https://api.deepseek.com/anthropic'
-        log.appendLine(`[startProxy] Deepseek is Anthropic-native, bypassing proxy and applying URL directly`)
-        await applyAnthropicUrl({ url, provider: 'deepseek', secrets })
-        vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
-        return
-      }
-      
-      // Use proxy for all providers including GLM (unified approach)
-      // GLM will use proxy for API key management and session handling
-      
-      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
-      if (provider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
-        log.appendLine(`[startProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
-        log.appendLine(`[startProxy] Bypassing proxy and applying URL directly`)
-        await applyAnthropicUrl({ url: customBaseUrl, provider: 'custom', secrets })
-        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
-        return
-      }
+      // All providers (including Deepseek, GLM, and custom Anthropic endpoints) now route through the proxy
+      // The proxy handles authentication and forwards requests to the appropriate provider URL
       
       await proxy!.start({ provider, customBaseUrl, port, debug, reasoningModel, completionModel })
       

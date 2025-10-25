@@ -10,6 +10,22 @@ export interface ApplyOptions {
   scope?: vscode.ConfigurationTarget
 }
 
+/**
+ * @deprecated This function is deprecated and should not be used.
+ * 
+ * All Anthropic-native providers (Deepseek, GLM, custom Anthropic endpoints) should now route
+ * through the proxy instead of being applied directly. The proxy handles authentication by
+ * injecting API keys and forwards requests to the provider's URL stored in ANTHROPIC_PROXY_BASE_URL.
+ * 
+ * This function was previously used to bypass the proxy and configure Claude Code to connect
+ * directly to Anthropic-native provider URLs, but this approach prevented the proxy from
+ * managing authentication and caused API key injection failures.
+ * 
+ * Use the standard proxy workflow instead:
+ * 1. Start the proxy with the provider configuration
+ * 2. The proxy will listen on localhost and inject authentication headers
+ * 3. Use applyToClaudeCode command to configure Claude Code to point at the proxy URL
+ */
 export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
   const { url, provider, secrets } = options
   const cfg = vscode.workspace.getConfiguration('claudeThrone')

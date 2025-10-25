@@ -2,14 +2,11 @@ import * as vscode from 'vscode'
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
-import { isAnthropicEndpoint } from '../services/endpoints'
-import { applyAnthropicUrl } from '../services/AnthropicApply'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
-  private directApplied: boolean = false
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -148,8 +145,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         ...s, 
         reasoningModel, 
         completionModel, 
-        valueModel,
-        directApplied: this.directApplied 
+        valueModel
       } 
     })
   }
@@ -443,46 +439,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         ? cfg.get<string>('customBaseUrl', '')
         : undefined
       
-      // Bypass proxy for Deepseek (Anthropic-native provider)
-      if (this.currentProvider === 'deepseek') {
-        const url = 'https://api.deepseek.com/anthropic'
-        this.log.appendLine(`[handleStartProxy] Deepseek is Anthropic-native, bypassing proxy`)
-        await applyAnthropicUrl({ url, provider: 'deepseek', secrets: this.secrets })
-        this.directApplied = true
-        vscode.window.showInformationMessage(`Applied Deepseek Anthropic endpoint directly: ${url}`)
-        this.postStatus()
-        return
-      }
-
-      if (this.currentProvider === 'glm') {
-        const url = 'https://api.z.ai/api/anthropic'
-        if (isAnthropicEndpoint(url)) {
-          this.log.appendLine(`[handleStartProxy] GLM endpoint detected as Anthropic-native, bypassing proxy`)
-          await applyAnthropicUrl({ url, provider: 'glm', secrets: this.secrets })
-          this.directApplied = true
-          vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
-          this.postStatus()
-          return
-        }
-        this.log.appendLine(`[handleStartProxy] GLM endpoint did not match Anthropic pattern, falling back to proxy`)
-      }
-      
-      // Use proxy for all providers including GLM (unified approach)
-      // GLM will use proxy for API key management and session handling
-      
-      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
-      if (this.currentProvider === 'custom' && customBaseUrl && isAnthropicEndpoint(customBaseUrl)) {
-        this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
-        this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
-        
-        // Apply the Anthropic URL directly without starting proxy
-        await applyAnthropicUrl({ url: customBaseUrl, provider: 'custom', secrets: this.secrets })
-        this.directApplied = true
-        
-        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
-        this.postStatus()
-        return
-      }
+      // All providers (including Deepseek, GLM, and custom Anthropic endpoints) now route through the proxy
+      // The proxy handles authentication and forwards requests to the appropriate provider URL
       
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
@@ -524,12 +482,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage(`Proxy started on port ${port}`)
       this.postStatus()
       
-      // ALWAYS apply settings to Claude Code when proxy starts
-      // (The autoApply flag only controls whether we revert on stop)
-      this.log.appendLine(`[handleStartProxy] Applying proxy settings to Claude Code...`)
-      // Wait a moment for proxy to fully initialize and start accepting connections
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      // Apply settings to Claude Code if autoApply is enabled
+      const autoApply = cfg.get<boolean>('autoApply', false)
+      if (autoApply) {
+        this.log.appendLine(`[handleStartProxy] autoApply enabled, applying proxy settings to Claude Code...`)
+        // Wait a moment for proxy to fully initialize and start accepting connections
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      } else {
+        this.log.appendLine(`[handleStartProxy] autoApply disabled, skipping automatic configuration`)
+        this.log.appendLine(`[handleStartProxy] Run "Claude Throne: Apply to Claude Code" command manually to configure`)
+      }
     } catch (err) {
       this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
@@ -574,11 +537,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleRevertApply() {
     try {
-      this.log.appendLine('[handleRevertApply] Reverting direct Anthropic endpoint application')
+      this.log.appendLine('[handleRevertApply] Reverting Claude Code settings to Anthropic defaults')
       await vscode.commands.executeCommand('claudeThrone.revertApply')
-      this.directApplied = false
       this.postStatus()
-      vscode.window.showInformationMessage('Reverted Claude Code settings to defaults')
+      vscode.window.showInformationMessage('Reverted Claude Code settings to Anthropic defaults')
     } catch (err) {
       this.log.appendLine(`[handleRevertApply] Error: ${err}`)
       vscode.window.showErrorMessage(`Failed to revert settings: ${err}`)

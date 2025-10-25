@@ -34118,6 +34118,11 @@ fastify.post("/v1/messages", async (request, reply) => {
     }
     const requestUrl = isAnthropicNative ? `${normalizedBaseUrl}/v1/messages` : `${normalizedBaseUrl}/v1/chat/completions`;
     const headers = buildUpstreamHeaders({ provider, endpointKind, key });
+    if (isAnthropicNative) {
+      console.log(`[Anthropic Native] Handling request for provider: ${provider}`);
+      console.log(`[Anthropic Native] Forwarding to: ${requestUrl}`);
+      console.log(`[Anthropic Native] Authentication: x-api-key header injected`);
+    }
     console.log(`[Request] Starting request to ${requestUrl}`);
     if (isAnthropicNative) {
       const anthropicPayload = buildAnthropicPayload(payload);
