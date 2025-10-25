@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectProvider, resolveApiKey, providerSpecificHeaders } from '../key-resolver.js'
+import { detectProvider, resolveApiKey, providerSpecificHeaders, inferEndpointKind, ENDPOINT_KIND } from '../key-resolver.js'
 
 describe('key-resolver', () => {
   it('detects providers from base URL', () => {
@@ -18,9 +18,9 @@ describe('key-resolver', () => {
       OPENAI_API_KEY: 'openai',
       OPENROUTER_API_KEY: 'openrouter',
     }
-    expect(resolveApiKey('custom', env)).toBe('custom')
-    expect(resolveApiKey('openai', env)).toBe('openai')
-    expect(resolveApiKey('openrouter', env)).toBe('openrouter')
+    expect(resolveApiKey('custom', env)).toEqual({ key: 'custom', source: 'CUSTOM_API_KEY' })
+    expect(resolveApiKey('openai', env)).toEqual({ key: 'openai', source: 'OPENAI_API_KEY' })
+    expect(resolveApiKey('openrouter', env)).toEqual({ key: 'openrouter', source: 'OPENROUTER_API_KEY' })
   })
 
   it('includes OpenRouter headers when provider is openrouter', () => {
@@ -29,5 +29,11 @@ describe('key-resolver', () => {
     expect(headers['HTTP-Referer']).toBe('http://localhost')
     expect(headers['X-Title']).toBe('Test App')
   })
-})
 
+  it('infers endpoint kind correctly', () => {
+    expect(inferEndpointKind('deepseek', 'https://api.deepseek.com/anthropic')).toBe(ENDPOINT_KIND.ANTHROPIC_NATIVE)
+    expect(inferEndpointKind('glm', 'https://api.z.ai/api/anthropic')).toBe(ENDPOINT_KIND.ANTHROPIC_NATIVE)
+    expect(inferEndpointKind('openrouter', 'https://openrouter.ai/api')).toBe(ENDPOINT_KIND.OPENAI_COMPATIBLE)
+    expect(inferEndpointKind('custom', 'https://example.com/v1')).toBe(ENDPOINT_KIND.OPENAI_COMPATIBLE)
+  })
+})

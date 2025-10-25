@@ -1,4 +1,4 @@
-// Simple provider + key resolver for OpenAI-compatible backends
+// Simple provider + key resolver for Anthropic/OpenAI style backends
 // Language: Node.js ESM
 
 const PROVIDERS = {
@@ -7,44 +7,86 @@ const PROVIDERS = {
   together: 'together',
   deepseek: 'deepseek',
   glm: 'glm',
+  anthropic: 'anthropic',
+  grok: 'grok',
   custom: 'custom',
 }
 
-export function detectProvider(baseUrl) {
+export const ENDPOINT_KIND = {
+  OPENAI_COMPATIBLE: 'openai-compatible',
+  ANTHROPIC_NATIVE: 'anthropic-native',
+}
+
+const PROVIDER_KEY_SOURCES = {
+  [PROVIDERS.custom]: ['CUSTOM_API_KEY', 'API_KEY'],
+  [PROVIDERS.openrouter]: ['OPENROUTER_API_KEY'],
+  [PROVIDERS.openai]: ['OPENAI_API_KEY'],
+  [PROVIDERS.together]: ['TOGETHER_API_KEY'],
+  [PROVIDERS.deepseek]: ['DEEPSEEK_API_KEY'],
+  [PROVIDERS.glm]: ['GLM_API_KEY', 'ZAI_API_KEY'],
+  [PROVIDERS.anthropic]: ['ANTHROPIC_API_KEY'],
+  [PROVIDERS.grok]: ['GROK_API_KEY', 'XAI_API_KEY'],
+}
+
+function isAnthropicLikeUrl(baseUrl) {
   try {
     const url = new URL(baseUrl)
     const host = url.host.toLowerCase()
+    const path = url.pathname.toLowerCase()
+    if (host.includes('anthropic.com')) return true
+    if (host.includes('anthropic.ai')) return true
+    if (host.includes('deepseek.com') && path.includes('anthropic')) return true
+    if (host.includes('z.ai') && path.includes('anthropic')) return true
+    if (path.includes('/anthropic')) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+export function detectProvider(baseUrl, env = process.env) {
+  const forced = (env.FORCE_PROVIDER || '').toLowerCase()
+  if (forced && Object.values(PROVIDERS).includes(forced)) {
+    return forced
+  }
+
+  try {
+    const url = new URL(baseUrl)
+    const host = url.host.toLowerCase()
+    const path = url.pathname.toLowerCase()
+
     if (host.includes('openrouter.ai')) return PROVIDERS.openrouter
     if (host.includes('api.openai.com')) return PROVIDERS.openai
     if (host.includes('together.ai') || host.includes('together.xyz')) return PROVIDERS.together
     if (host.includes('deepseek.com')) return PROVIDERS.deepseek
     if (host.includes('z.ai')) return PROVIDERS.glm
+    if (host.includes('anthropic.com') || host.endsWith('.anthropic.app')) return PROVIDERS.anthropic
+    if (host.includes('x.ai') || host.includes('grok')) return PROVIDERS.grok
+    if (/\/anthropic/.test(path)) return PROVIDERS.anthropic
     return PROVIDERS.custom
   } catch {
     return PROVIDERS.custom
   }
 }
 
+export function inferEndpointKind(provider, baseUrl) {
+  if (provider === PROVIDERS.deepseek || provider === PROVIDERS.glm || provider === PROVIDERS.anthropic) {
+    return ENDPOINT_KIND.ANTHROPIC_NATIVE
+  }
+  if (isAnthropicLikeUrl(baseUrl)) {
+    return ENDPOINT_KIND.ANTHROPIC_NATIVE
+  }
+  return ENDPOINT_KIND.OPENAI_COMPATIBLE
+}
+
 export function resolveApiKey(provider, env = process.env) {
-  // Highest priority for custom URLs
-  const custom = env.CUSTOM_API_KEY || env.API_KEY
-  if (provider === PROVIDERS.custom && custom) return custom
-
-  // Provider-specific
-  if (provider === PROVIDERS.openai && env.OPENAI_API_KEY) return env.OPENAI_API_KEY
-  if (provider === PROVIDERS.together && env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY
-  if (provider === PROVIDERS.deepseek && env.DEEPSEEK_API_KEY) return env.DEEPSEEK_API_KEY
-  if (provider === PROVIDERS.glm && (env.GLM_API_KEY || env.ZAI_API_KEY)) return env.GLM_API_KEY || env.ZAI_API_KEY
-  if (provider === PROVIDERS.openrouter && env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY
-
-  // Fallbacks
-  if (custom) return custom
-  if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY
-  if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY
-  if (env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY
-  if (env.DEEPSEEK_API_KEY) return env.DEEPSEEK_API_KEY
-  if (env.GLM_API_KEY || env.ZAI_API_KEY) return env.GLM_API_KEY || env.ZAI_API_KEY
-  return null
+  const sources = PROVIDER_KEY_SOURCES[provider] || []
+  for (const name of sources) {
+    if (env[name]) {
+      return { key: env[name], source: name }
+    }
+  }
+  return { key: null, source: null }
 }
 
 export function providerSpecificHeaders(provider, env = process.env) {

@@ -290,6 +290,7 @@ export class ProxyManager {
   private async buildEnvForProvider(opts: ProxyStartOptions): Promise<NodeJS.ProcessEnv> {
     const base: NodeJS.ProcessEnv = { ...process.env }
     base.PORT = String(opts.port)
+    base.FORCE_PROVIDER = opts.provider
     if (opts.debug) base.DEBUG = '1'
     // Only set model env vars if they have actual values (don't override with empty strings)
     if (opts.reasoningModel) base.REASONING_MODEL = opts.reasoningModel
@@ -350,4 +351,3 @@ export class ProxyManager {
     return base
   }
 }
-

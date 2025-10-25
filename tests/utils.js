@@ -1,18 +1,21 @@
 import http from 'http'
 
-export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, assertAuth } = {}) {
+export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, assertAuth, endpoint = 'openai', statusCode = 200, sseTerminator } = {}) {
   // mode: 'json' or 'sse'
-  const received = { headers: null, body: null }
+  const received = { headers: null, body: null, url: null, method: null }
+  const targetPath = endpoint === 'anthropic' ? '/v1/messages' : '/v1/chat/completions'
   const server = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url && req.url.endsWith('/v1/chat/completions')) {
+    if (req.method === 'POST' && req.url && req.url.endsWith(targetPath)) {
       let buf = ''
       req.setEncoding('utf8')
       req.on('data', (d) => (buf += d))
       req.on('end', () => {
         received.headers = req.headers
         received.body = buf
+        received.url = req.url
+        received.method = req.method
         if (assertAuth) {
-          // noop: consumer can read received.headers later
+          assertAuth(req.headers)
         }
         if (mode === 'json') {
           const payload = jsonResponse || {
@@ -23,7 +26,7 @@ export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, asse
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           }
           const data = JSON.stringify(payload)
-          res.writeHead(200, { 'content-type': 'application/json' })
+          res.writeHead(statusCode, { 'content-type': 'application/json' })
           res.end(data)
         } else if (mode === 'sse') {
           res.writeHead(200, {
@@ -33,9 +36,24 @@ export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, asse
           })
           const chunks = sseChunks || []
           for (const obj of chunks) {
-            res.write(`data: ${JSON.stringify(obj)}\n\n`)
+            if (typeof obj === 'string') {
+              const chunk = obj.endsWith('\n') ? obj : `${obj}\n`
+              res.write(chunk.endsWith('\n\n') ? chunk : `${chunk}\n`)
+            } else {
+              res.write(`data: ${JSON.stringify(obj)}\n\n`)
+            }
           }
-          res.write('data: [DONE]\n\n')
+          const terminator = sseTerminator !== undefined
+            ? sseTerminator
+            : (endpoint === 'openai' ? 'data: [DONE]\n\n' : '')
+          if (terminator) {
+            if (typeof terminator === 'string') {
+              const chunk = terminator.endsWith('\n\n') ? terminator : `${terminator}\n\n`
+              res.write(chunk)
+            } else {
+              res.write(`data: ${JSON.stringify(terminator)}\n\n`)
+            }
+          }
           res.end()
         } else {
           res.statusCode = 500
@@ -54,7 +72,6 @@ export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, asse
     })
   })
 }
-
 export async function spawnProxyProcess({ port, baseUrl, env = {}, isolateEnv = false }) {
   const { spawn } = await import('node:child_process')
   const baseEnv = isolateEnv ? {} : process.env
@@ -94,4 +111,3 @@ export function stopChild(child) {
     setTimeout(() => resolve(), 500)
   })
 }
-

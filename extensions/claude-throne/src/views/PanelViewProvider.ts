@@ -453,6 +453,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         this.postStatus()
         return
       }
+
+      if (this.currentProvider === 'glm') {
+        const url = 'https://api.z.ai/api/anthropic'
+        if (isAnthropicEndpoint(url)) {
+          this.log.appendLine(`[handleStartProxy] GLM endpoint detected as Anthropic-native, bypassing proxy`)
+          await applyAnthropicUrl({ url, provider: 'glm', secrets: this.secrets })
+          this.directApplied = true
+          vscode.window.showInformationMessage(`Applied GLM Anthropic endpoint directly: ${url}`)
+          this.postStatus()
+          return
+        }
+        this.log.appendLine(`[handleStartProxy] GLM endpoint did not match Anthropic pattern, falling back to proxy`)
+      }
       
       // Use proxy for all providers including GLM (unified approach)
       // GLM will use proxy for API key management and session handling
