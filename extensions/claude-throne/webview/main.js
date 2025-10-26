@@ -127,6 +127,10 @@
     const stopBtn = document.getElementById('stopProxyBtn');
     stopBtn?.addEventListener('click', stopProxy);
 
+    // Apply to Claude Code Button
+    const applyBtn = document.getElementById('applyBtn');
+    applyBtn?.addEventListener('click', applyToClaudeCode);
+
     const portInput = document.getElementById('portInput');
     portInput?.addEventListener('input', onPortChange);
 
@@ -822,6 +826,12 @@
     vscode.postMessage({ type: 'stopProxy' });
   }
 
+  function applyToClaudeCode() {
+    console.log('[applyToClaudeCode] Sending apply message to backend');
+    vscode.postMessage({ type: 'applyToClaudeCode' });
+    showNotification('Applying configuration to Claude Code...', 'info');
+  }
+
   function updateStatus(status) {
     state.proxyRunning = status.running || false;
     state.port = status.port || 3000;
@@ -829,6 +839,8 @@
     const statusText = document.getElementById('statusText');
     const startBtn = document.getElementById('startProxyBtn');
     const stopBtn = document.getElementById('stopProxyBtn');
+    const applyBtn = document.getElementById('applyBtn');
+    const configStatus = document.getElementById('configStatus');
 
     if (statusText) {
       if (status.running) {
@@ -840,18 +852,34 @@
       }
     }
 
-    if (startBtn && stopBtn) {
+    // Show configuration status indicator
+    if (configStatus) {
+      if (status.running && status.applied) {
+        configStatus.textContent = '✓ Configured';
+        configStatus.className = 'config-status status-configured';
+      } else if (status.running && !status.applied) {
+        configStatus.textContent = '⚠ Not configured';
+        configStatus.className = 'config-status status-not-configured';
+      } else {
+        configStatus.className = 'config-status hidden';
+      }
+    }
+
+    if (startBtn && stopBtn && applyBtn) {
       if (status.running) {
         startBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');
         stopBtn.textContent = 'Stop Proxy';
-      } else if (status.running) {
-        startBtn.classList.add('hidden');
-        stopBtn.classList.remove('hidden');
-        stopBtn.textContent = 'Stop Proxy';
+        // Show Apply button only if proxy is running and not yet applied
+        if (!status.applied) {
+          applyBtn.classList.remove('hidden');
+        } else {
+          applyBtn.classList.add('hidden');
+        }
       } else {
         startBtn.classList.remove('hidden');
         stopBtn.classList.add('hidden');
+        applyBtn.classList.add('hidden');
       }
     }
   }

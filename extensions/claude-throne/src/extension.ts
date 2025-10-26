@@ -99,7 +99,24 @@ export function activate(context: vscode.ExtensionContext) {
     if (scopeStr === 'global') {
         settingsDir = os.homedir();
     } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-        settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        // Multi-root workspace support: allow user to select target folder
+        if (vscode.workspace.workspaceFolders.length > 1) {
+            const items = vscode.workspace.workspaceFolders.map(folder => ({
+                label: folder.name,
+                description: folder.uri.fsPath,
+                folder: folder
+            }));
+            const selected = await vscode.window.showQuickPick(items, {
+                placeHolder: 'Select workspace folder to revert Claude Code settings',
+                ignoreFocusOut: true
+            });
+            if (!selected) {
+                return; // User cancelled
+            }
+            settingsDir = selected.folder.uri.fsPath;
+        } else {
+            settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        }
     }
 
     // Get cached Anthropic defaults
@@ -159,23 +176,26 @@ export function activate(context: vscode.ExtensionContext) {
       } catch {}
     }
 
-    // Restore ANTHROPIC_BASE_URL to Anthropic default in terminal env
-    const termKeys = [
-      'terminal.integrated.env.osx',
-      'terminal.integrated.env.linux',
-      'terminal.integrated.env.windows',
-    ];
+    // Restore ANTHROPIC_BASE_URL to Anthropic default in terminal env (only if applyToTerminal is enabled)
+    const applyToTerminal = cfg.get<boolean>('applyToTerminal', false);
     let termTouched = 0;
-    for (const key of termKeys) {
-      try {
-        const cfg = vscode.workspace.getConfiguration();
-        const cur = (cfg.get<Record<string, string>>(key) || {});
-        if ('ANTHROPIC_BASE_URL' in cur) {
-          const next = { ...cur, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' };
-          await cfg.update(key, next, scope);
-          termTouched++;
-        }
-      } catch {}
+    if (applyToTerminal) {
+      const termKeys = [
+        'terminal.integrated.env.osx',
+        'terminal.integrated.env.linux',
+        'terminal.integrated.env.windows',
+      ];
+      for (const key of termKeys) {
+        try {
+          const wsConfig = vscode.workspace.getConfiguration();
+          const cur = (wsConfig.get<Record<string, string>>(key) || {});
+          if ('ANTHROPIC_BASE_URL' in cur) {
+            const next = { ...cur, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' };
+            await wsConfig.update(key, next, scope);
+            termTouched++;
+          }
+        } catch {}
+      }
     }
 
     const parts: string[] = []
@@ -246,11 +266,14 @@ export function activate(context: vscode.ExtensionContext) {
       log.appendLine(`[startProxy] Proxy started in ${elapsed}ms`)
       vscode.window.showInformationMessage(`Thronekeeper: proxy started on port ${port}`)
 
-      const auto = cfg.get<boolean>('autoApply', false)
+      const auto = cfg.get<boolean>('autoApply', true)
       if (auto) {
+        log.appendLine('[startProxy] autoApply enabled, applying settings to Claude Code...')
         // Wait for proxy to be fully ready before applying settings
         await new Promise(resolve => setTimeout(resolve, 1000))
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      } else {
+        log.appendLine('[startProxy] autoApply disabled, configuration must be applied manually')
       }
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to start proxy: ${err?.message || err}`)
@@ -264,7 +287,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Thronekeeper: proxy stopped${ok ? '' : ' (not running)'}`)
 
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const auto = cfg.get<boolean>('autoApply', false)
+      const auto = cfg.get<boolean>('autoApply', true)
       if (auto) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
@@ -292,40 +315,55 @@ export function activate(context: vscode.ExtensionContext) {
     const twoModelMode = cfg.get<boolean>('twoModelMode', false);
     const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
 
+    log.appendLine(`[applyToClaudeCode] Scope: ${scopeStr}`);
     log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
     log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', coding='${completionModel || 'EMPTY'}', value='${valueModel || 'EMPTY'}'`);
     
-    if (twoModelMode && reasoningModel && completionModel && valueModel) {
+    // Fallback: If reasoningModel is empty but completionModel is set, use completionModel for all defaults
+    let effectiveReasoningModel = reasoningModel;
+    let effectiveCompletionModel = completionModel;
+    let effectiveValueModel = valueModel;
+    
+    if (!effectiveReasoningModel && effectiveCompletionModel) {
+      log.appendLine(`[applyToClaudeCode] Fallback: reasoningModel empty, using completionModel='${effectiveCompletionModel}' for all tiers`);
+      effectiveReasoningModel = effectiveCompletionModel;
+    }
+    
+    if (twoModelMode && effectiveReasoningModel && effectiveCompletionModel && effectiveValueModel) {
         // Three-model mode: use specific models for each task type
         log.appendLine(`[applyToClaudeCode] Three-model mode enabled`);
-        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${reasoningModel}`);
-        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${completionModel}`);
-        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${valueModel}`);
-        env.ANTHROPIC_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel;
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = valueModel;
-    } else if (twoModelMode && reasoningModel && completionModel && !valueModel) {
+        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${effectiveReasoningModel}`);
+        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${effectiveCompletionModel}`);
+        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${effectiveValueModel}`);
+        env.ANTHROPIC_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = effectiveCompletionModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = effectiveValueModel;
+    } else if (twoModelMode && effectiveReasoningModel && effectiveCompletionModel && !effectiveValueModel) {
         // Legacy two-model mode: fallback for partial configuration
         log.appendLine(`[applyToClaudeCode] Two-model mode (legacy): using reasoning for Opus, completion for Sonnet/Haiku`);
-        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${reasoningModel}`);
-        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${completionModel}`);
-        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${completionModel}`);
-        env.ANTHROPIC_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = completionModel;
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = completionModel;
-    } else if (reasoningModel) {
+        log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${effectiveReasoningModel}`);
+        log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${effectiveCompletionModel}`);
+        log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${effectiveCompletionModel}`);
+        env.ANTHROPIC_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = effectiveCompletionModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = effectiveCompletionModel;
+    } else if (effectiveReasoningModel) {
         // Single-model mode: use reasoning model for everything
-        log.appendLine(`[applyToClaudeCode] Single-model mode: using ${reasoningModel} for all tiers (Opus/Sonnet/Haiku)`);
-        env.ANTHROPIC_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_OPUS_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_SONNET_MODEL = reasoningModel;
-        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = reasoningModel;
+        log.appendLine(`[applyToClaudeCode] Single-model mode: using ${effectiveReasoningModel} for all tiers (Opus/Sonnet/Haiku)`);
+        env.ANTHROPIC_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = effectiveReasoningModel;
     } else {
-        log.appendLine(`[applyToClaudeCode] ⚠️ WARNING: No reasoning model configured!`);
-        log.appendLine(`[applyToClaudeCode] ⚠️ Models will NOT be written to .claude/settings.json`);
-        log.appendLine(`[applyToClaudeCode] ⚠️ File will retain previous values or Anthropic defaults`);
+        // No models configured at all - explicitly remove model env vars to prevent stale values
+        log.appendLine(`[applyToClaudeCode] ⚠️ WARNING: No models configured!`);
+        log.appendLine(`[applyToClaudeCode] ⚠️ Explicitly removing model env vars to prevent stale values`);
+        env.ANTHROPIC_MODEL = null;
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = null;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = null;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = null;
     }
     
     log.appendLine(`[applyToClaudeCode] Env vars to write: ${JSON.stringify(Object.keys(env))}`);
@@ -335,60 +373,114 @@ export function activate(context: vscode.ExtensionContext) {
     if (scopeStr === 'global') {
         settingsDir = os.homedir();
     } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-        settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        // Multi-root workspace support: allow user to select target folder
+        if (vscode.workspace.workspaceFolders.length > 1) {
+            const items = vscode.workspace.workspaceFolders.map(folder => ({
+                label: folder.name,
+                description: folder.uri.fsPath,
+                folder: folder
+            }));
+            const selected = await vscode.window.showQuickPick(items, {
+                placeHolder: 'Select workspace folder to apply Claude Code settings',
+                ignoreFocusOut: true
+            });
+            if (!selected) {
+                log.appendLine('[applyToClaudeCode] User cancelled workspace folder selection');
+                return; // User cancelled
+            }
+            settingsDir = selected.folder.uri.fsPath;
+            log.appendLine(`[applyToClaudeCode] Selected workspace folder: ${settingsDir}`);
+        } else {
+            settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+        }
     }
 
     if (settingsDir) {
-        await updateClaudeSettings(settingsDir, env);
+        log.appendLine(`[applyToClaudeCode] Settings directory: ${settingsDir}`);
+        const settingsPath = require('path').join(settingsDir, '.claude', 'settings.json');
+        log.appendLine(`[applyToClaudeCode] Target path: ${settingsPath}`);
+        log.appendLine(`[applyToClaudeCode] Environment variables: ${JSON.stringify(env, null, 2)}`);
+        try {
+            await updateClaudeSettings(settingsDir, env);
+            log.appendLine('[applyToClaudeCode] ✅ Successfully wrote .claude/settings.json');
+        } catch (err) {
+            log.appendLine(`[applyToClaudeCode] ❌ ERROR writing settings: ${err}`);
+            throw err;
+        }
+    } else {
+        log.appendLine('[applyToClaudeCode] ⚠️ WARNING: No settings directory found (no workspace open?)');
     }
 
-    // 1) Try to apply to known Claude/Anthropic extension settings
-    const candidates: { section: string; key: string }[] = [
-      { section: 'anthropic', key: 'baseUrl' },
-      { section: 'claude', key: 'baseUrl' },
-      { section: 'claudeCode', key: 'baseUrl' },
-      { section: 'claude-code', key: 'baseUrl' },
-      { section: 'claude', key: 'apiBaseUrl' },
-      { section: 'claudeCode', key: 'apiBaseUrl' },
-    ];
-
+    // 1) Try to apply to known Claude/Anthropic extension settings (if enabled)
+    const applyToExtensions = cfg.get<boolean>('applyToExtensions', false);
     const applied: string[] = [];
-    for (const c of candidates) {
-      try {
-        const s = vscode.workspace.getConfiguration(c.section);
-        await s.update(c.key, baseUrl, scope);
-        applied.push(`${c.section}.${c.key}`);
-      } catch {}
+    
+    if (applyToExtensions) {
+      log.appendLine('[applyToClaudeCode] applyToExtensions=true, writing to other extension settings...');
+      const candidates: { section: string; key: string }[] = [
+        { section: 'anthropic', key: 'baseUrl' },
+        { section: 'claude', key: 'baseUrl' },
+        { section: 'claudeCode', key: 'baseUrl' },
+        { section: 'claude-code', key: 'baseUrl' },
+        { section: 'claude', key: 'apiBaseUrl' },
+        { section: 'claudeCode', key: 'apiBaseUrl' },
+      ];
+
+      for (const c of candidates) {
+        try {
+          const s = vscode.workspace.getConfiguration(c.section);
+          await s.update(c.key, baseUrl, scope);
+          applied.push(`${c.section}.${c.key}`);
+        } catch {}
+      }
+      log.appendLine(`[applyToClaudeCode] Updated ${applied.length} extension setting(s)`);
+    } else {
+      log.appendLine('[applyToClaudeCode] applyToExtensions=false, skipping other extension settings');
     }
 
     // 2) Apply to VS Code integrated terminal env for CLI usage (claude/claude-code)
-    const termKeys = [
-      'terminal.integrated.env.osx',
-      'terminal.integrated.env.linux',
-      'terminal.integrated.env.windows',
-    ];
+    // This is now OPTIONAL and disabled by default (controlled by applyToTerminal setting)
+    const applyToTerminal = cfg.get<boolean>('applyToTerminal', false);
     const termApplied: string[] = [];
-    for (const key of termKeys) {
-      try {
-        const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {};
-        if (current['ANTHROPIC_BASE_URL'] === baseUrl) {
+    if (applyToTerminal) {
+      log.appendLine('[applyToClaudeCode] applyToTerminal=true, writing terminal env vars...');
+      const termKeys = [
+        'terminal.integrated.env.osx',
+        'terminal.integrated.env.linux',
+        'terminal.integrated.env.windows',
+      ];
+      for (const key of termKeys) {
+        try {
+          const current = vscode.workspace.getConfiguration().get<Record<string, string>>(key) || {};
+          if (current['ANTHROPIC_BASE_URL'] === baseUrl) {
+            termApplied.push(key);
+            continue;
+          }
+          const updated = { ...current, ANTHROPIC_BASE_URL: baseUrl };
+          await vscode.workspace.getConfiguration().update(key, updated, scope);
           termApplied.push(key);
-          continue;
-        }
-        const updated = { ...current, ANTHROPIC_BASE_URL: baseUrl };
-        await vscode.workspace.getConfiguration().update(key, updated, scope);
-        termApplied.push(key);
-      } catch {}
+        } catch {}
+      }
+      log.appendLine(`[applyToClaudeCode] Terminal env vars written to ${termApplied.length} platform(s)`);
+    } else {
+      log.appendLine('[applyToClaudeCode] applyToTerminal=false, skipping terminal env vars');
     }
 
     const parts: string[] = []
+    if (settingsDir) parts.push('.claude/settings.json')
     if (applied.length) parts.push(`extensions: ${applied.join(', ')}`)
     if (termApplied.length) parts.push(`terminal env (new terminals): ${termApplied.length} target(s)`)
 
+    log.appendLine(`[applyToClaudeCode] Summary: Applied to ${parts.join(', ')}`);
+
     if (parts.length) {
-      vscode.window.showInformationMessage(`Applied base URL ${baseUrl} to ${parts.join(' | ')}. Open a new terminal for env changes to take effect.`)
+      const message = `Applied proxy configuration to Claude Code (${parts.join(', ')}). ${termApplied.length > 0 ? 'Open a new terminal for env changes.' : 'Restart Claude Code or open a new chat to use the proxy.'}`;
+      vscode.window.showInformationMessage(message);
+      log.appendLine(`[applyToClaudeCode] ✅ ${message}`);
     } else {
-      vscode.window.showWarningMessage(`No Claude Code settings detected. Set base URL to ${baseUrl} in the Claude/Anthropic extension or export ANTHROPIC_BASE_URL in your shell.`)
+      const warning = `No Claude Code settings detected. Set base URL to ${baseUrl} in the Claude/Anthropic extension or export ANTHROPIC_BASE_URL in your shell.`;
+      vscode.window.showWarningMessage(warning);
+      log.appendLine(`[applyToClaudeCode] ⚠️ WARNING: ${warning}`);
     }
   })
 

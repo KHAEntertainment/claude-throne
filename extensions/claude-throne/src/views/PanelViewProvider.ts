@@ -7,6 +7,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter'
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
+  private appliedCache: { applied: boolean, port: number, scope: string, timestamp: number } | null = null
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -95,6 +96,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'stopProxy':
             await this.handleStopProxy()
             break
+          case 'applyToClaudeCode':
+            await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+            this.postStatus()
+            break
           case 'revertApply':
             await this.handleRevertApply()
             break
@@ -133,19 +138,64 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
   }
 
-  private postStatus() {
+  private async postStatus() {
     const s = this.proxy?.getStatus() || { running: false }
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = String(cfg.get('reasoningModel') || '')
     const completionModel = String(cfg.get('completionModel') || '')
     const valueModel = String(cfg.get('valueModel') || '')
+    
+    // Check if Claude Code is configured to use the proxy
+    let applied = false
+    if (s.running) {
+      const port = cfg.get<number>('proxy.port', 3000)
+      const scopeStr = cfg.get<string>('applyScope', 'workspace')
+      
+      // Use cache if config hasn't changed
+      if (this.appliedCache && 
+          this.appliedCache.port === port && 
+          this.appliedCache.scope === scopeStr &&
+          Date.now() - this.appliedCache.timestamp < 5000) {
+        applied = this.appliedCache.applied
+      } else {
+        // Re-check filesystem
+        let settingsDir: string | undefined
+        if (scopeStr === 'global') {
+          settingsDir = require('os').homedir()
+        } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+          // For status check, use first folder (multi-root selection happens in applyToClaudeCode)
+          settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath
+        }
+        
+        if (settingsDir) {
+          try {
+            const settingsPath = require('path').join(settingsDir, '.claude', 'settings.json')
+            const content = await require('fs').promises.readFile(settingsPath, 'utf-8')
+            const settings = JSON.parse(content)
+            const proxyUrl = `http://127.0.0.1:${port}`
+            applied = settings.env?.ANTHROPIC_BASE_URL === proxyUrl
+          } catch {
+            // File doesn't exist or can't be read - proxy not applied
+            applied = false
+          }
+        }
+        
+        // Update cache
+        this.appliedCache = { applied, port, scope: scopeStr, timestamp: Date.now() }
+      }
+    } else {
+      // Clear cache when proxy is stopped
+      this.appliedCache = null
+    }
+    
     this.view?.webview.postMessage({ 
       type: 'status', 
       payload: { 
         ...s, 
         reasoningModel, 
         completionModel, 
-        valueModel
+        valueModel,
+        applied
       } 
     })
   }
@@ -483,12 +533,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.postStatus()
       
       // Apply settings to Claude Code if autoApply is enabled
-      const autoApply = cfg.get<boolean>('autoApply', false)
+      const autoApply = cfg.get<boolean>('autoApply', true)
       if (autoApply) {
         this.log.appendLine(`[handleStartProxy] autoApply enabled, applying proxy settings to Claude Code...`)
         // Wait a moment for proxy to fully initialize and start accepting connections
         await new Promise(resolve => setTimeout(resolve, 1000))
         await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+        // Invalidate cache after apply
+        this.appliedCache = null
       } else {
         this.log.appendLine(`[handleStartProxy] autoApply disabled, skipping automatic configuration`)
         this.log.appendLine(`[handleStartProxy] Run "Claude Throne: Apply to Claude Code" command manually to configure`)
@@ -516,13 +568,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await this.proxy.stop()
       
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const autoApply = cfg.get<boolean>('autoApply', false)
+      const autoApply = cfg.get<boolean>('autoApply', true)
       if (autoApply) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
       
-      // Clear models cache and refresh webview config after stopping
+      // Clear caches and refresh webview config after stopping
       this.modelsCache.clear()
+      this.appliedCache = null
       this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
       this.postConfig()
       this.postStatus()
@@ -539,6 +592,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     try {
       this.log.appendLine('[handleRevertApply] Reverting Claude Code settings to Anthropic defaults')
       await vscode.commands.executeCommand('claudeThrone.revertApply')
+      // Invalidate cache after revert
+      this.appliedCache = null
       this.postStatus()
       vscode.window.showInformationMessage('Reverted Claude Code settings to Anthropic defaults')
     } catch (err) {
@@ -736,10 +791,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         <a href="https://github.com/KHAEntertainment/thronekeeper" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
         <div class="status-text">
           Status: <strong id="statusText" class="status-stopped">Idle</strong>
+          <span id="configStatus" class="config-status hidden"></span>
         </div>
       </div>
       <div class="footer-right">
         <button class="btn-primary" id="startProxyBtn">Start Proxy</button>
+        <button class="btn-secondary hidden" id="applyBtn">Apply to Claude Code</button>
         <button class="btn-primary btn-danger hidden" id="stopProxyBtn">Stop Proxy</button>
       </div>
     </footer>
