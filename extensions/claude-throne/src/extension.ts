@@ -8,6 +8,11 @@ import { updateClaudeSettings } from './services/ClaudeSettings';
 
 let proxy: ProxyManager | null = null;
 
+/**
+ * Retrieves the latest Anthropic model IDs for opus, sonnet, and haiku, falling back to hardcoded defaults when necessary.
+ *
+ * @returns An object with `opus`, `sonnet`, and `haiku` fields containing the chosen model IDs; if fetching or selection fails, returns predefined default model IDs.
+ */
 async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string; haiku: string } | null> {
   try {
     const response = await request('https://api.anthropic.com/v1/models', {
@@ -41,6 +46,16 @@ async function fetchAnthropicDefaults(): Promise<{ opus: string; sonnet: string;
   }
 }
 
+/**
+ * Initialize and register Thronekeeper extension services, views, and commands.
+ *
+ * Sets up the output channel (shown when debug is enabled), initializes secrets and proxy managers,
+ * caches Anthropic model defaults, registers webview view providers, and registers commands for:
+ * storing provider keys, starting/stopping the local proxy, applying/reverting Anthropic/Claude settings,
+ * and reporting proxy status. Subscribes created disposables to the provided extension context.
+ *
+ * @param context - The VS Code extension context used to register subscriptions and persist state
+ */
 export function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel('Thronekeeper')
   log.appendLine('🚀 Thronekeeper extension activating...')
@@ -532,6 +547,12 @@ export function activate(context: vscode.ExtensionContext) {
   log.appendLine('✅ Thronekeeper extension fully activated and ready')
 }
 
+/**
+ * Attempts to open a VS Code view by its view ID.
+ *
+ * @param viewId - The identifier of the view to open (e.g., the view's registered ID)
+ * @returns `true` if the view was opened successfully, `false` otherwise.
+ */
 async function tryOpenView(viewId: string): Promise<boolean> {
   try {
     await vscode.commands.executeCommand('workbench.view.openView', viewId, true)
@@ -543,6 +564,13 @@ async function tryOpenView(viewId: string): Promise<boolean> {
 
 type Provider = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
 
+/**
+ * Prompts the user to enter an API key for the specified provider and saves it securely in the extension's secret storage.
+ *
+ * The prompt uses a masked input and validates that a non-empty key is provided. On success, a confirmation message is shown.
+ *
+ * @param provider - The provider identifier whose API key will be stored (e.g., `openrouter`, `openai`, `together`, `deepseek`, `glm`, `custom`)
+ */
 async function storeKey(provider: Provider, secrets: SecretsService) {
   const titles: Record<Provider, string> = {
     openrouter: 'OpenRouter API Key',

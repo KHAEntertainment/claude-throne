@@ -17,6 +17,18 @@ import * as path from 'path'
  * Terminal env vars in .vscode/settings.json are OPTIONAL and disabled by default.
  * Most users should NOT have terminal env vars - they're only for CLI usage in integrated terminal.
  */
+
+/**
+ * Update or revert environment variables in the Claude settings files inside a workspace.
+ *
+ * When `revert` is false, merges `newEnv` into the `env` property of each settings file (creating `env` if missing).
+ * When `revert` is true, removes the keys present in `newEnv` from the `env` property and deletes `env` (and the file) if they become empty.
+ * The function ensures parent directories exist, writes updated JSON with two-space indentation, and logs errors without aborting processing of the other file.
+ *
+ * @param workspaceDir - Path to the workspace root containing the `.claude` directory
+ * @param newEnv - Key/value pairs to merge into or remove from the `env` object (keys are removed when `revert` is true)
+ * @param revert - If true, remove keys from settings instead of adding them; defaults to `false`
+ */
 export async function updateClaudeSettings(
   workspaceDir: string,
   newEnv: Record<string, any>,
