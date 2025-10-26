@@ -10,17 +10,19 @@
   let state = {
         provider: 'openrouter',
     twoModelMode: false,
-    primaryModel: '',
-    secondaryModel: '',
+    reasoningModel: '',
+    codingModel: '',
+    valueModel: '',
     models: [],
     modelsCache: {},
     // Provider-specific model storage
     modelsByProvider: {
-      openrouter: { primary: '', secondary: '' },
-      openai: { primary: '', secondary: '' },
-      together: { primary: '', secondary: '' },
-      grok: { primary: '', secondary: '' },
-      custom: { primary: '', secondary: '' }
+      openrouter: { reasoning: '', coding: '', value: '' },
+      openai: { reasoning: '', coding: '', value: '' },
+      together: { reasoning: '', coding: '', value: '' },
+      deepseek: { reasoning: '', coding: '', value: '' },
+      glm: { reasoning: '', coding: '', value: '' },
+      custom: { reasoning: '', coding: '', value: '' }
     },
     proxyRunning: false,
     port: 3000,
@@ -48,11 +50,17 @@
       helpUrl: 'https://api.together.xyz/settings/api-keys',
       apiPrefix: 'together/'
         },
-        grok: {
-      name: 'Grok (Groq)',
-            description: 'Ultra-fast inference for open models',
-      helpUrl: 'https://console.groq.com/keys',
-      apiPrefix: 'groq/'
+        deepseek: {
+      name: 'Deepseek',
+            description: 'Anthropic-compatible API with DeepSeek models',
+      helpUrl: 'https://platform.deepseek.com/api_keys',
+      apiPrefix: ''
+        },
+        glm: {
+      name: 'GLM (Z.AI)',
+            description: 'Anthropic-compatible API with GLM models',
+      helpUrl: 'https://open.bigmodel.cn/',
+      apiPrefix: ''
         },
         custom: {
             name: 'Custom Provider',
@@ -118,6 +126,8 @@
 
     const stopBtn = document.getElementById('stopProxyBtn');
     stopBtn?.addEventListener('click', stopProxy);
+
+
 
     const portInput = document.getElementById('portInput');
     portInput?.addEventListener('input', onPortChange);
@@ -198,8 +208,9 @@
     function onProviderChange(e) {
     // Save current models for the old provider
     if (state.provider && state.modelsByProvider[state.provider]) {
-      state.modelsByProvider[state.provider].primary = state.primaryModel;
-      state.modelsByProvider[state.provider].secondary = state.secondaryModel;
+      state.modelsByProvider[state.provider].reasoning = state.reasoningModel;
+      state.modelsByProvider[state.provider].coding = state.codingModel;
+      state.modelsByProvider[state.provider].value = state.valueModel;
     }
     
     // Clear the specific provider's cache before changing
@@ -211,11 +222,13 @@
     
     // Restore models for the new provider
     if (state.modelsByProvider[newProvider]) {
-      state.primaryModel = state.modelsByProvider[newProvider].primary || '';
-      state.secondaryModel = state.modelsByProvider[newProvider].secondary || '';
+      state.reasoningModel = state.modelsByProvider[newProvider].reasoning || '';
+      state.codingModel = state.modelsByProvider[newProvider].coding || '';
+      state.valueModel = state.modelsByProvider[newProvider].value || '';
     } else {
-      state.primaryModel = '';
-      state.secondaryModel = '';
+      state.reasoningModel = '';
+      state.codingModel = '';
+      state.valueModel = '';
     }
     
     updateProviderUI();
@@ -401,8 +414,9 @@
     vscode.postMessage({
       type: 'saveCombo',
       name: name.trim(),
-      primaryModel: state.primaryModel,
-      secondaryModel: state.secondaryModel
+      reasoningModel: state.reasoningModel,
+      codingModel: state.codingModel,
+      valueModel: state.valueModel
     });
   }
 
@@ -473,15 +487,8 @@
   }
 
   function updateTwoModelUI() {
-    const secondarySection = document.getElementById('secondaryModelSection');
     const modelList = document.getElementById('modelListContainer');
     const saveComboBtn = document.getElementById('saveComboBtn');
-    
-    if (state.twoModelMode) {
-      secondarySection?.classList.add('visible');
-    } else {
-      secondarySection?.classList.remove('visible');
-    }
 
     // Show/hide save combo button
     updateSaveComboButton();
@@ -494,8 +501,8 @@
     const saveComboBtn = document.getElementById('saveComboBtn');
     if (!saveComboBtn) return;
 
-    // Show button only if two-model mode is on and both models are selected
-    if (state.twoModelMode && state.primaryModel && state.secondaryModel) {
+    // Show button only if two-model mode is on and all three models are selected
+    if (state.twoModelMode && state.reasoningModel && state.codingModel && state.valueModel) {
       saveComboBtn.classList.remove('hidden');
         } else {
       saveComboBtn.classList.add('hidden');
@@ -504,29 +511,32 @@
 
   // Model Selection
   function setModelFromList(modelId, type) {
-    if (type === 'primary') {
-      state.primaryModel = modelId;
+    if (type === 'reasoning') {
+      state.reasoningModel = modelId;
       // Save to provider-specific storage
       if (state.modelsByProvider[state.provider]) {
-        state.modelsByProvider[state.provider].primary = modelId;
+        state.modelsByProvider[state.provider].reasoning = modelId;
       }
-      vscode.postMessage({
-        type: 'saveModels',
-        reasoning: modelId,
-        completion: state.secondaryModel || modelId
-      });
-    } else if (type === 'secondary') {
-      state.secondaryModel = modelId;
+    } else if (type === 'coding') {
+      state.codingModel = modelId;
       // Save to provider-specific storage
       if (state.modelsByProvider[state.provider]) {
-        state.modelsByProvider[state.provider].secondary = modelId;
+        state.modelsByProvider[state.provider].coding = modelId;
       }
-      vscode.postMessage({
-        type: 'saveModels',
-        reasoning: state.primaryModel,
-        completion: modelId
-      });
+    } else if (type === 'value') {
+      state.valueModel = modelId;
+      // Save to provider-specific storage
+      if (state.modelsByProvider[state.provider]) {
+        state.modelsByProvider[state.provider].value = modelId;
+      }
     }
+    
+    vscode.postMessage({
+      type: 'saveModels',
+      reasoning: state.reasoningModel,
+      coding: state.codingModel,
+      value: state.valueModel
+    });
     
     updateSaveComboButton();
     updateSelectedModelsDisplay();
@@ -535,26 +545,38 @@
   }
 
   function updateSelectedModelsDisplay() {
-    const primaryDisplay = document.getElementById('primaryModelDisplay');
-    const secondaryDisplay = document.getElementById('secondaryModelDisplay');
+    const reasoningDisplay = document.getElementById('reasoningModelDisplay');
+    const codingDisplay = document.getElementById('codingModelDisplay');
+    const valueDisplay = document.getElementById('valueModelDisplay');
     
-    if (primaryDisplay) {
-      if (state.primaryModel) {
-        const modelName = state.primaryModel.split('/').pop() || state.primaryModel;
-        primaryDisplay.innerHTML = `<strong>Primary:</strong> ${escapeHtml(modelName)}`;
+    if (reasoningDisplay) {
+      if (state.reasoningModel) {
+        const modelName = state.reasoningModel.split('/').pop() || state.reasoningModel;
+        reasoningDisplay.innerHTML = `<strong>Reasoning:</strong> ${escapeHtml(modelName)}`;
         } else {
-        primaryDisplay.innerHTML = '<em>No primary model selected</em>';
+        reasoningDisplay.innerHTML = '<em>No reasoning model selected</em>';
       }
     }
     
-    if (secondaryDisplay) {
-      if (state.twoModelMode && state.secondaryModel) {
-        const modelName = state.secondaryModel.split('/').pop() || state.secondaryModel;
-        secondaryDisplay.innerHTML = `<strong>Secondary:</strong> ${escapeHtml(modelName)}`;
-        secondaryDisplay.style.display = 'block';
+    if (codingDisplay) {
+      if (state.twoModelMode && state.codingModel) {
+        const modelName = state.codingModel.split('/').pop() || state.codingModel;
+        codingDisplay.innerHTML = `<strong>Coding:</strong> ${escapeHtml(modelName)}`;
+        codingDisplay.style.display = 'block';
             } else {
-        secondaryDisplay.innerHTML = '';
-        secondaryDisplay.style.display = 'none';
+        codingDisplay.innerHTML = '';
+        codingDisplay.style.display = 'none';
+      }
+    }
+    
+    if (valueDisplay) {
+      if (state.twoModelMode && state.valueModel) {
+        const modelName = state.valueModel.split('/').pop() || state.valueModel;
+        valueDisplay.innerHTML = `<strong>Value:</strong> ${escapeHtml(modelName)}`;
+        valueDisplay.style.display = 'block';
+            } else {
+        valueDisplay.innerHTML = '';
+        valueDisplay.style.display = 'none';
       }
     }
   }
@@ -673,13 +695,15 @@
 
     // Render model items
     container.innerHTML = filtered.map(model => {
-      const isPrimary = model.id === state.primaryModel;
-      const isSecondary = model.id === state.secondaryModel;
+      const isReasoning = model.id === state.reasoningModel;
+      const isCoding = model.id === state.codingModel;
+      const isValue = model.id === state.valueModel;
       const isFree = model.pricing?.prompt === '0' && model.pricing?.completion === '0';
       
       let itemClass = 'model-item';
-      if (isPrimary) itemClass += ' selected-primary';
-      else if (isSecondary) itemClass += ' selected-secondary';
+      if (isReasoning) itemClass += ' selected-reasoning';
+      if (isCoding) itemClass += ' selected-coding';
+      if (isValue) itemClass += ' selected-value';
 
       return `
         <div class="${itemClass}">
@@ -691,16 +715,21 @@
             </div>
           </div>
           <div class="model-actions">
-            <button class="model-btn ${isPrimary ? 'primary-selected' : ''}" 
+            <button class="model-btn ${isReasoning ? 'reasoning-selected' : ''}" 
                     data-model="${escapeHtml(model.id)}" 
-                    data-type="primary">
-              ${isPrimary ? '✓ Primary' : 'Primary'}
+                    data-type="reasoning">
+              ${isReasoning ? '✓ Reasoning' : 'Reasoning'}
             </button>
             ${state.twoModelMode ? `
-              <button class="model-btn ${isSecondary ? 'secondary-selected' : ''}" 
+              <button class="model-btn ${isCoding ? 'coding-selected' : ''}" 
                       data-model="${escapeHtml(model.id)}" 
-                      data-type="secondary">
-                ${isSecondary ? '✓ Secondary' : 'Secondary'}
+                      data-type="coding">
+                ${isCoding ? '✓ Coding' : 'Coding'}
+              </button>
+              <button class="model-btn ${isValue ? 'value-selected' : ''}" 
+                      data-model="${escapeHtml(model.id)}" 
+                      data-type="value">
+                ${isValue ? '✓ Value' : 'Value'}
               </button>
             ` : ''}
           </div>
@@ -746,18 +775,16 @@
     });
   }
 
-  function applyCombo(reasoning, completion) {
+  function applyCombo(reasoning, coding, value) {
     // Enable two-model mode
     state.twoModelMode = true;
     document.getElementById('twoModelToggle').checked = true;
     updateTwoModelUI();
 
     // Set models
-    state.primaryModel = reasoning;
-    state.secondaryModel = completion;
-    
-    document.getElementById('primaryModel').value = reasoning;
-    document.getElementById('secondaryModel').value = completion;
+    state.reasoningModel = reasoning;
+    state.codingModel = coding;
+    state.valueModel = value;
 
     // Save
     saveState();
@@ -769,7 +796,8 @@
     vscode.postMessage({
       type: 'saveModels',
       reasoning: reasoning,
-      completion: completion
+      coding: coding,
+      value: value
     });
   }
 
@@ -783,8 +811,9 @@
     // Log diagnostic info before starting proxy
     console.log('[startProxy] Starting proxy with config:', {
       twoModelMode: state.twoModelMode,
-      primaryModel: state.primaryModel,
-      secondaryModel: state.secondaryModel,
+      reasoningModel: state.reasoningModel,
+      codingModel: state.codingModel,
+      valueModel: state.valueModel,
       provider: state.provider,
       port: state.port
     });
@@ -794,6 +823,8 @@
   function stopProxy() {
     vscode.postMessage({ type: 'stopProxy' });
   }
+
+
 
   function updateStatus(status) {
     state.proxyRunning = status.running || false;
@@ -817,6 +848,7 @@
       if (status.running) {
         startBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');
+        stopBtn.textContent = 'Stop Proxy';
       } else {
         startBtn.classList.remove('hidden');
         stopBtn.classList.add('hidden');
@@ -852,12 +884,14 @@
     }
 
     // Always update state to match config, even if empty (prevents stale cached values)
-    state.primaryModel = config.reasoningModel || '';
-    state.secondaryModel = config.completionModel || '';
+    state.reasoningModel = config.reasoningModel || '';
+    state.codingModel = config.completionModel || '';
+    state.valueModel = config.valueModel || '';
     
     console.log('[handleConfigLoaded] Updated model state:', {
-      primaryModel: state.primaryModel,
-      secondaryModel: state.secondaryModel,
+      reasoningModel: state.reasoningModel,
+      codingModel: state.codingModel,
+      valueModel: state.valueModel,
       fromConfig: true
     });
 
@@ -898,51 +932,84 @@
     const container = document.getElementById('modelListContainer');
     if (!container) return;
     
-    // Show error with manual entry option for custom provider
-    if (payload.canManuallyEnter) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
-          <div style="margin-top: 16px;">
-            <p>Enter model IDs manually (comma-separated):</p>
-            <input type="text" id="manualModelInput" placeholder="e.g., gpt-4, claude-3-opus" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border);" />
-            <button id="addManualModelBtn" style="margin-top: 8px; padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Models</button>
+    // Get provider-specific placeholder examples
+    const providerExamples = {
+      'openrouter': 'anthropic/claude-3-opus, openai/gpt-4-turbo, meta-llama/llama-3.1-70b-instruct',
+      'openai': 'gpt-4, gpt-4-turbo, gpt-3.5-turbo',
+      'together': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo, mistralai/Mixtral-8x7B-Instruct-v0.1',
+      'deepseek': 'deepseek-chat, deepseek-coder',
+      'glm': 'glm-4-plus, glm-4',
+      'custom': 'gpt-4, claude-3-opus, llama-3'
+    };
+    
+    const example = providerExamples[state.provider] || 'gpt-4, claude-3-opus';
+    
+    // Show error with manual entry option for all providers
+    container.innerHTML = `
+      <div class="empty-state">
+        <p style="color: var(--vscode-errorForeground); margin-bottom: 12px;">${escapeHtml(payload.error)}</p>
+        <div style="margin-top: 16px; border-top: 1px solid var(--vscode-panel-border); padding-top: 16px;">
+          <h4 style="margin: 0 0 8px 0; color: var(--vscode-foreground);">Manual Model Entry</h4>
+          <p style="margin: 0 0 8px 0; color: var(--vscode-descriptionForeground);">Enter model IDs for ${providers[state.provider]?.name || state.provider} (comma-separated):</p>
+          <input type="text" id="manualModelInput" placeholder="e.g., ${example}" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); font-family: monospace; font-size: 12px;" />
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <button id="addManualModelBtn" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Models</button>
+            <button id="retryModelsBtn" style="padding: 6px 12px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; cursor: pointer;">Retry Loading</button>
+          </div>
+          <div style="margin-top: 8px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+            <p style="margin: 4px 0;">💡 Common models for ${providers[state.provider]?.name || state.provider}:</p>
+            <code style="background: var(--vscode-textBlockQuote-background); padding: 2px 4px; border-radius: 2px; display: block; margin: 4px 0; white-space: pre-wrap;">${example}</code>
           </div>
         </div>
-      `;
-      
-      // Add event listeners for manual entry
-      const addBtn = container.querySelector('#addManualModelBtn');
-      const input = container.querySelector('#manualModelInput');
-      
-      if (addBtn && input) {
-        const addModels = () => {
-          const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
-          if (modelNames.length > 0) {
-            const newModels = modelNames.map(name => ({
-              id: name,
-              name: name,
-              provider: state.provider
-            }));
-            
-            state.models = [...state.models, ...newModels];
-            state.modelsCache[state.provider] = state.models;
-            renderModelList();
-            input.value = '';
+      </div>
+    `;
+    
+    // Add event listeners for manual entry
+    const addBtn = container.querySelector('#addManualModelBtn');
+    const retryBtn = container.querySelector('#retryModelsBtn');
+    const input = container.querySelector('#manualModelInput');
+    
+    if (addBtn && input) {
+      const addModels = () => {
+        const modelNames = input.value.split(',').map(m => m.trim()).filter(m => m);
+        if (modelNames.length > 0) {
+          // Validate model IDs (basic validation)
+          const validModels = modelNames.filter(name => name.length > 0 && !name.includes(' '));
+          const invalidModels = modelNames.filter(name => !name.length > 0 || name.includes(' '));
+          
+          if (invalidModels.length > 0) {
+            showNotification(`Invalid model names: ${invalidModels.join(', ')}`, 'error');
+            return;
           }
-        };
-        
-        addBtn.addEventListener('click', addModels);
-        input.addEventListener('keypress', (e) => {
-          if (e.key === 'Enter') addModels();
-        });
-      }
-    } else {
-      container.innerHTML = `
-        <div class="empty-state">
-          <p style="color: var(--vscode-errorForeground);">${escapeHtml(payload.error)}</p>
-        </div>
-      `;
+          
+          const newModels = validModels.map(name => ({
+            id: name,
+            name: name,
+            provider: state.provider
+          }));
+          
+          state.models = [...state.models, ...newModels];
+          state.modelsCache[state.provider] = state.models;
+          renderModelList();
+          input.value = '';
+          showNotification(`Added ${validModels.length} models successfully`, 'success');
+        }
+      };
+      
+      addBtn.addEventListener('click', addModels);
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') addModels();
+      });
+      
+      // Focus input for better UX
+      setTimeout(() => input.focus(), 100);
+    }
+    
+    // Add retry functionality
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => {
+        loadModels();
+      });
     }
   }
 

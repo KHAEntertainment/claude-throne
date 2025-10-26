@@ -95,11 +95,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'stopProxy':
             await this.handleStopProxy()
             break
+          case 'revertApply':
+            await this.handleRevertApply()
+            break
           case 'openSettings':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
           case 'saveModels':
-            await this.handleSaveModels(msg.reasoning, msg.completion)
+            await this.handleSaveModels(msg.reasoning, msg.coding, msg.value)
             break
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
@@ -117,7 +120,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await this.handleUpdatePort(msg.port)
             break
           case 'saveCombo':
-            await this.handleSaveCombo(msg.name, msg.primaryModel, msg.secondaryModel)
+            await this.handleSaveCombo(msg.name, msg.reasoningModel, msg.codingModel, msg.valueModel)
             break
           default:
             this.log.appendLine(`Unknown message type received: ${msg.type}`)
@@ -130,16 +133,26 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine('⏳ Waiting for webview to signal it is ready...')
   }
 
-  private postStatus() {
+  private async postStatus() {
     const s = this.proxy?.getStatus() || { running: false }
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = String(cfg.get('reasoningModel') || '')
     const completionModel = String(cfg.get('completionModel') || '')
-    this.view?.webview.postMessage({ type: 'status', payload: { ...s, reasoningModel, completionModel } })
+    const valueModel = String(cfg.get('valueModel') || '')
+    
+    this.view?.webview.postMessage({ 
+      type: 'status', 
+      payload: { 
+        ...s, 
+        reasoningModel, 
+        completionModel, 
+        valueModel
+      } 
+    })
   }
 
   private async postKeys() {
-    const providers = ['openrouter','openai','together','grok','custom']
+    const providers = ['openrouter','openai','together','deepseek','glm','custom']
     const map: Record<string, boolean> = {}
     for (const p of providers) {
       try {
@@ -159,15 +172,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const provider = config.get('provider');
     const reasoningModel = config.get('reasoningModel');
     const completionModel = config.get('completionModel');
+    const valueModel = config.get('valueModel');
     const twoModelMode = config.get('twoModelMode', false);
     const port = config.get('proxy.port');
     const customBaseUrl = config.get('customBaseUrl', '');
     
-    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}`);
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`);
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, reasoningModel, completionModel, twoModelMode, port, customBaseUrl }
+      payload: { provider, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl }
     });
   }
 
@@ -223,7 +237,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const apiKey = await this.secrets.getProviderKey(provider) || ''
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
-      // Get base URL for custom providers
+      // Get base URL for model listing
+      // Note: Deepseek and GLM use OpenAI-compatible endpoints for model listing
+      // but Anthropic-native endpoints for actual API calls
       let baseUrl = 'https://openrouter.ai/api'
       
       if (provider === 'custom') {
@@ -232,8 +248,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         baseUrl = 'https://api.openai.com/v1'
       } else if (provider === 'together') {
         baseUrl = 'https://api.together.xyz/v1'
-      } else if (provider === 'groq' || provider === 'grok') {
-        baseUrl = 'https://api.groq.com/openai/v1'
+      } else if (provider === 'deepseek') {
+        baseUrl = 'https://api.deepseek.com/v1'
+      } else if (provider === 'glm') {
+        baseUrl = 'https://api.z.ai/api/paas/v4'
       }
       
       this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
@@ -280,7 +298,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           provider,
           error: errorMessage,
           errorType,
-          canManuallyEnter: provider === 'custom'
+          canManuallyEnter: true // Enable manual entry for all providers on errors
         }
       })
     }
@@ -294,9 +312,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const completionModel = cfg.get<string>('completionModel')
       
       // Load featured combinations from our data
-      const fs = await import('fs')
+      const { promises: fs } = await import('fs')
       const pairingsPath = vscode.Uri.joinPath(this.ctx.extensionUri, 'webview', 'data', 'model-pairings.json')
-      const pairingsContent = fs.readFileSync(pairingsPath.fsPath, 'utf8')
+      const pairingsContent = await fs.readFile(pairingsPath.fsPath, 'utf8')
       const pairingsData = JSON.parse(pairingsContent)
       
       this.view?.webview.postMessage({ 
@@ -354,15 +372,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.postConfig()
   }
 
-  private async handleSaveCombo(name: string, primaryModel: string, secondaryModel: string) {
+  private async handleSaveCombo(name: string, reasoningModel: string, codingModel: string, valueModel: string) {
     try {
       const config = vscode.workspace.getConfiguration('claudeThrone')
       const savedCombos = config.get<any[]>('savedCombos', [])
       
       const newCombo = {
         name,
-        reasoning: primaryModel,
-        completion: secondaryModel
+        reasoning: reasoningModel,
+        completion: codingModel,
+        value: valueModel
       }
       
       const updatedCombos = [...savedCombos, newCombo]
@@ -421,18 +440,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         ? cfg.get<string>('customBaseUrl', '')
         : undefined
       
-      // Check if custom URL is an Anthropic endpoint - if so, bypass proxy
-      if (this.currentProvider === 'custom' && customBaseUrl && this.isAnthropicEndpoint(customBaseUrl)) {
-        this.log.appendLine(`[handleStartProxy] Detected Anthropic endpoint: ${customBaseUrl}`)
-        this.log.appendLine(`[handleStartProxy] Bypassing proxy and applying URL directly to Claude Code`)
-        
-        // Apply the Anthropic URL directly without starting proxy
-        await this.applyAnthropicUrlDirectly(customBaseUrl)
-        
-        vscode.window.showInformationMessage(`Applied Anthropic endpoint directly: ${customBaseUrl}`)
-        this.postStatus()
-        return
-      }
+      // All providers (including Deepseek, GLM, and custom Anthropic endpoints) now route through the proxy
+      // The proxy handles authentication and forwards requests to the appropriate provider URL
       
       if (!this.proxy) {
         throw new Error('ProxyManager not available')
@@ -474,12 +483,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage(`Proxy started on port ${port}`)
       this.postStatus()
       
-      // ALWAYS apply settings to Claude Code when proxy starts
-      // (The autoApply flag only controls whether we revert on stop)
-      this.log.appendLine(`[handleStartProxy] Applying proxy settings to Claude Code...`)
-      // Wait a moment for proxy to fully initialize and start accepting connections
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      // Apply settings to Claude Code if autoApply is enabled
+      const autoApply = cfg.get<boolean>('autoApply', true)
+      if (autoApply) {
+        this.log.appendLine(`[handleStartProxy] autoApply enabled, applying proxy settings to Claude Code...`)
+        // Wait a moment for proxy to fully initialize and start accepting connections
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await vscode.commands.executeCommand('claudeThrone.applyToClaudeCode')
+      } else {
+        this.log.appendLine(`[handleStartProxy] autoApply disabled, skipping automatic configuration`)
+        this.log.appendLine(`[handleStartProxy] Run "Claude Throne: Apply to Claude Code" command manually to configure`)
+      }
     } catch (err) {
       this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
@@ -491,40 +505,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private isAnthropicEndpoint(url: string): boolean {
-    if (!url) return false
-    const patterns = [
-      /anthropic\.com/i,
-      /\/anthropic$/i,
-      /\/api\/anthropic/i,
-      /claude\.ai/i,
-      /bedrock.*anthropic/i
-    ]
-    return patterns.some(pattern => pattern.test(url))
-  }
 
-  private async applyAnthropicUrlDirectly(url: string) {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const scopeStr = cfg.get<string>('applyScope', 'workspace')
-    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
-    
-    // Apply to known Claude/Anthropic extension settings
-    const candidates: { section: string; key: string }[] = [
-      { section: 'anthropic', key: 'baseUrl' },
-      { section: 'claude', key: 'baseUrl' },
-      { section: 'claudeCode', key: 'baseUrl' },
-      { section: 'claude-code', key: 'baseUrl' },
-      { section: 'claude', key: 'apiBaseUrl' },
-      { section: 'claudeCode', key: 'apiBaseUrl' },
-    ]
-    
-    for (const c of candidates) {
-      try {
-        const s = vscode.workspace.getConfiguration(c.section)
-        await s.update(c.key, url, scope)
-      } catch {}
-    }
-  }
+
+
 
   private async handleStopProxy() {
     try {
@@ -534,12 +517,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await this.proxy.stop()
       
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const autoApply = cfg.get<boolean>('autoApply', false)
+      const autoApply = cfg.get<boolean>('autoApply', true)
       if (autoApply) {
         await vscode.commands.executeCommand('claudeThrone.revertApply')
       }
       
-      // Clear models cache and refresh webview config after stopping
+      // Clear caches and refresh webview config after stopping
       this.modelsCache.clear()
       this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
       this.postConfig()
@@ -553,16 +536,29 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleSaveModels(reasoning: string, completion: string) {
+  private async handleRevertApply() {
+    try {
+      this.log.appendLine('[handleRevertApply] Reverting Claude Code settings to Anthropic defaults')
+      await vscode.commands.executeCommand('claudeThrone.revertApply')
+      this.postStatus()
+      vscode.window.showInformationMessage('Reverted Claude Code settings to Anthropic defaults')
+    } catch (err) {
+      this.log.appendLine(`[handleRevertApply] Error: ${err}`)
+      vscode.window.showErrorMessage(`Failed to revert settings: ${err}`)
+    }
+  }
+
+  private async handleSaveModels(reasoning: string, coding: string, value: string) {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
-      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, completion=${completion}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, coding=${coding}, value=${value}, twoModelMode=${twoModelMode}`)
       
       // Explicitly save to Workspace configuration to ensure persistence
       await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('completionModel', completion, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('completionModel', coding, vscode.ConfigurationTarget.Workspace)
+      await cfg.update('valueModel', value, vscode.ConfigurationTarget.Workspace)
       
       this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config`)
       
@@ -579,14 +575,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     // Implementation depends on existing model data
   }
 
-  private async handleSetModelFromList(modelId: string, modelType: 'primary' | 'secondary') {
+  private async handleSetModelFromList(modelId: string, modelType: 'reasoning' | 'coding' | 'value') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    if (modelType === 'primary') {
+    if (modelType === 'reasoning') {
       await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved primary model: ${modelId}`)
-    } else if (modelType === 'secondary') {
+      this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId}`)
+    } else if (modelType === 'coding') {
       await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved secondary model: ${modelId}`)
+      this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId}`)
+    } else if (modelType === 'value') {
+      await cfg.update('valueModel', modelId, vscode.ConfigurationTarget.Workspace)
+      this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId}`)
     }
     this.postConfig()
   }
@@ -600,7 +599,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
     this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
     
-    await cfg.update('twoModelMode', enabled)
+    await cfg.update('twoModelMode', enabled, vscode.ConfigurationTarget.Workspace)
     
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
@@ -642,7 +641,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               <option value="openrouter">OpenRouter</option>
               <option value="openai">OpenAI</option>
               <option value="together">Together AI</option>
-              <option value="grok">Grok</option>
+              <option value="deepseek">Deepseek</option>
+              <option value="glm">GLM (Z.AI)</option>
               <option value="custom">Custom Provider</option>
             </select>
             <div id="providerHelp" class="provider-help"></div>
@@ -672,12 +672,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             
             <div class="two-model-toggle">
               <input type="checkbox" id="twoModelToggle">
-              <label for="twoModelToggle">Use two models (reasoning + execution)</label>
+              <label for="twoModelToggle">Use separate models for different task types (Reasoning/Coding/Value)</label>
             </div>
             
             <div id="selectedModelsDisplay" class="selected-models-display" style="margin-top: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);">
-              <div id="primaryModelDisplay" style="margin-bottom: 4px;"></div>
-              <div id="secondaryModelDisplay"></div>
+              <div id="reasoningModelDisplay" style="margin-bottom: 4px;"></div>
+              <div id="codingModelDisplay" style="margin-bottom: 4px;"></div>
+              <div id="valueModelDisplay"></div>
             </div>
           </div>
         </div>

@@ -41,6 +41,12 @@ fi
 VERSION_AFTER="$(node -e "console.log(require('$EXT_DIR/package.json').version)")"
 echo "Extension version: $VERSION_BEFORE -> $VERSION_AFTER"
 
+ROOT_VERSION_BEFORE="$(node -e "console.log(require('$ROOT_DIR/package.json').version)")"
+if [[ "$ROOT_VERSION_BEFORE" != "$VERSION_AFTER" ]]; then
+  echo "Syncing root package version: $ROOT_VERSION_BEFORE -> $VERSION_AFTER"
+  (cd "$ROOT_DIR" && npm version "$VERSION_AFTER" --no-git-tag-version --allow-same-version >/dev/null)
+fi
+
 # Build new VSIX
 echo "Installing dependencies..."
 npm install --prefix "$EXT_DIR" >/dev/null

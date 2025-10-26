@@ -3514,8 +3514,8 @@ var require_req = __commonJS({
       if (req.originalUrl) {
         _req.url = req.originalUrl;
       } else {
-        const path = req.path;
-        _req.url = typeof path === "string" ? path : req.url ? req.url.path || req.url : void 0;
+        const path2 = req.path;
+        _req.url = typeof path2 === "string" ? path2 : req.url ? req.url.path || req.url : void 0;
       }
       if (req.query) {
         _req.query = req.query;
@@ -3680,14 +3680,14 @@ var require_redact = __commonJS({
       }
       return obj;
     }
-    function parsePath(path) {
+    function parsePath(path2) {
       const parts = [];
       let current = "";
       let inBrackets = false;
       let inQuotes = false;
       let quoteChar = "";
-      for (let i = 0; i < path.length; i++) {
-        const char = path[i];
+      for (let i = 0; i < path2.length; i++) {
+        const char = path2[i];
         if (!inBrackets && char === ".") {
           if (current) {
             parts.push(current);
@@ -3818,10 +3818,10 @@ var require_redact = __commonJS({
       return current;
     }
     function redactPaths(obj, paths, censor, remove = false) {
-      for (const path of paths) {
-        const parts = parsePath(path);
+      for (const path2 of paths) {
+        const parts = parsePath(path2);
         if (parts.includes("*")) {
-          redactWildcardPath(obj, parts, censor, path, remove);
+          redactWildcardPath(obj, parts, censor, path2, remove);
         } else {
           if (remove) {
             removeKey(obj, parts);
@@ -3906,8 +3906,8 @@ var require_redact = __commonJS({
           }
         } else {
           if (afterWildcard.includes("*")) {
-            const wrappedCensor = typeof censor === "function" ? (value, path) => {
-              const fullPath = [...pathArray.slice(0, pathLength), ...path];
+            const wrappedCensor = typeof censor === "function" ? (value, path2) => {
+              const fullPath = [...pathArray.slice(0, pathLength), ...path2];
               return censor(value, fullPath);
             } : censor;
             redactWildcardPath(current, afterWildcard, wrappedCensor, originalPath, remove);
@@ -3942,8 +3942,8 @@ var require_redact = __commonJS({
         return null;
       }
       const pathStructure = /* @__PURE__ */ new Map();
-      for (const path of pathsToClone) {
-        const parts = parsePath(path);
+      for (const path2 of pathsToClone) {
+        const parts = parsePath(path2);
         let current = pathStructure;
         for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
@@ -3995,24 +3995,24 @@ var require_redact = __commonJS({
       }
       return cloneSelectively(obj, pathStructure);
     }
-    function validatePath(path) {
-      if (typeof path !== "string") {
+    function validatePath(path2) {
+      if (typeof path2 !== "string") {
         throw new Error("Paths must be (non-empty) strings");
       }
-      if (path === "") {
+      if (path2 === "") {
         throw new Error("Invalid redaction path ()");
       }
-      if (path.includes("..")) {
-        throw new Error(`Invalid redaction path (${path})`);
+      if (path2.includes("..")) {
+        throw new Error(`Invalid redaction path (${path2})`);
       }
-      if (path.includes(",")) {
-        throw new Error(`Invalid redaction path (${path})`);
+      if (path2.includes(",")) {
+        throw new Error(`Invalid redaction path (${path2})`);
       }
       let bracketCount = 0;
       let inQuotes = false;
       let quoteChar = "";
-      for (let i = 0; i < path.length; i++) {
-        const char = path[i];
+      for (let i = 0; i < path2.length; i++) {
+        const char = path2[i];
         if ((char === '"' || char === "'") && bracketCount > 0) {
           if (!inQuotes) {
             inQuotes = true;
@@ -4026,20 +4026,20 @@ var require_redact = __commonJS({
         } else if (char === "]" && !inQuotes) {
           bracketCount--;
           if (bracketCount < 0) {
-            throw new Error(`Invalid redaction path (${path})`);
+            throw new Error(`Invalid redaction path (${path2})`);
           }
         }
       }
       if (bracketCount !== 0) {
-        throw new Error(`Invalid redaction path (${path})`);
+        throw new Error(`Invalid redaction path (${path2})`);
       }
     }
     function validatePaths(paths) {
       if (!Array.isArray(paths)) {
         throw new TypeError("paths must be an array");
       }
-      for (const path of paths) {
-        validatePath(path);
+      for (const path2 of paths) {
+        validatePath(path2);
       }
     }
     function slowRedact(options = {}) {
@@ -4207,8 +4207,8 @@ var require_redaction = __commonJS({
         if (shape[k] === null) {
           o[k] = (value) => topCensor(value, [k]);
         } else {
-          const wrappedCensor = typeof censor === "function" ? (value, path) => {
-            return censor(value, [k, ...path]);
+          const wrappedCensor = typeof censor === "function" ? (value, path2) => {
+            return censor(value, [k, ...path2]);
           } : censor;
           o[k] = Redact({
             paths: shape[k],
@@ -4426,7 +4426,7 @@ var require_sonic_boom = __commonJS({
     var fs = require("fs");
     var EventEmitter = require("events");
     var inherits = require("util").inherits;
-    var path = require("path");
+    var path2 = require("path");
     var sleep = require_atomic_sleep();
     var assert = require("assert");
     var BUSY_WRITE_TIMEOUT = 100;
@@ -4480,7 +4480,7 @@ var require_sonic_boom = __commonJS({
       const mode = sonic.mode;
       if (sonic.sync) {
         try {
-          if (sonic.mkdir) fs.mkdirSync(path.dirname(file), { recursive: true });
+          if (sonic.mkdir) fs.mkdirSync(path2.dirname(file), { recursive: true });
           const fd = fs.openSync(file, flags, mode);
           fileOpened(null, fd);
         } catch (err) {
@@ -4488,7 +4488,7 @@ var require_sonic_boom = __commonJS({
           throw err;
         }
       } else if (sonic.mkdir) {
-        fs.mkdir(path.dirname(file), { recursive: true }, (err) => {
+        fs.mkdir(path2.dirname(file), { recursive: true }, (err) => {
           if (err) return fileOpened(err);
           fs.open(file, flags, mode, fileOpened);
         });
@@ -15288,8 +15288,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path) {
-      let input = path;
+    function removeDotSegments(path2) {
+      let input = path2;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -15488,8 +15488,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path && path !== "/" ? path : void 0;
+        const [path2, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path2 && path2 !== "/" ? path2 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -27541,40 +27541,40 @@ var require_node = __commonJS({
         super();
         this.staticChildren = {};
       }
-      findStaticMatchingChild(path, pathIndex) {
-        const staticChild = this.staticChildren[path.charAt(pathIndex)];
-        if (staticChild === void 0 || !staticChild.matchPrefix(path, pathIndex)) {
+      findStaticMatchingChild(path2, pathIndex) {
+        const staticChild = this.staticChildren[path2.charAt(pathIndex)];
+        if (staticChild === void 0 || !staticChild.matchPrefix(path2, pathIndex)) {
           return null;
         }
         return staticChild;
       }
-      getStaticChild(path, pathIndex = 0) {
-        if (path.length === pathIndex) {
+      getStaticChild(path2, pathIndex = 0) {
+        if (path2.length === pathIndex) {
           return this;
         }
-        const staticChild = this.findStaticMatchingChild(path, pathIndex);
+        const staticChild = this.findStaticMatchingChild(path2, pathIndex);
         if (staticChild) {
-          return staticChild.getStaticChild(path, pathIndex + staticChild.prefix.length);
+          return staticChild.getStaticChild(path2, pathIndex + staticChild.prefix.length);
         }
         return null;
       }
-      createStaticChild(path) {
-        if (path.length === 0) {
+      createStaticChild(path2) {
+        if (path2.length === 0) {
           return this;
         }
-        let staticChild = this.staticChildren[path.charAt(0)];
+        let staticChild = this.staticChildren[path2.charAt(0)];
         if (staticChild) {
           let i = 1;
           for (; i < staticChild.prefix.length; i++) {
-            if (path.charCodeAt(i) !== staticChild.prefix.charCodeAt(i)) {
+            if (path2.charCodeAt(i) !== staticChild.prefix.charCodeAt(i)) {
               staticChild = staticChild.split(this, i);
               break;
             }
           }
-          return staticChild.createStaticChild(path.slice(i));
+          return staticChild.createStaticChild(path2.slice(i));
         }
-        const label = path.charAt(0);
-        this.staticChildren[label] = new StaticNode(path);
+        const label = path2.charAt(0);
+        this.staticChildren[label] = new StaticNode(path2);
         return this.staticChildren[label];
       }
     };
@@ -27634,8 +27634,8 @@ var require_node = __commonJS({
         parentNode.staticChildren[parentPrefix.charAt(0)] = staticNode;
         return staticNode;
       }
-      getNextNode(path, pathIndex, nodeStack, paramsCount) {
-        let node = this.findStaticMatchingChild(path, pathIndex);
+      getNextNode(path2, pathIndex, nodeStack, paramsCount) {
+        let node = this.findStaticMatchingChild(path2, pathIndex);
         let parametricBrotherNodeIndex = 0;
         if (node === null) {
           if (this.parametricChildren.length === 0) {
@@ -27682,8 +27682,8 @@ var require_node = __commonJS({
         this.kind = NODE_TYPES.PARAMETRIC;
         this.nodePaths = /* @__PURE__ */ new Set([nodePath]);
       }
-      getNextNode(path, pathIndex) {
-        return this.findStaticMatchingChild(path, pathIndex);
+      getNextNode(path2, pathIndex) {
+        return this.findStaticMatchingChild(path2, pathIndex);
       }
     };
     var WildcardNode = class extends Node {
@@ -28019,33 +28019,33 @@ var require_url_sanitizer = __commonJS({
       }
       return null;
     }
-    function safeDecodeURI(path, useSemicolonDelimiter) {
+    function safeDecodeURI(path2, useSemicolonDelimiter) {
       let shouldDecode = false;
       let shouldDecodeParam = false;
       let querystring = "";
-      for (let i = 1; i < path.length; i++) {
-        const charCode = path.charCodeAt(i);
+      for (let i = 1; i < path2.length; i++) {
+        const charCode = path2.charCodeAt(i);
         if (charCode === 37) {
-          const highCharCode = path.charCodeAt(i + 1);
-          const lowCharCode = path.charCodeAt(i + 2);
+          const highCharCode = path2.charCodeAt(i + 1);
+          const lowCharCode = path2.charCodeAt(i + 2);
           if (decodeComponentChar(highCharCode, lowCharCode) === null) {
             shouldDecode = true;
           } else {
             shouldDecodeParam = true;
             if (highCharCode === 50 && lowCharCode === 53) {
               shouldDecode = true;
-              path = path.slice(0, i + 1) + "25" + path.slice(i + 1);
+              path2 = path2.slice(0, i + 1) + "25" + path2.slice(i + 1);
               i += 2;
             }
             i += 2;
           }
         } else if (charCode === 63 || charCode === 35 || charCode === 59 && useSemicolonDelimiter) {
-          querystring = path.slice(i + 1);
-          path = path.slice(0, i);
+          querystring = path2.slice(i + 1);
+          path2 = path2.slice(0, i);
           break;
         }
       }
-      const decodedPath = shouldDecode ? decodeURI(path) : path;
+      const decodedPath = shouldDecode ? decodeURI(path2) : path2;
       return { path: decodedPath, querystring, shouldDecodeParam };
     }
     function safeDecodeURIComponent(uriComponent) {
@@ -28138,7 +28138,7 @@ var require_find_my_way = __commonJS({
       this.routes = [];
       this.trees = {};
     }
-    Router.prototype.on = function on(method, path, opts, handler, store) {
+    Router.prototype.on = function on(method, path2, opts, handler, store) {
       if (typeof opts === "function") {
         if (handler !== void 0) {
           store = handler;
@@ -28146,34 +28146,34 @@ var require_find_my_way = __commonJS({
         handler = opts;
         opts = {};
       }
-      assert(typeof path === "string", "Path should be a string");
-      assert(path.length > 0, "The path could not be empty");
-      assert(path[0] === "/" || path[0] === "*", "The first character of a path should be `/` or `*`");
+      assert(typeof path2 === "string", "Path should be a string");
+      assert(path2.length > 0, "The path could not be empty");
+      assert(path2[0] === "/" || path2[0] === "*", "The first character of a path should be `/` or `*`");
       assert(typeof handler === "function", "Handler should be a function");
-      const optionalParamMatch = path.match(OPTIONAL_PARAM_REGEXP);
+      const optionalParamMatch = path2.match(OPTIONAL_PARAM_REGEXP);
       if (optionalParamMatch) {
-        assert(path.length === optionalParamMatch.index + optionalParamMatch[0].length, "Optional Parameter needs to be the last parameter of the path");
-        const pathFull = path.replace(OPTIONAL_PARAM_REGEXP, "$1$2");
-        const pathOptional = path.replace(OPTIONAL_PARAM_REGEXP, "$2") || "/";
+        assert(path2.length === optionalParamMatch.index + optionalParamMatch[0].length, "Optional Parameter needs to be the last parameter of the path");
+        const pathFull = path2.replace(OPTIONAL_PARAM_REGEXP, "$1$2");
+        const pathOptional = path2.replace(OPTIONAL_PARAM_REGEXP, "$2") || "/";
         this.on(method, pathFull, opts, handler, store);
         this.on(method, pathOptional, opts, handler, store);
         return;
       }
-      const route = path;
+      const route = path2;
       if (this.ignoreDuplicateSlashes) {
-        path = removeDuplicateSlashes(path);
+        path2 = removeDuplicateSlashes(path2);
       }
       if (this.ignoreTrailingSlash) {
-        path = trimLastSlash(path);
+        path2 = trimLastSlash(path2);
       }
       const methods = Array.isArray(method) ? method : [method];
       for (const method2 of methods) {
         assert(typeof method2 === "string", "Method should be a string");
         assert(httpMethods.includes(method2), `Method '${method2}' is not an http method.`);
-        this._on(method2, path, opts, handler, store, route);
+        this._on(method2, path2, opts, handler, store, route);
       }
     };
-    Router.prototype._on = function _on(method, path, opts, handler, store) {
+    Router.prototype._on = function _on(method, path2, opts, handler, store) {
       let constraints = {};
       if (opts.constraints !== void 0) {
         assert(typeof opts.constraints === "object" && opts.constraints !== null, "Constraints should be an object");
@@ -28186,7 +28186,7 @@ var require_find_my_way = __commonJS({
       if (this.trees[method] === void 0) {
         this.trees[method] = new StaticNode("/");
       }
-      let pattern = path;
+      let pattern = path2;
       if (pattern === "*" && this.trees[method].prefix.length !== 0) {
         const currentRoot = this.trees[method];
         this.trees[method] = new StaticNode("");
@@ -28289,19 +28289,19 @@ var require_find_my_way = __commonJS({
           throw new Error(`Method '${method}' already declared for route '${pattern}' with constraints '${JSON.stringify(constraints)}'`);
         }
       }
-      const route = { method, path, pattern, params, opts, handler, store };
+      const route = { method, path: path2, pattern, params, opts, handler, store };
       this.routes.push(route);
       currentNode.addRoute(route, this.constrainer);
     };
-    Router.prototype.hasRoute = function hasRoute(method, path, constraints) {
-      const route = this.findRoute(method, path, constraints);
+    Router.prototype.hasRoute = function hasRoute(method, path2, constraints) {
+      const route = this.findRoute(method, path2, constraints);
       return route !== null;
     };
-    Router.prototype.findRoute = function findNode(method, path, constraints = {}) {
+    Router.prototype.findRoute = function findNode(method, path2, constraints = {}) {
       if (this.trees[method] === void 0) {
         return null;
       }
-      let pattern = path;
+      let pattern = path2;
       let currentNode = this.trees[method];
       let parentNodePathIndex = currentNode.prefix.length;
       const params = [];
@@ -28419,39 +28419,39 @@ var require_find_my_way = __commonJS({
       this.trees = {};
       this.routes = [];
     };
-    Router.prototype.off = function off(method, path, constraints) {
-      assert(typeof path === "string", "Path should be a string");
-      assert(path.length > 0, "The path could not be empty");
-      assert(path[0] === "/" || path[0] === "*", "The first character of a path should be `/` or `*`");
+    Router.prototype.off = function off(method, path2, constraints) {
+      assert(typeof path2 === "string", "Path should be a string");
+      assert(path2.length > 0, "The path could not be empty");
+      assert(path2[0] === "/" || path2[0] === "*", "The first character of a path should be `/` or `*`");
       assert(
         typeof constraints === "undefined" || typeof constraints === "object" && !Array.isArray(constraints) && constraints !== null,
         "Constraints should be an object or undefined."
       );
-      const optionalParamMatch = path.match(OPTIONAL_PARAM_REGEXP);
+      const optionalParamMatch = path2.match(OPTIONAL_PARAM_REGEXP);
       if (optionalParamMatch) {
-        assert(path.length === optionalParamMatch.index + optionalParamMatch[0].length, "Optional Parameter needs to be the last parameter of the path");
-        const pathFull = path.replace(OPTIONAL_PARAM_REGEXP, "$1$2");
-        const pathOptional = path.replace(OPTIONAL_PARAM_REGEXP, "$2");
+        assert(path2.length === optionalParamMatch.index + optionalParamMatch[0].length, "Optional Parameter needs to be the last parameter of the path");
+        const pathFull = path2.replace(OPTIONAL_PARAM_REGEXP, "$1$2");
+        const pathOptional = path2.replace(OPTIONAL_PARAM_REGEXP, "$2");
         this.off(method, pathFull, constraints);
         this.off(method, pathOptional, constraints);
         return;
       }
       if (this.ignoreDuplicateSlashes) {
-        path = removeDuplicateSlashes(path);
+        path2 = removeDuplicateSlashes(path2);
       }
       if (this.ignoreTrailingSlash) {
-        path = trimLastSlash(path);
+        path2 = trimLastSlash(path2);
       }
       const methods = Array.isArray(method) ? method : [method];
       for (const method2 of methods) {
-        this._off(method2, path, constraints);
+        this._off(method2, path2, constraints);
       }
     };
-    Router.prototype._off = function _off(method, path, constraints) {
+    Router.prototype._off = function _off(method, path2, constraints) {
       assert(typeof method === "string", "Method should be a string");
       assert(httpMethods.includes(method), `Method '${method}' is not an http method.`);
       function matcherWithoutConstraints(route) {
-        return method !== route.method || path !== route.path;
+        return method !== route.method || path2 !== route.path;
       }
       function matcherWithConstraints(route) {
         return matcherWithoutConstraints(route) || !deepEqual(constraints, route.opts.constraints || {});
@@ -28488,37 +28488,37 @@ var require_find_my_way = __commonJS({
       if (handle === null) return this._defaultRoute(req, res, ctx);
       return ctx === void 0 ? handle.handler(req, res, handle.params, handle.store, handle.searchParams) : handle.handler.call(ctx, req, res, handle.params, handle.store, handle.searchParams);
     };
-    Router.prototype.find = function find(method, path, derivedConstraints) {
+    Router.prototype.find = function find(method, path2, derivedConstraints) {
       let currentNode = this.trees[method];
       if (currentNode === void 0) return null;
-      if (path.charCodeAt(0) !== 47) {
-        path = path.replace(FULL_PATH_REGEXP, "/");
+      if (path2.charCodeAt(0) !== 47) {
+        path2 = path2.replace(FULL_PATH_REGEXP, "/");
       }
       if (this.ignoreDuplicateSlashes) {
-        path = removeDuplicateSlashes(path);
+        path2 = removeDuplicateSlashes(path2);
       }
       let sanitizedUrl;
       let querystring2;
       let shouldDecodeParam;
       try {
-        sanitizedUrl = safeDecodeURI(path, this.useSemicolonDelimiter);
-        path = sanitizedUrl.path;
+        sanitizedUrl = safeDecodeURI(path2, this.useSemicolonDelimiter);
+        path2 = sanitizedUrl.path;
         querystring2 = sanitizedUrl.querystring;
         shouldDecodeParam = sanitizedUrl.shouldDecodeParam;
       } catch (error) {
-        return this._onBadUrl(path);
+        return this._onBadUrl(path2);
       }
       if (this.ignoreTrailingSlash) {
-        path = trimLastSlash(path);
+        path2 = trimLastSlash(path2);
       }
-      const originPath = path;
+      const originPath = path2;
       if (this.caseSensitive === false) {
-        path = path.toLowerCase();
+        path2 = path2.toLowerCase();
       }
       const maxParamLength = this.maxParamLength;
       let pathIndex = currentNode.prefix.length;
       const params = [];
-      const pathLen = path.length;
+      const pathLen = path2.length;
       const brothersNodesStack = [];
       while (true) {
         if (pathIndex === pathLen && currentNode.isLeafNode) {
@@ -28532,7 +28532,7 @@ var require_find_my_way = __commonJS({
             };
           }
         }
-        let node = currentNode.getNextNode(path, pathIndex, brothersNodesStack, params.length);
+        let node = currentNode.getNextNode(path2, pathIndex, brothersNodesStack, params.length);
         if (node === null) {
           if (brothersNodesStack.length === 0) {
             return null;
@@ -28586,8 +28586,8 @@ var require_find_my_way = __commonJS({
     Router.prototype._rebuild = function(routes) {
       this.reset();
       for (const route of routes) {
-        const { method, path, opts, handler, store } = route;
-        this._on(method, path, opts, handler, store);
+        const { method, path: path2, opts, handler, store } = route;
+        this._on(method, path2, opts, handler, store);
       }
     };
     Router.prototype._defaultRoute = function(req, res, ctx) {
@@ -28598,13 +28598,13 @@ var require_find_my_way = __commonJS({
         res.end();
       }
     };
-    Router.prototype._onBadUrl = function(path) {
+    Router.prototype._onBadUrl = function(path2) {
       if (this.onBadUrl === null) {
         return null;
       }
       const onBadUrl = this.onBadUrl;
       return {
-        handler: (req, res, ctx) => onBadUrl(path, req, res),
+        handler: (req, res, ctx) => onBadUrl(path2, req, res),
         params: {},
         store: null
       };
@@ -28636,25 +28636,25 @@ var require_find_my_way = __commonJS({
       if (!httpMethods.hasOwnProperty(i)) continue;
       const m = httpMethods[i];
       const methodName = m.toLowerCase();
-      Router.prototype[methodName] = function(path, handler, store) {
-        return this.on(m, path, handler, store);
+      Router.prototype[methodName] = function(path2, handler, store) {
+        return this.on(m, path2, handler, store);
       };
     }
-    Router.prototype.all = function(path, handler, store) {
-      this.on(httpMethods, path, handler, store);
+    Router.prototype.all = function(path2, handler, store) {
+      this.on(httpMethods, path2, handler, store);
     };
     module2.exports = Router;
     function escapeRegExp(string) {
       return string.replace(ESCAPE_REGEXP, "\\$&");
     }
-    function removeDuplicateSlashes(path) {
-      return path.indexOf("//") !== -1 ? path.replace(REMOVE_DUPLICATE_SLASHES_REGEXP, "/") : path;
+    function removeDuplicateSlashes(path2) {
+      return path2.indexOf("//") !== -1 ? path2.replace(REMOVE_DUPLICATE_SLASHES_REGEXP, "/") : path2;
     }
-    function trimLastSlash(path) {
-      if (path.length > 1 && path.charCodeAt(path.length - 1) === 47) {
-        return path.slice(0, -1);
+    function trimLastSlash(path2) {
+      if (path2.length > 1 && path2.charCodeAt(path2.length - 1) === 47) {
+        return path2.slice(0, -1);
       }
-      return path;
+      return path2;
     }
     function trimRegExpStartAndEnd(regexString) {
       if (regexString.charCodeAt(1) === 94) {
@@ -28665,22 +28665,22 @@ var require_find_my_way = __commonJS({
       }
       return regexString;
     }
-    function getClosingParenthensePosition(path, idx) {
+    function getClosingParenthensePosition(path2, idx) {
       let parentheses = 1;
-      while (idx < path.length) {
+      while (idx < path2.length) {
         idx++;
-        if (path.charCodeAt(idx) === 92) {
+        if (path2.charCodeAt(idx) === 92) {
           idx++;
           continue;
         }
-        if (path.charCodeAt(idx) === 41) {
+        if (path2.charCodeAt(idx) === 41) {
           parentheses--;
-        } else if (path.charCodeAt(idx) === 40) {
+        } else if (path2.charCodeAt(idx) === 40) {
           parentheses++;
         }
         if (!parentheses) return idx;
       }
-      throw new TypeError('Invalid regexp expression in "' + path + '"');
+      throw new TypeError('Invalid regexp expression in "' + path2 + '"');
     }
     function defaultBuildPrettyMeta(route) {
       if (!route) return {};
@@ -28901,12 +28901,12 @@ var require_route = __commonJS({
       function route({ options: options2, isFastify }) {
         throwIfAlreadyStarted("Cannot add route!");
         const opts = { ...options2 };
-        const path = opts.url || opts.path || "";
+        const path2 = opts.url || opts.path || "";
         if (!opts.handler) {
-          throw new FST_ERR_ROUTE_MISSING_HANDLER(opts.method, path);
+          throw new FST_ERR_ROUTE_MISSING_HANDLER(opts.method, path2);
         }
         if (opts.errorHandler !== void 0 && typeof opts.errorHandler !== "function") {
-          throw new FST_ERR_ROUTE_HANDLER_NOT_FN(opts.method, path);
+          throw new FST_ERR_ROUTE_HANDLER_NOT_FN(opts.method, path2);
         }
         validateBodyLimitOption(opts.bodyLimit);
         const shouldExposeHead = opts.exposeHeadRoute ?? globalExposeHeadRoutes;
@@ -28915,22 +28915,22 @@ var require_route = __commonJS({
         if (Array.isArray(opts.method)) {
           for (let i = 0; i < opts.method.length; ++i) {
             opts.method[i] = normalizeAndValidateMethod.call(this, opts.method[i]);
-            validateSchemaBodyOption.call(this, opts.method[i], path, opts.schema);
+            validateSchemaBodyOption.call(this, opts.method[i], path2, opts.schema);
             isGetRoute = opts.method.includes("GET");
             isHeadRoute = opts.method.includes("HEAD");
           }
         } else {
           opts.method = normalizeAndValidateMethod.call(this, opts.method);
-          validateSchemaBodyOption.call(this, opts.method, path, opts.schema);
+          validateSchemaBodyOption.call(this, opts.method, path2, opts.schema);
           isGetRoute = opts.method === "GET";
           isHeadRoute = opts.method === "HEAD";
         }
         const headOpts = shouldExposeHead && isGetRoute ? { ...options2 } : null;
         const prefix = this[kRoutePrefix];
-        if (path === "/" && prefix.length > 0 && opts.method !== "HEAD") {
+        if (path2 === "/" && prefix.length > 0 && opts.method !== "HEAD") {
           switch (opts.prefixTrailingSlash) {
             case "slash":
-              addNewRoute.call(this, { path, isFastify });
+              addNewRoute.call(this, { path: path2, isFastify });
               break;
             case "no-slash":
               addNewRoute.call(this, { path: "", isFastify });
@@ -28939,20 +28939,20 @@ var require_route = __commonJS({
             default:
               addNewRoute.call(this, { path: "", isFastify });
               if (ignoreTrailingSlash !== true && (ignoreDuplicateSlashes !== true || !prefix.endsWith("/"))) {
-                addNewRoute.call(this, { path, prefixing: true, isFastify });
+                addNewRoute.call(this, { path: path2, prefixing: true, isFastify });
               }
           }
-        } else if (path[0] === "/" && prefix.endsWith("/")) {
-          addNewRoute.call(this, { path: path.slice(1), isFastify });
+        } else if (path2[0] === "/" && prefix.endsWith("/")) {
+          addNewRoute.call(this, { path: path2.slice(1), isFastify });
         } else {
-          addNewRoute.call(this, { path, isFastify });
+          addNewRoute.call(this, { path: path2, isFastify });
         }
         return this;
-        function addNewRoute({ path: path2, prefixing = false, isFastify: isFastify2 = false }) {
-          const url = prefix + path2;
+        function addNewRoute({ path: path3, prefixing = false, isFastify: isFastify2 = false }) {
+          const url = prefix + path3;
           opts.url = url;
           opts.path = url;
-          opts.routePath = path2;
+          opts.routePath = path3;
           opts.prefix = prefix;
           opts.logLevel = opts.logLevel || this[kLogLevel];
           if (this[kLogSerializers] || opts.logSerializers) {
@@ -29076,7 +29076,7 @@ var require_route = __commonJS({
           });
           if (shouldExposeHead && isGetRoute && !isHeadRoute && !hasHEADHandler) {
             const onSendHandlers = parseHeadOnSendHandlers(headOpts.onSend);
-            prepareRoute.call(this, { method: "HEAD", url: path2, options: { ...headOpts, onSend: onSendHandlers }, isFastify: true });
+            prepareRoute.call(this, { method: "HEAD", url: path3, options: { ...headOpts, onSend: onSendHandlers }, isFastify: true });
           }
         }
       }
@@ -29177,9 +29177,9 @@ var require_route = __commonJS({
       }
       return method;
     }
-    function validateSchemaBodyOption(method, path, schema) {
+    function validateSchemaBodyOption(method, path2, schema) {
       if (this[kSupportedHTTPMethods].bodyless.has(method) && schema?.body) {
-        throw new FST_ERR_ROUTE_BODY_VALIDATION_SCHEMA_NOT_SUPPORTED(method, path);
+        throw new FST_ERR_ROUTE_BODY_VALIDATION_SCHEMA_NOT_SUPPORTED(method, path2);
       }
     }
     function validateBodyLimitOption(bodyLimit) {
@@ -29271,7 +29271,7 @@ var require_fourOhFour = __commonJS({
         });
       }
       function createOnBadUrl() {
-        return function onBadUrl(path, req, res) {
+        return function onBadUrl(path2, req, res) {
           const fourOhFourContext = this[kFourOhFourLevelInstance][kFourOhFourContext];
           const id = getGenReqId(fourOhFourContext.server, req);
           const childLogger = createChildLogger(fourOhFourContext, logger, req, id);
@@ -33143,7 +33143,7 @@ ${body}`);
         }
         fourOhFour.router.lookup(req, res);
       }
-      function onBadUrl(path, req, res) {
+      function onBadUrl(path2, req, res) {
         if (frameworkErrors) {
           const id = getGenReqId(onBadUrlContext.server, req);
           const childLogger = createChildLogger(onBadUrlContext, logger, req, id);
@@ -33152,9 +33152,9 @@ ${body}`);
           if (disableRequestLogging === false) {
             childLogger.info({ req: request }, "incoming request");
           }
-          return frameworkErrors(new FST_ERR_BAD_URL(path), request, reply);
+          return frameworkErrors(new FST_ERR_BAD_URL(path2), request, reply);
         }
-        const body = `{"error":"Bad Request","code":"FST_ERR_BAD_URL","message":"'${path}' is not a valid url component","statusCode":400}`;
+        const body = `{"error":"Bad Request","code":"FST_ERR_BAD_URL","message":"'${path2}' is not a valid url component","statusCode":400}`;
         res.writeHead(400, {
           "Content-Type": "application/json",
           "Content-Length": body.length
@@ -33301,45 +33301,89 @@ ${body}`);
 // ../../index.js
 var import_fastify = __toESM(require_fastify(), 1);
 var import_util = require("util");
+var import_node_fs = require("node:fs");
+var import_node_url = require("node:url");
+var import_node_path = __toESM(require("node:path"), 1);
 
 // ../../key-resolver.js
 var PROVIDERS = {
   openrouter: "openrouter",
   openai: "openai",
   together: "together",
-  groq: "groq",
+  deepseek: "deepseek",
+  glm: "glm",
+  anthropic: "anthropic",
   grok: "grok",
   custom: "custom"
 };
-function detectProvider(baseUrl2) {
+var ENDPOINT_KIND = {
+  OPENAI_COMPATIBLE: "openai-compatible",
+  ANTHROPIC_NATIVE: "anthropic-native"
+};
+var PROVIDER_KEY_SOURCES = {
+  [PROVIDERS.custom]: ["CUSTOM_API_KEY", "API_KEY"],
+  [PROVIDERS.openrouter]: ["OPENROUTER_API_KEY"],
+  [PROVIDERS.openai]: ["OPENAI_API_KEY"],
+  [PROVIDERS.together]: ["TOGETHER_API_KEY"],
+  [PROVIDERS.deepseek]: ["DEEPSEEK_API_KEY"],
+  [PROVIDERS.glm]: ["GLM_API_KEY", "ZAI_API_KEY"],
+  [PROVIDERS.anthropic]: ["ANTHROPIC_API_KEY"],
+  [PROVIDERS.grok]: ["GROK_API_KEY", "XAI_API_KEY"]
+};
+function isAnthropicLikeUrl(baseUrl2) {
   try {
     const url = new URL(baseUrl2);
     const host = url.host.toLowerCase();
+    const path2 = url.pathname.toLowerCase();
+    if (host.includes("anthropic.com")) return true;
+    if (host.includes("anthropic.ai")) return true;
+    if (host.includes("deepseek.com") && path2.includes("anthropic")) return true;
+    if (host.includes("z.ai") && path2.includes("anthropic")) return true;
+    if (path2.includes("/anthropic")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+function detectProvider(baseUrl2, env = process.env) {
+  const forced = (env.FORCE_PROVIDER || "").toLowerCase();
+  if (forced && Object.values(PROVIDERS).includes(forced)) {
+    return forced;
+  }
+  try {
+    const url = new URL(baseUrl2);
+    const host = url.host.toLowerCase();
+    const path2 = url.pathname.toLowerCase();
     if (host.includes("openrouter.ai")) return PROVIDERS.openrouter;
     if (host.includes("api.openai.com")) return PROVIDERS.openai;
     if (host.includes("together.ai") || host.includes("together.xyz")) return PROVIDERS.together;
-    if (host.includes("api.groq.com")) return PROVIDERS.groq;
-    if (host.includes("api.x.ai")) return PROVIDERS.grok;
+    if (host.includes("deepseek.com")) return PROVIDERS.deepseek;
+    if (host.includes("z.ai")) return PROVIDERS.glm;
+    if (host.includes("anthropic.com") || host.endsWith(".anthropic.app")) return PROVIDERS.anthropic;
+    if (host.includes("x.ai") || host.includes("grok")) return PROVIDERS.grok;
+    if (/\/anthropic/.test(path2)) return PROVIDERS.anthropic;
     return PROVIDERS.custom;
   } catch {
     return PROVIDERS.custom;
   }
 }
+function inferEndpointKind(provider2, baseUrl2) {
+  if (provider2 === PROVIDERS.deepseek || provider2 === PROVIDERS.glm || provider2 === PROVIDERS.anthropic) {
+    return ENDPOINT_KIND.ANTHROPIC_NATIVE;
+  }
+  if (isAnthropicLikeUrl(baseUrl2)) {
+    return ENDPOINT_KIND.ANTHROPIC_NATIVE;
+  }
+  return ENDPOINT_KIND.OPENAI_COMPATIBLE;
+}
 function resolveApiKey(provider2, env = process.env) {
-  const custom = env.CUSTOM_API_KEY || env.API_KEY;
-  if (provider2 === PROVIDERS.custom && custom) return custom;
-  if (provider2 === PROVIDERS.openai && env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
-  if (provider2 === PROVIDERS.together && env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (provider2 === PROVIDERS.groq && (env.GROQ_API_KEY || env.GROK_API_KEY)) return env.GROQ_API_KEY || env.GROK_API_KEY;
-  if (provider2 === PROVIDERS.grok && (env.XAI_API_KEY || env.GROK_API_KEY)) return env.XAI_API_KEY || env.GROK_API_KEY;
-  if (provider2 === PROVIDERS.openrouter && env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
-  if (custom) return custom;
-  if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
-  if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
-  if (env.TOGETHER_API_KEY) return env.TOGETHER_API_KEY;
-  if (env.GROQ_API_KEY || env.GROK_API_KEY) return env.GROQ_API_KEY || env.GROK_API_KEY;
-  if (env.XAI_API_KEY) return env.XAI_API_KEY;
-  return null;
+  const sources = PROVIDER_KEY_SOURCES[provider2] || [];
+  for (const name of sources) {
+    if (env[name]) {
+      return { key: env[name], source: name };
+    }
+  }
+  return { key: null, source: null };
 }
 function providerSpecificHeaders(provider2, env = process.env) {
   const headers = {};
@@ -33656,30 +33700,93 @@ function generateToolId() {
 }
 
 // ../../index.js
+var import_meta = {};
+var packageVersion = "0.0.0";
+var packageDir = null;
+try {
+  if (typeof import_meta !== "undefined" && import_meta && import_meta.url) {
+    packageDir = import_node_path.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url));
+  }
+} catch (err) {
+  console.warn("[Startup] Failed to resolve package directory via import.meta:", err?.message || err);
+}
+if (!packageDir && typeof __dirname !== "undefined") {
+  packageDir = __dirname;
+}
+if (!packageDir) {
+  packageDir = process.cwd();
+}
+var packageJsonPath = import_node_path.default.join(packageDir, "package.json");
+try {
+  const pkg = JSON.parse((0, import_node_fs.readFileSync)(packageJsonPath, "utf8"));
+  packageVersion = pkg.version || packageVersion;
+} catch (err) {
+  console.warn("[Startup] Failed to read package version:", err?.message || err);
+}
+var capabilitiesPath = import_node_path.default.join(packageDir, "models-capabilities.json");
+var modelCapabilities = null;
+if ((0, import_node_fs.existsSync)(capabilitiesPath)) {
+  try {
+    modelCapabilities = JSON.parse((0, import_node_fs.readFileSync)(capabilitiesPath, "utf8"));
+  } catch (err) {
+    console.warn("[Startup] Failed to parse models-capabilities.json:", err?.message || err);
+  }
+}
 var baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || "https://openrouter.ai/api";
+var normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 var provider = detectProvider(baseUrl);
-var key = resolveApiKey(provider);
+var endpointKind = inferEndpointKind(provider, baseUrl);
+var { key, source: keySource } = resolveApiKey(provider);
 var model = "google/gemini-2.0-pro-exp-02-05:free";
 var models = {
   reasoning: process.env.REASONING_MODEL || model,
   completion: process.env.COMPLETION_MODEL || model
 };
-var MODELS_REQUIRING_XML_TOOLS = /* @__PURE__ */ new Set([
+var ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || "2023-06-01";
+var ANTHROPIC_BETA = process.env.ANTHROPIC_BETA;
+var KEY_ENV_HINT = "CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, ZAI_API_KEY, ANTHROPIC_API_KEY, GROK_API_KEY, XAI_API_KEY";
+var FALLBACK_XML_MODELS = [
   "inclusionai/ling-1t",
   "z-ai/glm-4.6",
   "z-ai/glm-4.5",
   "deepseek-v2",
   "deepseek-v3"
-]);
-function modelNeedsXMLTools(modelName) {
-  if (!modelName) return false;
-  const lowerModel = modelName.toLowerCase();
-  for (const pattern of MODELS_REQUIRING_XML_TOOLS) {
-    if (lowerModel.includes(pattern.toLowerCase())) {
-      return true;
+];
+var escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function matchesPattern(modelName, pattern) {
+  if (typeof pattern !== "string" || !pattern) return false;
+  const value = modelName.toLowerCase();
+  if (pattern.startsWith("/") && pattern.endsWith("/")) {
+    try {
+      const regex = new RegExp(pattern.slice(1, -1), "i");
+      return regex.test(modelName);
+    } catch {
+      return false;
     }
   }
-  return false;
+  if (pattern.includes("*")) {
+    const regex = new RegExp("^" + pattern.split("*").map((part) => escapeRegex(part)).join(".*") + "$", "i");
+    return regex.test(modelName);
+  }
+  return value.includes(pattern.toLowerCase());
+}
+function modelNeedsXMLTools(modelName, providerId) {
+  if (process.env.FORCE_XML_TOOLS === "1") {
+    return true;
+  }
+  if (!modelName) return false;
+  const config = modelCapabilities?.xmlTools || null;
+  if (config) {
+    const patterns = [
+      ...config[providerId] || [],
+      ...config["*"] || []
+    ];
+    for (const pattern of patterns) {
+      if (matchesPattern(modelName, pattern)) return true;
+    }
+  }
+  const lowerModel = modelName.toLowerCase();
+  return FALLBACK_XML_MODELS.some((pattern) => lowerModel.includes(pattern.toLowerCase()));
 }
 function parseNativeToolResponse(openaiMessage) {
   const blocks = [];
@@ -33708,10 +33815,12 @@ function parseNativeToolResponse(openaiMessage) {
 console.log("[Startup] Claude Throne Proxy initializing...");
 console.log("[Startup] Configuration:");
 console.log(`[Startup] - Provider: ${provider}`);
+console.log(`[Startup] - Endpoint Kind: ${endpointKind}`);
 console.log(`[Startup] - Base URL: ${baseUrl}`);
 console.log(`[Startup] - Reasoning Model: ${models.reasoning}`);
 console.log(`[Startup] - Completion Model: ${models.completion}`);
 console.log(`[Startup] - API Key: ${key ? "present" : "MISSING"}`);
+console.log(`[Startup] - API Key Source: ${keySource || "none"}`);
 console.log(`[Startup] - Debug Mode: ${process.env.DEBUG ? "enabled" : "disabled"}`);
 if (models.reasoning !== models.completion) {
   console.log("[Startup] - Two-model mode detected");
@@ -33719,7 +33828,33 @@ if (models.reasoning !== models.completion) {
   console.log("[Startup] - Single-model mode");
 }
 var fastify = (0, import_fastify.default)({
-  logger: true
+  logger: {
+    level: "info",
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.body.system",
+        "req.body.messages",
+        "req.body.tools",
+        "req.body.metadata",
+        'res.headers["set-cookie"]'
+      ],
+      censor: "[REDACTED]"
+    },
+    serializers: {
+      req(req) {
+        return {
+          id: req.id,
+          method: req.method,
+          url: req.url,
+          headers: { host: req.headers.host }
+        };
+      },
+      res(res) {
+        return { statusCode: res.statusCode };
+      }
+    }
+  }
 });
 function debug(...args) {
   if (!process.env.DEBUG) return;
@@ -33750,13 +33885,28 @@ function mapStopReason(finishReason) {
       return "end_turn";
   }
 }
+function buildUpstreamHeaders({ provider: providerId, endpointKind: upstreamKind, key: apiKey }) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...providerSpecificHeaders(providerId)
+  };
+  if (!apiKey) {
+    return headers;
+  }
+  if (upstreamKind === ENDPOINT_KIND.ANTHROPIC_NATIVE) {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = ANTHROPIC_VERSION;
+    if (ANTHROPIC_BETA) {
+      headers["anthropic-beta"] = ANTHROPIC_BETA;
+    }
+  } else {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
 fastify.get("/v1/models", async (request, reply) => {
   try {
-    const headers = {
-      "Content-Type": "application/json",
-      ...providerSpecificHeaders(provider)
-    };
-    if (key) headers["Authorization"] = `Bearer ${key}`;
+    const headers = buildUpstreamHeaders({ provider, endpointKind, key });
     const resp = await fetch(`${baseUrl}/v1/models`, {
       method: "GET",
       headers
@@ -33775,7 +33925,7 @@ fastify.get("/v1/models", async (request, reply) => {
 fastify.get("/healthz", async (request, reply) => {
   return {
     status: "ok",
-    version: "1.4.19",
+    version: packageVersion,
     provider,
     baseUrl,
     models
@@ -33786,7 +33936,8 @@ fastify.get("/health", async (request, reply) => {
     status: "healthy",
     provider,
     baseUrl,
-    hasApiKey: !!key,
+    hasApiKey: true,
+    // Key is available from provider detection
     models: {
       reasoning: models.reasoning || "not set",
       completion: models.completion || "not set"
@@ -33887,7 +34038,7 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
       }
     }));
     const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel);
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider);
     const messagesWithXML = needsXMLTools ? injectXMLToolInstructions(messages, tools) : messages;
     const openaiPayload = {
       model: selectedModel,
@@ -33899,13 +34050,11 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
     if (!needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools;
     }
-    const headers = {
-      "Content-Type": "application/json",
-      ...providerSpecificHeaders(provider)
-    };
-    if (key) {
-      headers["Authorization"] = "Bearer ***REDACTED***";
-    }
+    const headers = buildUpstreamHeaders({
+      provider,
+      endpointKind,
+      key: key ? "***REDACTED***" : null
+    });
     return {
       debug: true,
       modelSelection: {
@@ -33957,6 +34106,117 @@ fastify.post("/v1/messages", async (request, reply) => {
       sendSSE(reply, "ping", { type: "ping" });
     };
     const payload = request.body;
+    const requestStartMs = Date.now();
+    let firstChunkLogged = false;
+    let ttfbMs = null;
+    const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE;
+    if (!key) {
+      reply.code(400);
+      return {
+        error: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`
+      };
+    }
+    const requestUrl = isAnthropicNative ? `${normalizedBaseUrl}/v1/messages` : `${normalizedBaseUrl}/v1/chat/completions`;
+    const headers = buildUpstreamHeaders({ provider, endpointKind, key });
+    if (isAnthropicNative) {
+      console.log(`[Anthropic Native] Handling request for provider: ${provider}`);
+      console.log(`[Anthropic Native] Forwarding to: ${requestUrl}`);
+      console.log(`[Anthropic Native] Authentication: x-api-key header injected`);
+    }
+    console.log(`[Request] Starting request to ${requestUrl}`);
+    if (isAnthropicNative) {
+      const anthropicPayload = buildAnthropicPayload(payload);
+      const upstreamResponse = await fetch(requestUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(anthropicPayload)
+      });
+      const elapsedMs2 = Date.now() - requestStartMs;
+      console.log(`[Timing] Response received in ${elapsedMs2}ms (HTTP ${upstreamResponse.status})`);
+      if (!upstreamResponse.ok) {
+        const errorDetails = await upstreamResponse.text();
+        let errorJson;
+        try {
+          errorJson = JSON.parse(errorDetails);
+        } catch {
+          errorJson = {
+            error: {
+              message: errorDetails,
+              type: "upstream_error"
+            }
+          };
+        }
+        console.error("[Anthropic Error]", {
+          status: upstreamResponse.status,
+          provider,
+          messageCount: Array.isArray(payload?.messages) ? payload.messages.length : 0,
+          error: errorJson.error?.message?.slice?.(0, 200) || errorDetails.slice(0, 200)
+        });
+        reply.code(upstreamResponse.status);
+        return errorJson;
+      }
+      if (payload.stream === true) {
+        reply.raw.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive"
+        });
+        try {
+          const reader2 = upstreamResponse.body?.getReader();
+          const decoder2 = new import_util.TextDecoder("utf-8");
+          if (!reader2) {
+            throw new Error("Upstream stream reader unavailable");
+          }
+          let done2 = false;
+          while (!done2) {
+            const { value, done: doneReading } = await reader2.read();
+            done2 = doneReading;
+            if (value) {
+              const chunk = decoder2.decode(value);
+              if (!firstChunkLogged && chunk.trim()) {
+                ttfbMs = Date.now() - requestStartMs;
+                debug("Anthropic streaming first-byte timing:", { ttfbMs, chunkLength: chunk.length });
+                firstChunkLogged = true;
+              }
+              reply.raw.write(chunk);
+              if (typeof reply.raw.flush === "function") {
+                reply.raw.flush();
+              }
+            }
+          }
+          reply.raw.end();
+        } catch (streamErr) {
+          console.error("[Error] Anthropic stream relay failed:", streamErr);
+          if (!reply.raw.writableEnded) {
+            try {
+              reply.raw.write(`event: error
+data: ${JSON.stringify({
+                type: "error",
+                error: {
+                  type: "internal_error",
+                  message: streamErr.message
+                }
+              })}
+
+`);
+            } catch {
+            }
+            reply.raw.end();
+          }
+        }
+        return;
+      }
+      const text = await upstreamResponse.text();
+      try {
+        const data = JSON.parse(text);
+        reply.code(upstreamResponse.status);
+        reply.type("application/json").send(data);
+      } catch {
+        reply.code(upstreamResponse.status);
+        reply.type("application/json").send({ error: text });
+      }
+      return;
+    }
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
       payload.system.forEach((sysMsg) => {
@@ -34025,7 +34285,7 @@ fastify.post("/v1/messages", async (request, reply) => {
     } else {
       console.log(`[Model] Using requested model: ${selectedModel}`);
     }
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel);
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider);
     const messagesWithXML = needsXMLTools ? injectXMLToolInstructions(messages, tools) : messages;
     const openaiPayload = {
       model: selectedModel,
@@ -34055,29 +34315,7 @@ fastify.post("/v1/messages", async (request, reply) => {
         }
       }
     }
-    const headers = {
-      "Content-Type": "application/json",
-      ...providerSpecificHeaders(provider)
-    };
-    if (key) {
-      headers["Authorization"] = `Bearer ${key}`;
-    }
-    debug("API key check:", { provider, hasKey: !!key });
-    if (!key) {
-      debug("No API key found, returning 400");
-      reply.code(400);
-      return {
-        error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`
-      };
-    }
-    const requestStartMs = Date.now();
-    let firstChunkLogged = false;
-    let ttfbMs = null;
-    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`);
-    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`);
-    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`);
-    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || "default"}, Temperature: ${openaiPayload.temperature}`);
-    const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const openaiResponse = await fetch(requestUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(openaiPayload)
@@ -34099,7 +34337,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       }
       console.error("[OpenRouter Error]", {
         status: openaiResponse.status,
-        model: openaiPayload.model,
+        model: "[REDACTED]",
         provider,
         messageCount: messages.length,
         toolCount: tools.length,
@@ -34119,7 +34357,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       debug("OpenRouter error response:", {
         status: openaiResponse.status,
         statusText: openaiResponse.statusText,
-        baseUrl,
+        requestUrl,
         requestedModel: payload.model,
         selectedModel: openaiPayload.model,
         elapsedMs,
@@ -34128,10 +34366,9 @@ fastify.post("/v1/messages", async (request, reply) => {
       reply.code(openaiResponse.status);
       return errorJson;
     }
-    debug("OpenRouter response timing:", { baseUrl, elapsedMs, status: openaiResponse.status });
+    debug("OpenRouter response timing:", { requestUrl, elapsedMs, status: openaiResponse.status });
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json();
-      debug("OpenAI response:", data);
       const logInputTokens = data.usage?.prompt_tokens || 0;
       const logOutputTokens = data.usage?.completion_tokens || 0;
       const logTotalTokens = logInputTokens + logOutputTokens;
@@ -34149,23 +34386,18 @@ fastify.post("/v1/messages", async (request, reply) => {
       let contentBlocks = [];
       try {
         if (needsXMLTools) {
-          debug("Parsing XML content:", openaiMessage.content);
           contentBlocks = parseAssistantMessage(openaiMessage.content || "");
-          debug("Parsed XML content blocks:", contentBlocks);
         } else {
           debug("Parsing native tool response");
           contentBlocks = parseNativeToolResponse(openaiMessage);
-          debug("Parsed native content blocks:", contentBlocks);
         }
       } catch (parseError) {
-        debug("Error parsing content:", parseError);
         contentBlocks = [{
           type: "text",
           text: openaiMessage.content || ""
         }];
       }
       if (!contentBlocks || contentBlocks.length === 0) {
-        debug("No content blocks found, creating default text block");
         contentBlocks = [{
           type: "text",
           text: openaiMessage.content || ""
@@ -34213,7 +34445,6 @@ fastify.post("/v1/messages", async (request, reply) => {
             firstChunkLogged = true;
           }
           if (process.env.DEBUG_CHUNKS) {
-            debug("OpenAI response chunk:", chunk);
           }
           const lines = chunk.split("\n");
           for (const line of lines) {
@@ -34418,7 +34649,172 @@ var start = async () => {
     process.exit(1);
   }
 };
-start();
+console.log("[Startup] About to register routes and start server...");
+try {
+  start();
+} catch (err) {
+  console.error("[Startup] Failed to start server:", err);
+  process.exit(1);
+}
+function normalizeAnthropicSystem(system) {
+  if (!system) return void 0;
+  if (typeof system === "string") {
+    return [{ type: "text", text: system }];
+  }
+  if (Array.isArray(system)) {
+    return system.map((entry) => {
+      if (typeof entry === "string") {
+        return { type: "text", text: entry };
+      }
+      if (entry && typeof entry === "object") {
+        if (entry.type) return { ...entry };
+        if (typeof entry.text === "string") {
+          return { type: "text", text: entry.text };
+        }
+      }
+      return null;
+    }).filter(Boolean);
+  }
+  if (system && typeof system === "object") {
+    if (Array.isArray(system.content)) {
+      return system.content.map((block) => normalizeAnthropicContentBlock(block)).filter(Boolean);
+    }
+    if (typeof system.text === "string") {
+      return [{ type: "text", text: system.text }];
+    }
+  }
+  return void 0;
+}
+function normalizeAnthropicContentBlock(block) {
+  if (!block) return null;
+  if (typeof block === "string") {
+    return { type: "text", text: block };
+  }
+  if (typeof block !== "object") {
+    return null;
+  }
+  if (block.type === "text") {
+    if (typeof block.text === "string") {
+      return { type: "text", text: block.text };
+    }
+    if (Array.isArray(block.content)) {
+      return {
+        type: "text",
+        text: block.content.map((item) => typeof item === "string" ? item : "").join(" ").trim()
+      };
+    }
+  }
+  if (block.type === "tool_use") {
+    return {
+      type: "tool_use",
+      id: block.id,
+      name: block.name,
+      input: block.input ?? {}
+    };
+  }
+  if (block.type === "tool_result") {
+    const normalized = {
+      type: "tool_result",
+      tool_use_id: block.tool_use_id || block.id
+    };
+    if (Array.isArray(block.content)) {
+      normalized.content = block.content;
+    } else if (typeof block.text === "string") {
+      normalized.content = block.text;
+    } else if (block.content !== void 0) {
+      normalized.content = block.content;
+    }
+    if (block.is_error !== void 0) normalized.is_error = block.is_error;
+    return normalized;
+  }
+  if (block.type) {
+    return { ...block };
+  }
+  if (typeof block.text === "string") {
+    return { type: "text", text: block.text };
+  }
+  return null;
+}
+function normalizeAnthropicContent(content) {
+  if (!content) return [];
+  if (typeof content === "string") {
+    return [{ type: "text", text: content }];
+  }
+  if (Array.isArray(content)) {
+    return content.map((block) => normalizeAnthropicContentBlock(block)).filter(Boolean);
+  }
+  if (typeof content === "object") {
+    const block = normalizeAnthropicContentBlock(content);
+    return block ? [block] : [];
+  }
+  return [];
+}
+function normalizeAnthropicMessage(msg) {
+  if (!msg || typeof msg !== "object") return null;
+  const normalized = {
+    role: msg.role || "user",
+    content: normalizeAnthropicContent(msg.content)
+  };
+  if (msg.id) normalized.id = msg.id;
+  if (msg.metadata) normalized.metadata = msg.metadata;
+  if (msg.stop_reason) normalized.stop_reason = msg.stop_reason;
+  if (msg.stop_sequence) normalized.stop_sequence = msg.stop_sequence;
+  if (msg.type) normalized.type = msg.type;
+  return normalized;
+}
+function formatAnthropicTool(tool) {
+  if (!tool || typeof tool !== "object") return null;
+  const formatted = {
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema || tool.parameters || {}
+  };
+  if (tool.cache_control) formatted.cache_control = tool.cache_control;
+  if (tool.metadata) formatted.metadata = tool.metadata;
+  return formatted;
+}
+function buildAnthropicPayload(payload = {}) {
+  const result = {};
+  if (payload.model) result.model = payload.model;
+  if (typeof payload.system === "string") {
+    result.system = payload.system;
+  } else {
+    const systemBlocks = normalizeAnthropicSystem(payload.system);
+    if (systemBlocks && systemBlocks.length > 0) {
+      result.system = systemBlocks;
+    }
+  }
+  const messages = Array.isArray(payload.messages) ? payload.messages.map((msg) => normalizeAnthropicMessage(msg)).filter(Boolean) : [];
+  result.messages = messages;
+  if (Array.isArray(payload.tools) && payload.tools.length > 0) {
+    const tools = payload.tools.map((tool) => formatAnthropicTool(tool)).filter(Boolean);
+    if (tools.length > 0) {
+      result.tools = tools;
+    }
+  }
+  const optionalKeys = [
+    "metadata",
+    "tool_choice",
+    "thinking",
+    "stop_sequences",
+    "temperature",
+    "top_p",
+    "top_k",
+    "max_tokens",
+    "extra_headers",
+    "response_format"
+  ];
+  for (const keyName of optionalKeys) {
+    if (payload[keyName] !== void 0) {
+      result[keyName] = payload[keyName];
+    }
+  }
+  result.stream = payload.stream === true;
+  if (payload.timeout !== void 0) {
+    result.timeout = payload.timeout;
+  }
+  return result;
+}
 /*! Bundled license information:
 
 @fastify/proxy-addr/index.js:

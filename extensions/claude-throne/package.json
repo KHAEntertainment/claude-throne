@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.0",
+  "version": "1.5.17",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -73,8 +73,12 @@
         "title": "Thronekeeper: Store Together API Key"
       },
       {
-        "command": "claudeThrone.storeGrokKey",
-        "title": "Thronekeeper: Store Grok API Key"
+        "command": "claudeThrone.storeDeepseekKey",
+        "title": "Claude Throne: Store Deepseek API Key"
+      },
+      {
+        "command": "claudeThrone.storeGlmKey",
+        "title": "Claude Throne: Store GLM API Key"
       },
       {
         "command": "claudeThrone.storeCustomKey",
@@ -127,8 +131,18 @@
         },
         "claudeThrone.autoApply": {
           "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically apply proxy configuration to Claude Code when the proxy starts. The extension writes the proxy URL and model configuration to `.claude/settings.json`. Disable if you prefer manual control via the 'Apply to Claude Code' button."
+        },
+        "claudeThrone.applyToExtensions": {
+          "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically apply ANTHROPIC_BASE_URL to Claude Code on proxy start (and revert on Stop). Disable if you experience connection errors."
+          "markdownDescription": "Apply proxy configuration to other known Claude/Anthropic extension settings (e.g., `anthropic.baseUrl`, `claude.baseUrl`). Most users should leave this disabled to avoid polluting VS Code settings. Only enable if you use other Claude extensions that require the base URL to be set in extension settings."
+        },
+        "claudeThrone.applyToTerminal": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Apply ANTHROPIC_BASE_URL to VS Code integrated terminal environment variables (for CLI usage with `claude` or `claude-code` commands). Not needed for the Claude Code extension. Only enable if you use Anthropic's CLI tools in VS Code's integrated terminal."
         },
         "claudeThrone.applyScope": {
           "type": "string",
@@ -152,17 +166,22 @@
         "claudeThrone.twoModelMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable two-model mode to use separate models for reasoning and execution."
+          "markdownDescription": "Enable three-model mode to use separate models for reasoning, coding, and value tasks. When disabled, the reasoning model is used for all operations."
         },
         "claudeThrone.reasoningModel": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The primary/reasoning model to use."
+          "markdownDescription": "The reasoning model for complex problem-solving tasks (maps to Opus tier in Claude Code)."
         },
         "claudeThrone.completionModel": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The execution/completion model to use (when two-model mode is enabled)."
+          "markdownDescription": "The coding model for balanced development tasks (maps to Sonnet tier in Claude Code)."
+        },
+        "claudeThrone.valueModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
         },
         "claudeThrone.customCombos": {
           "type": "array",
@@ -188,6 +207,9 @@
               },
               "completion": {
                 "type": "string"
+              },
+              "value": {
+                "type": "string"
               }
             }
           },
@@ -201,7 +223,8 @@
             "openrouter",
             "openai",
             "together",
-            "grok",
+            "deepseek",
+            "glm",
             "custom"
           ],
           "scope": "window",

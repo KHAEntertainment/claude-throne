@@ -1,41 +1,122 @@
 #!/usr/bin/env node
 import Fastify from 'fastify'
 import { TextDecoder } from 'util'
-import { detectProvider, resolveApiKey, providerSpecificHeaders } from './key-resolver.js'
+import { readFileSync, existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import {
+  detectProvider,
+  resolveApiKey,
+  providerSpecificHeaders,
+  inferEndpointKind,
+  ENDPOINT_KIND,
+} from './key-resolver.js'
 import { normalizeContent, removeUriFormat } from './transform.js'
 import { injectXMLToolInstructions } from './xml-tool-formatter.js'
 import { parseAssistantMessage } from './xml-tool-parser.js'
 
+let packageVersion = '0.0.0'
+let packageDir = null
+
+try {
+  if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
+    packageDir = path.dirname(fileURLToPath(import.meta.url))
+  }
+} catch (err) {
+  console.warn('[Startup] Failed to resolve package directory via import.meta:', err?.message || err)
+}
+
+if (!packageDir && typeof __dirname !== 'undefined') {
+  packageDir = __dirname
+}
+
+if (!packageDir) {
+  packageDir = process.cwd()
+}
+
+const packageJsonPath = path.join(packageDir, 'package.json')
+try {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+  packageVersion = pkg.version || packageVersion
+} catch (err) {
+  console.warn('[Startup] Failed to read package version:', err?.message || err)
+}
+
+const capabilitiesPath = path.join(packageDir, 'models-capabilities.json')
+let modelCapabilities = null
+if (existsSync(capabilitiesPath)) {
+  try {
+    modelCapabilities = JSON.parse(readFileSync(capabilitiesPath, 'utf8'))
+  } catch (err) {
+    console.warn('[Startup] Failed to parse models-capabilities.json:', err?.message || err)
+  }
+}
+
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
+const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 const provider = detectProvider(baseUrl)
-const key = resolveApiKey(provider)
+const endpointKind = inferEndpointKind(provider, baseUrl)
+const { key, source: keySource } = resolveApiKey(provider)
 const model = 'google/gemini-2.0-pro-exp-02-05:free'
 const models = {
   reasoning: process.env.REASONING_MODEL || model,
   completion: process.env.COMPLETION_MODEL || model,
 }
 
-// Models that require XML tool calling (don't support native OpenAI tool format)
-const MODELS_REQUIRING_XML_TOOLS = new Set([
+const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || '2023-06-01'
+const ANTHROPIC_BETA = process.env.ANTHROPIC_BETA
+const KEY_ENV_HINT = 'CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, GLM_API_KEY, ZAI_API_KEY, ANTHROPIC_API_KEY, GROK_API_KEY, XAI_API_KEY'
+
+const FALLBACK_XML_MODELS = [
   'inclusionai/ling-1t',
   'z-ai/glm-4.6',
   'z-ai/glm-4.5',
   'deepseek-v2',
   'deepseek-v3',
-])
+]
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function matchesPattern(modelName, pattern) {
+  if (typeof pattern !== 'string' || !pattern) return false
+  const value = modelName.toLowerCase()
+  if (pattern.startsWith('/') && pattern.endsWith('/')) {
+    try {
+      const regex = new RegExp(pattern.slice(1, -1), 'i')
+      return regex.test(modelName)
+    } catch {
+      return false
+    }
+  }
+  if (pattern.includes('*')) {
+    const regex = new RegExp('^' + pattern.split('*').map((part) => escapeRegex(part)).join('.*') + '$', 'i')
+    return regex.test(modelName)
+  }
+  return value.includes(pattern.toLowerCase())
+}
 
 /**
  * Check if a model requires XML tool calling instead of native OpenAI format
  */
-function modelNeedsXMLTools(modelName) {
+function modelNeedsXMLTools(modelName, providerId) {
+  if (process.env.FORCE_XML_TOOLS === '1') {
+    return true
+  }
   if (!modelName) return false
-  const lowerModel = modelName.toLowerCase()
-  for (const pattern of MODELS_REQUIRING_XML_TOOLS) {
-    if (lowerModel.includes(pattern.toLowerCase())) {
-      return true
+
+  const config = modelCapabilities?.xmlTools || null
+  if (config) {
+    const patterns = [
+      ...(config[providerId] || []),
+      ...(config['*'] || []),
+    ]
+    for (const pattern of patterns) {
+      if (matchesPattern(modelName, pattern)) return true
     }
   }
-  return false
+
+  const lowerModel = modelName.toLowerCase()
+  return FALLBACK_XML_MODELS.some((pattern) => lowerModel.includes(pattern.toLowerCase()))
 }
 
 /**
@@ -76,10 +157,12 @@ function parseNativeToolResponse(openaiMessage) {
 console.log('[Startup] Claude Throne Proxy initializing...')
 console.log('[Startup] Configuration:')
 console.log(`[Startup] - Provider: ${provider}`)
+console.log(`[Startup] - Endpoint Kind: ${endpointKind}`)
 console.log(`[Startup] - Base URL: ${baseUrl}`)
 console.log(`[Startup] - Reasoning Model: ${models.reasoning}`)
 console.log(`[Startup] - Completion Model: ${models.completion}`)
 console.log(`[Startup] - API Key: ${key ? 'present' : 'MISSING'}`)
+console.log(`[Startup] - API Key Source: ${keySource || 'none'}`)
 console.log(`[Startup] - Debug Mode: ${process.env.DEBUG ? 'enabled' : 'disabled'}`)
 if (models.reasoning !== models.completion) {
   console.log('[Startup] - Two-model mode detected')
@@ -88,7 +171,33 @@ if (models.reasoning !== models.completion) {
 }
 
 const fastify = Fastify({
-  logger: true
+  logger: {
+    level: 'info',
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.body.system',
+        'req.body.messages',
+        'req.body.tools',
+        'req.body.metadata',
+        'res.headers["set-cookie"]'
+      ],
+      censor: '[REDACTED]'
+    },
+    serializers: {
+      req(req) { 
+        return { 
+          id: req.id, 
+          method: req.method, 
+          url: req.url, 
+          headers: { host: req.headers.host } 
+        }; 
+      },
+      res(res) { 
+        return { statusCode: res.statusCode }; 
+      }
+    }
+  }
 })
 function debug(...args) {
   if (!process.env.DEBUG) return
@@ -127,13 +236,32 @@ function mapStopReason(finishReason) {
   }
 }
 
+function buildUpstreamHeaders({ provider: providerId, endpointKind: upstreamKind, key: apiKey }) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...providerSpecificHeaders(providerId),
+  }
+
+  if (!apiKey) {
+    return headers
+  }
+
+  if (upstreamKind === ENDPOINT_KIND.ANTHROPIC_NATIVE) {
+    headers['x-api-key'] = apiKey
+    headers['anthropic-version'] = ANTHROPIC_VERSION
+    if (ANTHROPIC_BETA) {
+      headers['anthropic-beta'] = ANTHROPIC_BETA
+    }
+  } else {
+    headers['Authorization'] = `Bearer ${apiKey}`
+  }
+
+  return headers
+}
+
 fastify.get('/v1/models', async (request, reply) => {
   try {
-    const headers = {
-      'Content-Type': 'application/json',
-      ...providerSpecificHeaders(provider)
-    }
-    if (key) headers['Authorization'] = `Bearer ${key}`
+    const headers = buildUpstreamHeaders({ provider, endpointKind, key })
 
     const resp = await fetch(`${baseUrl}/v1/models`, { 
       method: 'GET', 
@@ -153,13 +281,13 @@ fastify.get('/v1/models', async (request, reply) => {
 })
 
 fastify.get('/healthz', async (request, reply) => {
-    return {
-        status: 'ok',
-        version: '1.4.19',
-        provider,
-        baseUrl,
-        models,
-    }
+  return {
+    status: 'ok',
+    version: packageVersion,
+    provider,
+    baseUrl,
+    models,
+  }
 })
 
 fastify.get('/health', async (request, reply) => {
@@ -167,7 +295,7 @@ fastify.get('/health', async (request, reply) => {
         status: 'healthy',
         provider,
         baseUrl,
-        hasApiKey: !!key,
+        hasApiKey: true, // Key is available from provider detection
         models: {
             reasoning: models.reasoning || 'not set',
             completion: models.completion || 'not set'
@@ -294,7 +422,7 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
       || (payload.thinking ? models.reasoning : models.completion)
 
     // Conditionally inject XML tool instructions for models that need them
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
     const messagesWithXML = needsXMLTools
       ? injectXMLToolInstructions(messages, tools)
       : messages
@@ -312,13 +440,11 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
       openaiPayload.tools = tools
     }
 
-    const headers = {
-      'Content-Type': 'application/json',
-      ...providerSpecificHeaders(provider)
-    }
-    if (key) {
-      headers['Authorization'] = 'Bearer ***REDACTED***'
-    }
+    const headers = buildUpstreamHeaders({
+      provider,
+      endpointKind,
+      key: key ? '***REDACTED***' : null
+    })
 
     return {
       debug: true,
@@ -348,8 +474,131 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
 fastify.post('/v1/messages', async (request, reply) => {
   try {
     const payload = request.body
+    const requestStartMs = Date.now()
+    let firstChunkLogged = false
+    let ttfbMs = null
+    const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE
 
+    if (!key) {
+      reply.code(400)
+      return {
+        error: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`,
+      }
+    }
 
+    const requestUrl = isAnthropicNative
+      ? `${normalizedBaseUrl}/v1/messages`
+      : `${normalizedBaseUrl}/v1/chat/completions`
+    const headers = buildUpstreamHeaders({ provider, endpointKind, key })
+
+    if (isAnthropicNative) {
+      console.log(`[Anthropic Native] Handling request for provider: ${provider}`)
+      console.log(`[Anthropic Native] Forwarding to: ${requestUrl}`)
+      console.log(`[Anthropic Native] Authentication: x-api-key header injected`)
+    }
+    
+    console.log(`[Request] Starting request to ${requestUrl}`)
+
+    if (isAnthropicNative) {
+      const anthropicPayload = buildAnthropicPayload(payload)
+
+      const upstreamResponse = await fetch(requestUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(anthropicPayload)
+      })
+
+      const elapsedMs = Date.now() - requestStartMs
+      console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${upstreamResponse.status})`)
+
+      if (!upstreamResponse.ok) {
+        const errorDetails = await upstreamResponse.text()
+        let errorJson
+        try {
+          errorJson = JSON.parse(errorDetails)
+        } catch {
+          errorJson = {
+            error: {
+              message: errorDetails,
+              type: 'upstream_error'
+            }
+          }
+        }
+
+        console.error('[Anthropic Error]', {
+          status: upstreamResponse.status,
+          provider,
+          messageCount: Array.isArray(payload?.messages) ? payload.messages.length : 0,
+          error: errorJson.error?.message?.slice?.(0, 200) || errorDetails.slice(0, 200),
+        })
+
+        reply.code(upstreamResponse.status)
+        return errorJson
+      }
+
+      if (payload.stream === true) {
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive'
+        })
+
+        try {
+          const reader = upstreamResponse.body?.getReader()
+          const decoder = new TextDecoder('utf-8')
+
+          if (!reader) {
+            throw new Error('Upstream stream reader unavailable')
+          }
+
+          let done = false
+          while (!done) {
+            const { value, done: doneReading } = await reader.read()
+            done = doneReading
+            if (value) {
+              const chunk = decoder.decode(value)
+              if (!firstChunkLogged && chunk.trim()) {
+                ttfbMs = Date.now() - requestStartMs
+                debug('Anthropic streaming first-byte timing:', { ttfbMs, chunkLength: chunk.length })
+                firstChunkLogged = true
+              }
+              reply.raw.write(chunk)
+              if (typeof reply.raw.flush === 'function') {
+                reply.raw.flush()
+              }
+            }
+          }
+
+          reply.raw.end()
+        } catch (streamErr) {
+          console.error('[Error] Anthropic stream relay failed:', streamErr)
+          if (!reply.raw.writableEnded) {
+            try {
+              reply.raw.write(`event: error\ndata: ${JSON.stringify({
+                type: 'error',
+                error: {
+                  type: 'internal_error',
+                  message: streamErr.message
+                }
+              })}\n\n`)
+            } catch {}
+            reply.raw.end()
+          }
+        }
+        return
+      }
+
+      const text = await upstreamResponse.text()
+      try {
+        const data = JSON.parse(text)
+        reply.code(upstreamResponse.status)
+        reply.type('application/json').send(data)
+      } catch {
+        reply.code(upstreamResponse.status)
+        reply.type('application/json').send({ error: text })
+      }
+      return
+    }
 
     // Build messages array for the OpenAI payload.
     // Start with system messages if provided.
@@ -441,7 +690,7 @@ fastify.post('/v1/messages', async (request, reply) => {
     }
 
     // Conditionally inject XML tool instructions for models that need them
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel)
+    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
     const messagesWithXML = needsXMLTools
       ? injectXMLToolInstructions(messages, tools)
       : messages
@@ -483,38 +732,10 @@ fastify.post('/v1/messages', async (request, reply) => {
       }
     }
 
-    // Build headers (let fetch handle connection management automatically)
-    const headers = {
-      'Content-Type': 'application/json',
-      ...providerSpecificHeaders(provider)
-    }
-
-    if (key) {
-      headers['Authorization'] = `Bearer ${key}`
-    }
-
-    // Validate configuration early
-    debug('API key check:', { provider, hasKey: !!key })
-    if (!key) {
-      debug('No API key found, returning 400')
-      reply.code(400)
-      return {
-        error: `No API key found for provider "${provider}". Checked CUSTOM_API_KEY, API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, GROQ_API_KEY.`,
-      }
-    }
-    
-    const requestStartMs = Date.now()
-    let firstChunkLogged = false
-    let ttfbMs = null
-    
-    console.log(`[Request] Starting request to ${baseUrl}/v1/chat/completions`)
-    console.log(`[Request] Model: ${openaiPayload.model}, Streaming: ${openaiPayload.stream}`)
-    console.log(`[Request] Messages: ${messages.length}, Tools: ${tools.length}`)
-    console.log(`[Request] Max tokens: ${openaiPayload.max_tokens || 'default'}, Temperature: ${openaiPayload.temperature}`)
-    
     // No timeout - let reasoning models take the time they need
     // System TCP timeout (75-120s) will handle truly hung connections
-    const openaiResponse = await fetch(`${baseUrl}/v1/chat/completions`, {
+    
+    const openaiResponse = await fetch(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(openaiPayload)
@@ -540,10 +761,10 @@ fastify.post('/v1/messages', async (request, reply) => {
         }
       }
       
-      // Enhanced logging for debugging
+      // Enhanced logging for debugging (redacted)
       console.error('[OpenRouter Error]', {
         status: openaiResponse.status,
-        model: openaiPayload.model,
+        model: '[REDACTED]',
         provider,
         messageCount: messages.length,
         toolCount: tools.length,
@@ -566,7 +787,7 @@ fastify.post('/v1/messages', async (request, reply) => {
       debug('OpenRouter error response:', {
         status: openaiResponse.status,
         statusText: openaiResponse.statusText,
-        baseUrl,
+        requestUrl,
         requestedModel: payload.model,
         selectedModel: openaiPayload.model,
         elapsedMs,
@@ -577,12 +798,12 @@ fastify.post('/v1/messages', async (request, reply) => {
       return errorJson
     }
     
-    debug('OpenRouter response timing:', { baseUrl, elapsedMs, status: openaiResponse.status })
+    debug('OpenRouter response timing:', { requestUrl, elapsedMs, status: openaiResponse.status })
 
     // If stream is not enabled, process the complete response.
     if (!openaiPayload.stream) {
       const data = await openaiResponse.json()
-      debug('OpenAI response:', data)
+
       
       // Log token usage and timing for non-streaming
       const logInputTokens = data.usage?.prompt_tokens || 0
@@ -612,17 +833,17 @@ fastify.post('/v1/messages', async (request, reply) => {
       try {
         if (needsXMLTools) {
           // Parse XML tool calls from response content
-          debug('Parsing XML content:', openaiMessage.content)
+
           contentBlocks = parseAssistantMessage(openaiMessage.content || '')
-          debug('Parsed XML content blocks:', contentBlocks)
+
         } else {
           // Parse native OpenAI tool response format
           debug('Parsing native tool response')
           contentBlocks = parseNativeToolResponse(openaiMessage)
-          debug('Parsed native content blocks:', contentBlocks)
+
         }
       } catch (parseError) {
-        debug('Error parsing content:', parseError)
+
         // If parsing fails, create a simple text block with the raw content
         contentBlocks = [{
           type: 'text',
@@ -632,7 +853,7 @@ fastify.post('/v1/messages', async (request, reply) => {
 
       // Ensure we have at least one content block
       if (!contentBlocks || contentBlocks.length === 0) {
-        debug('No content blocks found, creating default text block')
+
         contentBlocks = [{
           type: 'text',
           text: openaiMessage.content || ''
@@ -732,7 +953,7 @@ fastify.post('/v1/messages', async (request, reply) => {
           
           // Log chunks only if DEBUG_CHUNKS is enabled
           if (process.env.DEBUG_CHUNKS) {
-            debug('OpenAI response chunk:', chunk)
+            
           }
           // OpenAI streaming responses are typically sent as lines prefixed with "data: "
           const lines = chunk.split('\n')
@@ -961,4 +1182,195 @@ const start = async () => {
   }
 }
 
-start()
+// Add debug before starting server to ensure routes are registered
+console.log('[Startup] About to register routes and start server...');
+
+// Start the server
+try {
+  start();
+} catch (err) {
+  console.error('[Startup] Failed to start server:', err);
+  process.exit(1);
+}
+
+function normalizeAnthropicSystem(system) {
+  if (!system) return undefined
+  if (typeof system === 'string') {
+    return [{ type: 'text', text: system }]
+  }
+  if (Array.isArray(system)) {
+    return system
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return { type: 'text', text: entry }
+        }
+        if (entry && typeof entry === 'object') {
+          if (entry.type) return { ...entry }
+          if (typeof entry.text === 'string') {
+            return { type: 'text', text: entry.text }
+          }
+        }
+        return null
+      })
+      .filter(Boolean)
+  }
+  if (system && typeof system === 'object') {
+    if (Array.isArray(system.content)) {
+      return system.content
+        .map((block) => normalizeAnthropicContentBlock(block))
+        .filter(Boolean)
+    }
+    if (typeof system.text === 'string') {
+      return [{ type: 'text', text: system.text }]
+    }
+  }
+  return undefined
+}
+
+function normalizeAnthropicContentBlock(block) {
+  if (!block) return null
+  if (typeof block === 'string') {
+    return { type: 'text', text: block }
+  }
+  if (typeof block !== 'object') {
+    return null
+  }
+  if (block.type === 'text') {
+    if (typeof block.text === 'string') {
+      return { type: 'text', text: block.text }
+    }
+    if (Array.isArray(block.content)) {
+      return {
+        type: 'text',
+        text: block.content
+          .map((item) => (typeof item === 'string' ? item : ''))
+          .join(' ')
+          .trim()
+      }
+    }
+  }
+  if (block.type === 'tool_use') {
+    return {
+      type: 'tool_use',
+      id: block.id,
+      name: block.name,
+      input: block.input ?? {}
+    }
+  }
+  if (block.type === 'tool_result') {
+    const normalized = {
+      type: 'tool_result',
+      tool_use_id: block.tool_use_id || block.id,
+    }
+    if (Array.isArray(block.content)) {
+      normalized.content = block.content
+    } else if (typeof block.text === 'string') {
+      normalized.content = block.text
+    } else if (block.content !== undefined) {
+      normalized.content = block.content
+    }
+    if (block.is_error !== undefined) normalized.is_error = block.is_error
+    return normalized
+  }
+  if (block.type) {
+    return { ...block }
+  }
+  if (typeof block.text === 'string') {
+    return { type: 'text', text: block.text }
+  }
+  return null
+}
+
+function normalizeAnthropicContent(content) {
+  if (!content) return []
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }]
+  }
+  if (Array.isArray(content)) {
+    return content.map((block) => normalizeAnthropicContentBlock(block)).filter(Boolean)
+  }
+  if (typeof content === 'object') {
+    const block = normalizeAnthropicContentBlock(content)
+    return block ? [block] : []
+  }
+  return []
+}
+
+function normalizeAnthropicMessage(msg) {
+  if (!msg || typeof msg !== 'object') return null
+  const normalized = {
+    role: msg.role || 'user',
+    content: normalizeAnthropicContent(msg.content),
+  }
+  if (msg.id) normalized.id = msg.id
+  if (msg.metadata) normalized.metadata = msg.metadata
+  if (msg.stop_reason) normalized.stop_reason = msg.stop_reason
+  if (msg.stop_sequence) normalized.stop_sequence = msg.stop_sequence
+  if (msg.type) normalized.type = msg.type
+  return normalized
+}
+
+function formatAnthropicTool(tool) {
+  if (!tool || typeof tool !== 'object') return null
+  const formatted = {
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema || tool.parameters || {},
+  }
+  if (tool.cache_control) formatted.cache_control = tool.cache_control
+  if (tool.metadata) formatted.metadata = tool.metadata
+  return formatted
+}
+
+function buildAnthropicPayload(payload = {}) {
+  const result = {}
+
+  if (payload.model) result.model = payload.model
+  if (typeof payload.system === 'string') {
+    result.system = payload.system
+  } else {
+    const systemBlocks = normalizeAnthropicSystem(payload.system)
+    if (systemBlocks && systemBlocks.length > 0) {
+      result.system = systemBlocks
+    }
+  }
+
+  const messages = Array.isArray(payload.messages)
+    ? payload.messages.map((msg) => normalizeAnthropicMessage(msg)).filter(Boolean)
+    : []
+  result.messages = messages
+
+  if (Array.isArray(payload.tools) && payload.tools.length > 0) {
+    const tools = payload.tools.map((tool) => formatAnthropicTool(tool)).filter(Boolean)
+    if (tools.length > 0) {
+      result.tools = tools
+    }
+  }
+
+  const optionalKeys = [
+    'metadata',
+    'tool_choice',
+    'thinking',
+    'stop_sequences',
+    'temperature',
+    'top_p',
+    'top_k',
+    'max_tokens',
+    'extra_headers',
+    'response_format',
+  ]
+
+  for (const keyName of optionalKeys) {
+    if (payload[keyName] !== undefined) {
+      result[keyName] = payload[keyName]
+    }
+  }
+
+  result.stream = payload.stream === true
+
+  if (payload.timeout !== undefined) {
+    result.timeout = payload.timeout
+  }
+
+  return result
+}

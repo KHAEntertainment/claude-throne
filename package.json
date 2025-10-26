@@ -1,14 +1,14 @@
 {
   "name": "anthropic-proxy",
   "description": "Universal AI model routing for Claude Code with VS Code extension and secure credential management.",
-  "version": "1.4.5",
+  "version": "1.5.14",
   "type": "module",
   "bin": {
     "anthropic-proxy": "index.js"
   },
   "scripts": {
     "start": "node index.js",
-    "test": "vitest run --minWorkers=1 --maxWorkers=1",
+    "test": "VITEST_MAX_THREADS=1 VITEST_MIN_THREADS=1 vitest run",
     "ext:dev": "cd extensions/claude-throne && npm run watch",
     "webview:build": "cd extensions/claude-throne/webview && npm run build",
     "secretsd": "cd backends/python/ct_secretsd && python -m ct_secretsd",

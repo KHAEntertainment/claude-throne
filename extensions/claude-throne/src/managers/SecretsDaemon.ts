@@ -13,7 +13,7 @@ export interface SecretsDaemonInfo {
 }
 
 export interface StartProxyConfig {
-  provider: 'openrouter' | 'openai' | 'together' | 'groq' | 'custom'
+  provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
   custom_url?: string
   reasoning_model?: string
   execution_model?: string

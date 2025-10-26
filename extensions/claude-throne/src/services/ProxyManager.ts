@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import { SecretsService } from './Secrets'
 
 export interface ProxyStartOptions {
-  provider: 'openrouter' | 'openai' | 'together' | 'grok' | 'custom'
+  provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
   customBaseUrl?: string
   port: number
   debug?: boolean
@@ -168,13 +168,26 @@ export class ProxyManager {
     this.log.appendLine(`[ProxyManager] - Completion Model: ${opts.completionModel || 'not set'} ${opts.completionModel && cfg.get<string>('completionModel') === opts.completionModel ? '(from config)' : ''}`)
     this.log.appendLine(`[ProxyManager] - Custom Base URL: ${opts.customBaseUrl || 'none'}`)
     
+    // Log Anthropic-native provider mode
+    if (opts.provider === 'deepseek' || opts.provider === 'glm') {
+      this.log.appendLine(`[ProxyManager] Anthropic-native provider detected: ${opts.provider}`)
+      this.log.appendLine(`[ProxyManager] Proxy will inject x-api-key header and forward to provider endpoint`)
+      this.log.appendLine(`[ProxyManager] Provider endpoint: ${opts.provider === 'deepseek' ? 'https://api.deepseek.com/anthropic' : 'https://api.z.ai/api/anthropic'}`)
+    }
+    
     // Log environment variable keys (without exposing sensitive values)
     const envKeys = Object.keys(env).filter(k => k.includes('API_KEY') || k.includes('MODEL') || k.includes('BASE_URL'))
     this.log.appendLine(`[ProxyManager] - Environment variables set: ${envKeys.join(', ')}`)
 
     this.log.appendLine(`[proxy] starting via ${nodeBin} ${entry} on port ${opts.port}`)
+    // Explicitly add ZAI_API_KEY to environment if it exists
+    const proxyEnv = { ...env }
+    if (process.env.ZAI_API_KEY) {
+      proxyEnv.ZAI_API_KEY = process.env.ZAI_API_KEY
+    }
+    
     this.proc = cp.spawn(nodeBin, [entry, '--port', String(opts.port)], {
-      env,
+      env: proxyEnv,
       stdio: 'pipe',
       detached: false,
     })
@@ -284,6 +297,7 @@ export class ProxyManager {
   private async buildEnvForProvider(opts: ProxyStartOptions): Promise<NodeJS.ProcessEnv> {
     const base: NodeJS.ProcessEnv = { ...process.env }
     base.PORT = String(opts.port)
+    base.FORCE_PROVIDER = opts.provider
     if (opts.debug) base.DEBUG = '1'
     // Only set model env vars if they have actual values (don't override with empty strings)
     if (opts.reasoningModel) base.REASONING_MODEL = opts.reasoningModel
@@ -315,11 +329,18 @@ export class ProxyManager {
         setBaseUrl('https://api.together.xyz')
         break
       }
-      case 'grok': {
-        const key = await this.secrets.getProviderKey('grok')
-        if (!key) throw new Error('Grok API key not set')
-        base.GROQ_API_KEY = key
-        setBaseUrl('https://api.groq.com/openai')
+      case 'deepseek': {
+        const key = await this.secrets.getProviderKey('deepseek')
+        if (!key) throw new Error('Deepseek API key not set')
+        base.DEEPSEEK_API_KEY = key
+        setBaseUrl('https://api.deepseek.com/anthropic')
+        break
+      }
+      case 'glm': {
+        const key = await this.secrets.getProviderKey('glm')
+        if (!key) throw new Error('GLM API key not set')
+        base.ZAI_API_KEY = key
+        setBaseUrl('https://api.z.ai/api/anthropic')
         break
       }
       case 'custom': {
@@ -337,4 +358,3 @@ export class ProxyManager {
     return base
   }
 }
-

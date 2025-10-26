@@ -1,0 +1,16 @@
+{
+  "xmlTools": {
+    "deepseek": [
+      "/^deepseek[-_]?v[0-9]/i",
+      "deepseek-v2",
+      "deepseek-v3"
+    ],
+    "glm": [
+      "z-ai/glm-*",
+      "/^glm[-_]?[0-9]+(\\.[0-9]+)?/i"
+    ],
+    "*": [
+      "inclusionai/ling-1t"
+    ]
+  }
+}
