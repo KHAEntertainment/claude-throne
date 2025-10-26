@@ -2,7 +2,10 @@
 
 Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provides universal AI model routing for Claude Code and other Anthropic-compatible clients. It maintains the Anthropic-style API surface while intelligently routing to OpenAI-compatible providers, with a focus on enhanced authentication, provider ergonomics, and developer experience.
 
-**Version 1.5.0 - Production Ready** ✅
+> **🎉 v1.5.17 - NEW: Native support for GLM Coding Plan and Deepseek providers!** ✨  
+> Connect directly to Deepseek and GLM's Anthropic-compatible endpoints. OpenRouter support is still being tested.
+
+**Version 1.5.17 - Production Ready** ✅
 
 <p align="center">
   <img src="docs/images/thronekeeper-hero.png" alt="Thronekeeper - Universal AI Model Routing" width="800">
