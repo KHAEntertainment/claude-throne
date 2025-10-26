@@ -1,6 +1,22 @@
 import { promises as fs } from 'fs'
 import * as path from 'path'
 
+/**
+ * Settings Architecture:
+ * 
+ * 1. .vscode/settings.json (workspace settings):
+ *    - Extension config: claudeThrone.provider, claudeThrone.reasoningModel, etc.
+ *    - Optional terminal env (only if applyToTerminal: true, defaults to false)
+ *    - Purpose: Store workspace preferences for the extension
+ * 
+ * 2. .claude/settings.json (Claude Code runtime):
+ *    - Runtime config for Claude Code extension/CLI
+ *    - Always managed when autoApply: true (default)
+ *    - Purpose: Configure Claude Code to use the proxy
+ * 
+ * Terminal env vars in .vscode/settings.json are OPTIONAL and disabled by default.
+ * Most users should NOT have terminal env vars - they're only for CLI usage in integrated terminal.
+ */
 export async function updateClaudeSettings(
   workspaceDir: string,
   newEnv: Record<string, any>,
@@ -13,6 +29,8 @@ export async function updateClaudeSettings(
   
   for (const fileName of fileNames) {
     const filePath = path.join(workspaceDir, fileName)
+    
+    // Process each file independently with its own scope to prevent contamination
     let settings: any = {}
     let fileExistedBefore = false
 
@@ -36,6 +54,7 @@ export async function updateClaudeSettings(
         if (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) {
           for (const key in newEnv) {
             delete settings.env[key]
+            console.log(`[ClaudeSettings] Removed key from ${fileName}: ${key}`)
           }
           if (Object.keys(settings.env).length === 0) {
             delete settings.env
@@ -43,18 +62,23 @@ export async function updateClaudeSettings(
         }
         console.log(`[ClaudeSettings] Reverted settings for ${fileName}`)
       } else {
-        const baseEnv = (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) ? settings.env : {}
-        // Apply updates, removing keys with null values
-        const updatedEnv = { ...baseEnv }
+        // CLONE the current env to prevent mutation across files
+        const baseEnv = (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) 
+          ? { ...settings.env }
+          : {}
+        
+        // Apply updates to THIS file's env independently
         for (const key in newEnv) {
           if (newEnv[key] === null) {
-            delete updatedEnv[key]
-            console.log(`[ClaudeSettings] Removing key: ${key}`)
+            delete baseEnv[key]
+            console.log(`[ClaudeSettings] Removing key from ${fileName}: ${key}`)
           } else {
-            updatedEnv[key] = newEnv[key]
+            baseEnv[key] = newEnv[key]
+            console.log(`[ClaudeSettings] Setting ${key} in ${fileName}: ${baseEnv[key]}`)
           }
         }
-        settings.env = updatedEnv
+        
+        settings.env = baseEnv
         console.log(`[ClaudeSettings] Updated settings.env for ${fileName}: ${JSON.stringify(settings.env, null, 2)}`)
       }
 

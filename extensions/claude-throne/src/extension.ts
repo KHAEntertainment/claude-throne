@@ -122,32 +122,30 @@ export function activate(context: vscode.ExtensionContext) {
     // Get cached Anthropic defaults
     const defaults = cfg.get<any>('anthropicDefaults', null);
     
-    // First remove Thronekeeper settings, then restore Anthropic defaults
+    // Single atomic operation: remove Thronekeeper overrides and restore Anthropic defaults
     if (settingsDir) {
-        // Remove Thronekeeper env vars
-        await updateClaudeSettings(settingsDir, {
-            ANTHROPIC_BASE_URL: null,
-            ANTHROPIC_MODEL: null,
-            ANTHROPIC_DEFAULT_SONNET_MODEL: null,
-            ANTHROPIC_DEFAULT_OPUS_MODEL: null,
-            ANTHROPIC_DEFAULT_HAIKU_MODEL: null,
-        }, /*revert*/ true);
+        const restoreEnv: Record<string, any> = {
+            // Always set base URL to Anthropic
+            ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+        };
         
-        // Restore Anthropic defaults if available
-        if (defaults && defaults.opus && defaults.sonnet && defaults.haiku) {
-            await updateClaudeSettings(settingsDir, {
-                ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-                ANTHROPIC_MODEL: defaults.sonnet,
-                ANTHROPIC_DEFAULT_OPUS_MODEL: defaults.opus,
-                ANTHROPIC_DEFAULT_SONNET_MODEL: defaults.sonnet,
-                ANTHROPIC_DEFAULT_HAIKU_MODEL: defaults.haiku
-            }, /*revert*/ false);
+        // If we have cached defaults, restore model settings
+        if (defaults?.opus && defaults?.sonnet && defaults?.haiku) {
+            restoreEnv.ANTHROPIC_MODEL = defaults.sonnet;
+            restoreEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = defaults.opus;
+            restoreEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = defaults.sonnet;
+            restoreEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = defaults.haiku;
         } else {
-            // Fallback to just base URL if defaults not cached
-            await updateClaudeSettings(settingsDir, {
-                ANTHROPIC_BASE_URL: 'https://api.anthropic.com'
-            }, /*revert*/ false);
+            // No cached defaults: explicitly remove model env vars
+            // (Claude Code will use its own defaults)
+            restoreEnv.ANTHROPIC_MODEL = null;
+            restoreEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = null;
+            restoreEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = null;
+            restoreEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = null;
         }
+        
+        // Single call: atomic update
+        await updateClaudeSettings(settingsDir, restoreEnv, /*revert*/ false);
     }
     
     // NOTE: We do NOT clear reasoningModel/completionModel here anymore
@@ -176,15 +174,17 @@ export function activate(context: vscode.ExtensionContext) {
       } catch {}
     }
 
-    // Restore ANTHROPIC_BASE_URL to Anthropic default in terminal env (only if applyToTerminal is enabled)
+    // Handle terminal env vars based on applyToTerminal setting
     const applyToTerminal = cfg.get<boolean>('applyToTerminal', false);
     let termTouched = 0;
+    const termKeys = [
+      'terminal.integrated.env.osx',
+      'terminal.integrated.env.linux',
+      'terminal.integrated.env.windows',
+    ];
+    
     if (applyToTerminal) {
-      const termKeys = [
-        'terminal.integrated.env.osx',
-        'terminal.integrated.env.linux',
-        'terminal.integrated.env.windows',
-      ];
+      // applyToTerminal is enabled: restore ANTHROPIC_BASE_URL to Anthropic default
       for (const key of termKeys) {
         try {
           const wsConfig = vscode.workspace.getConfiguration();
@@ -195,6 +195,35 @@ export function activate(context: vscode.ExtensionContext) {
             termTouched++;
           }
         } catch {}
+      }
+    } else {
+      // applyToTerminal is disabled: clean up any stale ANTHROPIC_* vars
+      // (they may have been left by old versions or manual edits)
+      log.appendLine('[revertApply] applyToTerminal=false, cleaning any stale terminal env vars...');
+      for (const key of termKeys) {
+        try {
+          const wsConfig = vscode.workspace.getConfiguration();
+          const cur = wsConfig.get<Record<string, string>>(key);
+          
+          // If ANTHROPIC_* vars exist, remove them
+          if (cur && (cur.ANTHROPIC_BASE_URL || cur.ANTHROPIC_MODEL)) {
+            const cleaned = { ...cur };
+            delete cleaned.ANTHROPIC_BASE_URL;
+            delete cleaned.ANTHROPIC_MODEL;
+            delete cleaned.ANTHROPIC_DEFAULT_OPUS_MODEL;
+            delete cleaned.ANTHROPIC_DEFAULT_SONNET_MODEL;
+            delete cleaned.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+            
+            // Only update if we actually removed something
+            if (Object.keys(cleaned).length !== Object.keys(cur).length) {
+              await wsConfig.update(key, Object.keys(cleaned).length > 0 ? cleaned : undefined, scope);
+              termTouched++;
+              log.appendLine(`[revertApply] Cleaned stale ANTHROPIC_* vars from ${key}`);
+            }
+          }
+        } catch (err) {
+          log.appendLine(`[revertApply] Failed to clean ${key}: ${err}`);
+        }
       }
     }
 
