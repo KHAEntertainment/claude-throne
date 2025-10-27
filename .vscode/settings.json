@@ -6,6 +6,6 @@
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
-  "claudeThrone.provider": "deepseek",
+  "claudeThrone.provider": "custom",
   "claudeThrone.valueModel": "deepseek-chat"
 }

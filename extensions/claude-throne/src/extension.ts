@@ -363,6 +363,17 @@ export function activate(context: vscode.ExtensionContext) {
     await storeAnthropicKeyHelper(secrets)
   })
 
+  const refreshAnthropicDefaults = vscode.commands.registerCommand('claudeThrone.refreshAnthropicDefaults', async () => {
+    try {
+      const defaults = await fetchAnthropicDefaults(secrets)
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
+      vscode.window.showInformationMessage(`Anthropic defaults refreshed: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
+    }
+  })
+
   const startProxy = vscode.commands.registerCommand('claudeThrone.startProxy', async () => {
     try {
       const startTime = Date.now()
@@ -615,6 +626,7 @@ export function activate(context: vscode.ExtensionContext) {
     storeCustomKey,
     storeAnyKey,
     storeAnthropicKey,
+    refreshAnthropicDefaults,
     startProxy,
     stopProxy,
     status,

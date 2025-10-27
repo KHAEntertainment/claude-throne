@@ -113,9 +113,30 @@
       if (e.key === 'Enter') storeApiKey();
     });
 
+    // Anthropic API Key
+    const showAnthropicKeyBtn = document.getElementById('showAnthropicKeyBtn');
+    showAnthropicKeyBtn?.addEventListener('click', toggleAnthropicKeyVisibility);
+
+        const storeAnthropicKeyBtn = document.getElementById('storeAnthropicKeyBtn');
+    storeAnthropicKeyBtn?.addEventListener('click', storeAnthropicKey);
+        
+        const anthropicKeyInput = document.getElementById('anthropicKeyInput');
+    anthropicKeyInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') storeAnthropicKey();
+    });
+
     // Two Model Toggle
     const twoModelToggle = document.getElementById('twoModelToggle');
     twoModelToggle?.addEventListener('change', onTwoModelToggle);
+
+    // Debug Checkbox
+    const debugCheckbox = document.getElementById('debugCheckbox');
+    debugCheckbox?.addEventListener('change', (e) => {
+      vscode.postMessage({
+        type: 'updateDebug',
+        enabled: e.target.checked
+      });
+    });
 
     // Model Search
     const modelSearch = document.getElementById('modelSearch');
@@ -194,6 +215,9 @@
         break;
       case 'keyStored':
         handleKeyStored(message.payload);
+        break;
+      case 'anthropicKeyStored':
+        handleAnthropicKeyStored(message.payload);
         break;
       case 'proxyError':
         showError(message.payload);
@@ -317,17 +341,31 @@
       }
     }
 
-    // Update help text
-    const providerInfo = providers[state.provider];
-    if (providerInfo && helpDiv) {
-      if (providerInfo.helpUrl) {
-        helpDiv.innerHTML = `<a href="${providerInfo.helpUrl}" target="_blank">Get API Key →</a>`;
-      } else {
-        helpDiv.innerHTML = '';
-      }
+    // Show/hide "Add Custom Provider" button
+    const addBtn = document.getElementById('addCustomProviderBtn');
+    if (addBtn) {
+      // Only show button when "custom" provider is selected (for one-off custom providers)
+      addBtn.style.display = (state.provider === 'custom') ? 'block' : 'none';
+      addBtn.title = 'Create a new saved custom provider that appears in the provider list';
+    }
+
+    // Update help text - prioritize explicit cases first
+    if (state.provider === 'custom' && helpDiv) {
+      // For one-off custom provider
+      helpDiv.innerHTML = 'Custom = one‑off URL below. Saved Custom Providers appear in this list when created.';
     } else if (isCustomProvider && helpDiv) {
-      // For custom providers, don't show any help text
-      helpDiv.innerHTML = '';
+      // For saved custom providers
+      helpDiv.innerHTML = 'This is a saved custom provider. URL and key are stored for reuse.';
+    } else {
+      // For built-in providers
+      const providerInfo = providers[state.provider];
+      if (providerInfo && helpDiv) {
+        if (providerInfo.helpUrl) {
+          helpDiv.innerHTML = `<a href="${providerInfo.helpUrl}" target="_blank">Get API Key →</a>`;
+        } else {
+          helpDiv.innerHTML = '';
+        }
+      }
     }
   }
 
@@ -394,6 +432,60 @@
         } else {
       console.error('[handleKeyStored] Failed to store key:', payload.error);
       showNotification('Failed to store API key: ' + (payload.error || 'Unknown error'), 'error');
+    }
+  }
+
+  function toggleAnthropicKeyVisibility() {
+    const input = document.getElementById('anthropicKeyInput');
+    const icon = document.getElementById('anthropicKeyIcon');
+    
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.textContent = '🙈';
+    } else {
+      input.type = 'password';
+      icon.textContent = '👁';
+    }
+  }
+
+  function storeAnthropicKey() {
+    const input = document.getElementById('anthropicKeyInput');
+    const key = input.value.trim();
+    
+    console.log('[storeAnthropicKey] Called with key length:', key.length);
+    
+    if (!key) {
+      console.log('[storeAnthropicKey] No key provided');
+      return;
+    }
+    
+    console.log('[storeAnthropicKey] Sending storeAnthropicKey message');
+    try {
+      vscode.postMessage({
+        type: 'storeAnthropicKey',
+        key: key
+      });
+      console.log('[storeAnthropicKey] Message sent successfully');
+      // Clear input after sending
+      input.value = '';
+    } catch (err) {
+      console.error('[storeAnthropicKey] Error sending message:', err);
+    }
+  }
+
+  function handleAnthropicKeyStored(payload) {
+    console.log('[handleAnthropicKeyStored] Received payload:', payload);
+    
+    if (payload.success) {
+      // Show success feedback
+      console.log('[handleAnthropicKeyStored] Anthropic key stored successfully');
+      showNotification('Anthropic API key stored successfully', 'success');
+      
+      // Request updated keys status to refresh UI
+      vscode.postMessage({ type: 'requestKeys' });
+    } else {
+      console.error('[handleAnthropicKeyStored] Failed to store Anthropic key:', payload.error);
+      showNotification('Failed to store Anthropic API key: ' + (payload.error || 'Unknown error'), 'error');
     }
   }
 
@@ -585,21 +677,19 @@
       providerSelect.appendChild(option);
     });
     
-    // Add separator and custom providers if any exist
+    // Add custom providers in optgroup if any exist
     if (state.customProviders && state.customProviders.length > 0) {
-      const separator = document.createElement('option');
-      separator.disabled = true;
-      separator.textContent = '--- Custom Providers ---';
-      separator.style.fontStyle = 'italic';
-      separator.style.color = 'var(--vscode-descriptionForeground)';
-      providerSelect.appendChild(separator);
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = 'Custom Providers';
       
       state.customProviders.forEach(provider => {
         const option = document.createElement('option');
         option.value = provider.id;
         option.textContent = provider.name;
-        providerSelect.appendChild(option);
+        optgroup.appendChild(option);
       });
+      
+      providerSelect.appendChild(optgroup);
     }
     
     // Restore selection
@@ -706,6 +796,19 @@
       if (providerInfo && providerInfo.helpUrl && helpDiv) {
         helpDiv.innerHTML = `<a href="${providerInfo.helpUrl}" target="_blank">Get API Key →</a>`;
       }
+    }
+    
+    // Update Anthropic key input
+    const anthropicInput = document.getElementById('anthropicKeyInput');
+    const anthropicStoreBtn = document.getElementById('storeAnthropicKeyBtn');
+    
+    if (keys.anthropic && anthropicInput && anthropicStoreBtn) {
+      anthropicInput.placeholder = '••••••••••••••••';
+      anthropicInput.value = '';
+      anthropicStoreBtn.textContent = 'Update Key';
+    } else if (anthropicInput && anthropicStoreBtn) {
+      anthropicInput.placeholder = 'sk-ant-...';
+      anthropicStoreBtn.textContent = 'Store Key';
     }
   }
 
@@ -1230,6 +1333,11 @@
       updateTwoModelUI();
     }
 
+    // Set debug checkbox state
+    if (config.debug !== undefined) {
+      document.getElementById('debugCheckbox').checked = config.debug;
+    }
+
     // Update selected models display
     updateSelectedModelsDisplay();
 
@@ -1270,18 +1378,27 @@
     // Show error with manual entry option for all providers
     container.innerHTML = `
       <div class="empty-state">
-        <p style="color: var(--vscode-errorForeground); margin-bottom: 12px;">${escapeHtml(payload.error)}</p>
-        <div style="margin-top: 16px; border-top: 1px solid var(--vscode-panel-border); padding-top: 16px;">
-          <h4 style="margin: 0 0 8px 0; color: var(--vscode-foreground);">Manual Model Entry</h4>
-          <p style="margin: 0 0 8px 0; color: var(--vscode-descriptionForeground);">Enter model IDs for ${providers[state.provider]?.name || state.provider} (comma-separated):</p>
-          <input type="text" id="manualModelInput" placeholder="e.g., ${example}" style="width: 100%; margin-top: 8px; padding: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); font-family: monospace; font-size: 12px;" />
-          <div style="margin-top: 8px; display: flex; gap: 8px;">
-            <button id="addManualModelBtn" style="padding: 6px 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer;">Add Models</button>
-            <button id="retryModelsBtn" style="padding: 6px 12px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; cursor: pointer;">Retry Loading</button>
+        <p class="empty-state-error">${escapeHtml(payload.error)}</p>
+        
+        <div class="manual-entry-section">
+          <h4 class="manual-entry-header">Manual Model Entry</h4>
+          <p class="manual-entry-description">Enter model IDs for ${providers[state.provider]?.name || state.provider} (comma-separated):</p>
+          
+          <input 
+            type="text" 
+            id="manualModelInput" 
+            class="manual-entry-input"
+            placeholder="e.g., ${example}" 
+          />
+          
+          <div class="manual-entry-actions">
+            <button id="addManualModelBtn" class="manual-entry-btn manual-entry-btn-primary">Add Models</button>
+            <button id="retryModelsBtn" class="manual-entry-btn manual-entry-btn-secondary">Retry Loading</button>
           </div>
-          <div style="margin-top: 8px; font-size: 11px; color: var(--vscode-descriptionForeground);">
-            <p style="margin: 4px 0;">💡 Common models for ${providers[state.provider]?.name || state.provider}:</p>
-            <code style="background: var(--vscode-textBlockQuote-background); padding: 2px 4px; border-radius: 2px; display: block; margin: 4px 0; white-space: pre-wrap;">${example}</code>
+          
+          <div class="manual-entry-hint">
+            <p class="manual-entry-hint-title">💡 Common models for ${providers[state.provider]?.name || state.provider}:</p>
+            <div class="manual-entry-example">${example}</div>
           </div>
         </div>
       </div>
@@ -1298,7 +1415,7 @@
         if (modelNames.length > 0) {
           // Validate model IDs (basic validation)
           const validModels = modelNames.filter(name => name.length > 0 && !name.includes(' '));
-          const invalidModels = modelNames.filter(name => !name.length > 0 || name.includes(' '));
+          const invalidModels = modelNames.filter(name => (name.length === 0) || name.includes(' '));
           
           if (invalidModels.length > 0) {
             showNotification(`Invalid model names: ${invalidModels.join(', ')}`, 'error');

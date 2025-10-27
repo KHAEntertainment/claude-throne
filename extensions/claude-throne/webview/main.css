@@ -520,6 +520,107 @@ body {
   font-size: 12px;
 }
 
+.empty-state-error {
+  color: var(--vscode-errorForeground);
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+/* Manual Entry Styles */
+.manual-entry-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.manual-entry-header {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--vscode-editor-foreground);
+}
+
+.manual-entry-description {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin: 0 0 12px 0;
+  line-height: 1.4;
+}
+
+.manual-entry-input {
+  width: 100%;
+  padding: 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  background-color: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 2px;
+  margin-bottom: 12px;
+}
+
+.manual-entry-input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.manual-entry-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.manual-entry-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.manual-entry-btn-primary {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.manual-entry-btn-primary:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.manual-entry-btn-secondary {
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.manual-entry-btn-secondary:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.manual-entry-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+.manual-entry-hint-title {
+  margin: 0 0 4px 0;
+  font-weight: 500;
+}
+
+.manual-entry-example {
+  background-color: var(--vscode-textBlockQuote-background);
+  padding: 8px;
+  border-radius: 2px;
+  border-left: 2px solid var(--vscode-textBlockQuote-border);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 4px 0;
+}
+
 /* Footer */
 .footer {
   border-top: 1px solid var(--vscode-panel-border);

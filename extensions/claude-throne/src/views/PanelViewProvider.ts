@@ -145,6 +145,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'requestCustomProviders':
             await this.postCustomProviders()
             break
+          case 'storeAnthropicKey':
+            await this.handleStoreAnthropicKey(msg.key)
+            break
+          case 'updateDebug':
+            await this.handleUpdateDebug(msg.enabled)
+            break
           default:
             this.log.appendLine(`Unknown message type received: ${msg.type}`)
         }
@@ -202,6 +208,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
     }
     
+    // Check Anthropic key
+    const anthropicKey = await this.secrets.getAnthropicKey()
+    map.anthropic = !!(anthropicKey && anthropicKey.trim())
+    
     this.log.appendLine(`📤 Sending keys status to webview: ${JSON.stringify(map)}`)
     this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
@@ -217,12 +227,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const twoModelMode = config.get('twoModelMode', false);
     const port = config.get('proxy.port');
     const customBaseUrl = config.get('customBaseUrl', '');
+    const debug = config.get('proxy.debug', false);
     
-    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`);
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}, debug=${debug}`);
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, selectedCustomProviderId, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl }
+      payload: { provider, selectedCustomProviderId, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl, debug }
     });
   }
 
@@ -718,6 +729,40 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async handleStoreAnthropicKey(key: string) {
+    try {
+      if (!key || !key.trim()) {
+        throw new Error('Anthropic API key cannot be empty')
+      }
+
+      this.log.appendLine(`🔐 Storing Anthropic API key...`)
+      
+      // Store the key using secrets service
+      await this.secrets.setAnthropicKey(key.trim())
+      
+      // Show VS Code notification
+      vscode.window.showInformationMessage('Anthropic API key stored. Fetching latest models...')
+      
+      // Refresh defaults without prompting user
+      await vscode.commands.executeCommand('claudeThrone.refreshAnthropicDefaults')
+      
+      // Send success message to webview
+      this.view?.webview.postMessage({ 
+        type: 'anthropicKeyStored', 
+        payload: { success: true }
+      })
+      
+      this.log.appendLine('✅ Anthropic API key stored successfully')
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to store Anthropic key: ${err}`)
+      vscode.window.showErrorMessage(`Failed to store Anthropic API key: ${err}`)
+      this.view?.webview.postMessage({ 
+        type: 'anthropicKeyStored', 
+        payload: { success: false, error: String(err) }
+      })
+    }
+  }
+
   private async handleStartProxy() {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
@@ -915,6 +960,18 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
   }
 
+  private async handleUpdateDebug(enabled: boolean) {
+    this.log.appendLine(`[handleUpdateDebug] Debug ${enabled ? 'enabled' : 'disabled'}`)
+    
+    await vscode.workspace.getConfiguration('claudeThrone').update(
+      'proxy.debug', 
+      enabled, 
+      vscode.ConfigurationTarget.Workspace
+    )
+    
+    this.log.appendLine(`[handleUpdateDebug] Debug setting updated successfully`)
+  }
+
   private getHtml(): string {
     const nonce = String(Math.random()).slice(2)
     const cssUri = this.view!.webview.asWebviewUri(
@@ -953,7 +1010,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             <div id="providerHelp" class="provider-help"></div>
           </div>
 
-          <button class="btn-add-custom-provider" id="addCustomProviderBtn" type="button">+ Add Custom Provider</button>
+
           
           <div id="customUrlSection" class="custom-url-section">
             <div class="form-group">
@@ -1017,6 +1074,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             <div class="form-group">
               <label class="form-label" for="portInput">Proxy Port</label>
               <input class="form-input" type="number" id="portInput" value="3000" min="1000" max="65535">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="anthropicKeyInput">Anthropic API Key (Optional)</label>
+              <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 8px;">Used to fetch the latest Claude models when reverting to defaults. Leave empty to use cached model versions.</p>
+              <div class="input-group">
+                <input class="form-input" type="password" id="anthropicKeyInput" placeholder="sk-ant-...">
+                <button class="input-group-btn" id="showAnthropicKeyBtn" type="button" title="Toggle visibility">
+                  <span id="anthropicKeyIcon">👁</span>
+                </button>
+              </div>
+              <button class="btn-primary" id="storeAnthropicKeyBtn" type="button" style="margin-top: 8px; width: 100%;">Store Anthropic Key</button>
+              <div class="security-note">🔒 Stored securely in your system keychain</div>
+              <button class="btn-add-custom-provider" id="addCustomProviderBtn" type="button" style="display: none;">+ Add Custom Provider</button>
             </div>
             <div class="form-group">
               <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">

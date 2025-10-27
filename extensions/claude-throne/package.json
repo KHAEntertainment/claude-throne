@@ -121,12 +121,12 @@
           "default": 3000,
           "minimum": 1,
           "maximum": 65535,
-          "markdownDescription": "Port for the bundled proxy server. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
+          "markdownDescription": "Port for the bundled proxy server."
         },
         "claudeThrone.proxy.debug": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable DEBUG=1 for the bundled proxy. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
+          "markdownDescription": "Enable debug logging for the proxy server."
         },
         "claudeThrone.proxy.skipHealthCheck": {
           "type": "boolean",
@@ -136,7 +136,7 @@
         "claudeThrone.autoApply": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Automatically apply proxy configuration to Claude Code when the proxy starts. The extension writes the proxy URL and model configuration to `.claude/settings.json`. Disable if you prefer manual control via the 'Apply to Claude Code' button."
+          "markdownDescription": "## Auto-Apply Settings\n\nControl how Thronekeeper applies configuration to Claude Code when the proxy starts.\n\nWhen enabled, the extension writes the proxy URL and model configuration to `.claude/settings.json`."
         },
         "claudeThrone.applyToExtensions": {
           "type": "boolean",
@@ -165,12 +165,12 @@
             "openai",
             "anthropic"
           ],
-          "markdownDescription": "Detection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
+          "markdownDescription": "## Advanced Settings\n\nDetection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
         },
         "claudeThrone.twoModelMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable three-model mode to use separate models for reasoning, coding, and value tasks. When disabled, the reasoning model is used for all operations."
+          "markdownDescription": "## Model Configuration\n\nEnable three-model mode to use separate models for reasoning, coding, and value tasks.\n\n**Note:** Model selection is now managed through the Thronekeeper panel (View → Thronekeeper)."
         },
         "claudeThrone.reasoningModel": {
           "type": "string",
@@ -187,16 +187,7 @@
           "default": "",
           "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
         },
-        "claudeThrone.customCombos": {
-          "type": "array",
-          "default": [],
-          "markdownDescription": "User-saved model combinations (global)."
-        },
-        "claudeThrone.workspaceCombos": {
-          "type": "array",
-          "default": [],
-          "markdownDescription": "User-saved model combinations (workspace-specific)."
-        },
+
         "claudeThrone.savedCombos": {
           "type": "array",
           "default": [],
@@ -218,7 +209,7 @@
             }
           },
           "scope": "window",
-          "markdownDescription": "User-saved model combinations for quick access."
+          "markdownDescription": "## Saved Configurations\n\nManage your saved model combos and custom providers through the Thronekeeper panel.\n\nThese are automatically saved when you use the 'Save Model Combo' feature."
         },
         "claudeThrone.customProviders": {
           "type": "array",
@@ -253,7 +244,7 @@
             "custom"
           ],
           "scope": "window",
-          "markdownDescription": "AI provider to use for model routing."
+          "markdownDescription": "## Provider Configuration\n\nSelect your AI provider from the dropdown. Saved custom providers will appear here automatically.\n\n**Note:** Provider selection and API keys are now managed through the Thronekeeper panel (View → Thronekeeper)."
         },
         "claudeThrone.selectedCustomProviderId": {
           "type": "string",
@@ -282,14 +273,9 @@
             }
           },
           "scope": "application",
-          "markdownDescription": "Cached Anthropic default models (internal use)."
+          "markdownDescription": "## Advanced Settings\n\nCached Anthropic default models (internal use). Updated when you store an Anthropic API key."
         },
-        "claudeThrone.anthropicApiKey": {
-          "type": "string",
-          "default": "",
-          "scope": "application",
-          "markdownDescription": "Anthropic API key for fetching latest model defaults. **This key is stored securely in your system keychain, not in settings.json.**\n\nTo set your key, run the command: `Thronekeeper: Store Anthropic API Key` from the Command Palette (Cmd/Ctrl+Shift+P).\n\nGet your API key from: [Anthropic Console](https://console.anthropic.com/settings/keys)\n\n**Note:** This is optional. The extension works without it, but having it ensures you always get the newest Claude models when reverting to Anthropic defaults."
-        },
+
         "claudeThrone.customEndpointOverrides": {
           "type": "object",
           "default": {},
