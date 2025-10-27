@@ -305,9 +305,15 @@
     const combosCard = document.getElementById('popularCombosCard');
     const helpDiv = document.getElementById('providerHelp');
     const deleteBtn = document.getElementById('deleteCustomProviderBtn');
+    const nameSection = document.getElementById('customProviderNameSection');
     
     // Check if this is a custom provider
     const isCustomProvider = state.customProviders.some(p => p.id === state.provider);
+    
+    // Show/hide custom provider name section
+    if (nameSection) {
+      nameSection.style.display = (state.provider === 'custom') ? 'block' : 'none';
+    }
     
     // Show/hide custom URL
     if (state.provider === 'custom' || isCustomProvider) {
@@ -322,6 +328,16 @@
       }
     } else {
       customSection?.classList.remove('visible');
+    }
+
+    // Clear form fields when switching to custom provider
+    if (state.provider === 'custom') {
+      const nameInput = document.getElementById('customProviderNameInput');
+      const urlInput = document.getElementById('customUrl');
+      const keyInput = document.getElementById('apiKeyInput');
+      if (nameInput) nameInput.value = '';
+      if (urlInput) urlInput.value = '';
+      if (keyInput) keyInput.value = '';
     }
 
     // Show/hide popular combos (OpenRouter only)
@@ -347,6 +363,20 @@
       // Only show button when "custom" provider is selected (for one-off custom providers)
       addBtn.style.display = (state.provider === 'custom') ? 'block' : 'none';
       addBtn.title = 'Create a new saved custom provider that appears in the provider list';
+    }
+
+    // Update button behavior for custom provider creation
+    const storeKeyBtn = document.getElementById('storeKeyBtn');
+    if (storeKeyBtn) {
+      if (state.provider === 'custom') {
+        storeKeyBtn.textContent = 'Add Custom Provider';
+        storeKeyBtn.onclick = addCustomProviderFromMain;
+        storeKeyBtn.title = 'Create a new saved custom provider';
+      } else {
+        storeKeyBtn.textContent = 'Store Key';
+        storeKeyBtn.onclick = storeApiKey;
+        storeKeyBtn.title = 'Store API key';
+      }
     }
 
     // Update help text - prioritize explicit cases first
@@ -471,6 +501,78 @@
     } catch (err) {
       console.error('[storeAnthropicKey] Error sending message:', err);
     }
+  }
+
+  function addCustomProviderFromMain() {
+    const name = document.getElementById('customProviderNameInput')?.value?.trim();
+    const url = document.getElementById('customUrl')?.value?.trim();
+    const key = document.getElementById('apiKeyInput')?.value?.trim();
+    
+    console.log('[addCustomProviderFromMain] Called with:', { name, url, keyLength: key?.length });
+    
+    // Validate all three fields
+    if (!name) {
+      showNotification('Provider name is required', 'error');
+      return;
+    }
+    
+    if (!url) {
+      showNotification('Base URL is required', 'error');
+      return;
+    }
+    
+    if (!key) {
+      showNotification('API key is required', 'error');
+      return;
+    }
+    
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (e) {
+      showNotification('Please enter a valid URL', 'error');
+      return;
+    }
+    
+    // Generate ID from name (reuse existing logic from requestAddCustomProvider)
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    
+    // Check for conflicts with built-in providers
+    const builtinProviders = ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'];
+    if (builtinProviders.includes(id)) {
+      showNotification('Provider ID conflicts with built-in provider. Please choose a different name.', 'error');
+      return;
+    }
+    
+    // Check for duplicate ID
+    if (state.customProviders.some(p => p.id === id)) {
+      showNotification('A custom provider with this name already exists.', 'error');
+      return;
+    }
+    
+    // Check limit
+    if (state.customProviders.length >= 10) {
+      showNotification('Maximum of 10 custom providers reached. Delete an existing provider to add a new one.', 'error');
+      return;
+    }
+    
+    console.log('[addCustomProviderFromMain] Adding provider:', { name, url, id });
+    
+    vscode.postMessage({
+      type: 'saveCustomProvider',
+      name: name.trim(),
+      baseUrl: url.trim(),
+      id
+    });
+    
+    // Clear form fields after submission
+    const nameInput = document.getElementById('customProviderNameInput');
+    const urlInput = document.getElementById('customUrl');
+    const keyInput = document.getElementById('apiKeyInput');
+    
+    if (nameInput) nameInput.value = '';
+    if (urlInput) urlInput.value = '';
+    if (keyInput) keyInput.value = '';
   }
 
   function handleAnthropicKeyStored(payload) {

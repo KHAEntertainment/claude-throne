@@ -1010,7 +1010,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             <div id="providerHelp" class="provider-help"></div>
           </div>
 
-
+          <div id="customProviderNameSection" class="form-group" style="display: none;">
+            <label class="form-label">Provider Name</label>
+            <input class="form-input" type="text" id="customProviderNameInput" placeholder="e.g., My Custom API">
+            <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 8px;">This name will appear in the provider dropdown.</p>
+          </div>
           
           <div id="customUrlSection" class="custom-url-section">
             <div class="form-group">
