@@ -565,6 +565,16 @@
       id
     });
     
+    // Store intended provider ID for auto-selection after save
+    const intendedProviderId = id;
+    
+    vscode.postMessage({
+      type: 'saveCustomProvider',
+      name: name.trim(),
+      baseUrl: url.trim(),
+      id
+    });
+    
     // Clear form fields after submission
     const nameInput = document.getElementById('customProviderNameInput');
     const urlInput = document.getElementById('customUrl');
@@ -573,6 +583,13 @@
     if (nameInput) nameInput.value = '';
     if (urlInput) urlInput.value = '';
     if (keyInput) keyInput.value = '';
+    
+    // After successful save, set as active provider (small delay for backend response)
+    setTimeout(() => {
+      state.provider = intendedProviderId;
+      updateProviderDropdown();
+      updateProviderUI();
+    }, 300);
   }
 
   function handleAnthropicKeyStored(payload) {
@@ -740,6 +757,14 @@
       if (state.provider) {
         document.getElementById('providerSelect').value = state.provider;
         updateProviderUI();
+      } else {
+        // If no provider is selected (e.g., after new provider creation), default to the last added custom provider
+        const lastCustomProvider = payload.providers[payload.providers.length - 1];
+        if (lastCustomProvider) {
+          state.provider = lastCustomProvider.id;
+          document.getElementById('providerSelect').value = lastCustomProvider.id;
+          updateProviderUI();
+        }
       }
     }
   }
