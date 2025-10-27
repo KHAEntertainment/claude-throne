@@ -15,6 +15,7 @@
     valueModel: '',
     models: [],
     modelsCache: {},
+    customProviders: [],
     // Provider-specific model storage
     modelsByProvider: {
       openrouter: { reasoning: '', coding: '', value: '' },
@@ -142,9 +143,26 @@
       });
     });
 
+    // Settings Button
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', () => {
+        console.log('[Settings] Opening Thronekeeper settings');
+        vscode.postMessage({ type: 'openSettings' });
+      });
+    }
+
     // Save Combo Button
     const saveComboBtn = document.getElementById('saveComboBtn');
     saveComboBtn?.addEventListener('click', requestSaveCombo);
+
+    // Add Custom Provider Button
+    const addCustomProviderBtn = document.getElementById('addCustomProviderBtn');
+    addCustomProviderBtn?.addEventListener('click', requestAddCustomProvider);
+
+    // Delete Custom Provider Button
+    const deleteCustomProviderBtn = document.getElementById('deleteCustomProviderBtn');
+    deleteCustomProviderBtn?.addEventListener('click', deleteCustomProvider);
 
     // Message handler
     window.addEventListener('message', handleMessage);
@@ -165,6 +183,10 @@
         handleConfigLoaded(message.payload);
         break;
       case 'popularModels':
+        // Store featured pairings for later use
+        window.lastFeaturedPairings = message.payload.pairings || [];
+        // Store saved combos in state for consistency
+        state.customCombos = message.payload.savedCombos || [];
         handlePopularModels(message.payload);
         break;
       case 'keys':
@@ -182,6 +204,15 @@
       case 'combosLoaded':
         handleCombosLoaded(message.payload);
         break;
+      case 'comboDeleted':
+        handleComboDeleted(message.payload);
+        break;
+      case 'customProvidersLoaded':
+        handleCustomProvidersLoaded(message.payload);
+        break;
+      case 'customProviderDeleted':
+        handleCustomProviderDeleted(message.payload);
+        break;
       default:
         console.log('[handleMessage] Unknown message type:', message.type);
     }
@@ -192,11 +223,9 @@
     if (saved) {
       state = { ...state, ...saved };
       
-      // Restore UI
-      document.getElementById('providerSelect').value = state.provider;
+      // Restore UI - provider dropdown will be populated after custom providers load
       document.getElementById('twoModelToggle').checked = state.twoModelMode;
       updateTwoModelUI();
-      updateProviderUI();
     }
   }
 
@@ -219,6 +248,11 @@
     const newProvider = e.target.value;
     state.provider = newProvider;
     state.models = [];
+    
+    // Initialize models storage for custom provider if needed
+    if (!state.modelsByProvider[newProvider]) {
+      state.modelsByProvider[newProvider] = { reasoning: '', coding: '', value: '' };
+    }
     
     // Restore models for the new provider
     if (state.modelsByProvider[newProvider]) {
@@ -246,10 +280,22 @@
     const customSection = document.getElementById('customUrlSection');
     const combosCard = document.getElementById('popularCombosCard');
     const helpDiv = document.getElementById('providerHelp');
+    const deleteBtn = document.getElementById('deleteCustomProviderBtn');
+    
+    // Check if this is a custom provider
+    const isCustomProvider = state.customProviders.some(p => p.id === state.provider);
     
     // Show/hide custom URL
-    if (state.provider === 'custom') {
+    if (state.provider === 'custom' || isCustomProvider) {
       customSection?.classList.add('visible');
+      
+      // If it's a saved custom provider, populate its URL
+      if (isCustomProvider) {
+        const customProvider = state.customProviders.find(p => p.id === state.provider);
+        if (customProvider && document.getElementById('customUrl')) {
+          document.getElementById('customUrl').value = customProvider.baseUrl;
+        }
+      }
     } else {
       customSection?.classList.remove('visible');
     }
@@ -262,6 +308,15 @@
       combosCard?.classList.remove('visible');
     }
 
+    // Show/hide delete button for custom providers
+    if (deleteBtn) {
+      if (isCustomProvider) {
+        deleteBtn.style.display = 'block';
+      } else {
+        deleteBtn.style.display = 'none';
+      }
+    }
+
     // Update help text
     const providerInfo = providers[state.provider];
     if (providerInfo && helpDiv) {
@@ -270,6 +325,9 @@
       } else {
         helpDiv.innerHTML = '';
       }
+    } else if (isCustomProvider && helpDiv) {
+      // For custom providers, don't show any help text
+      helpDiv.innerHTML = '';
     }
   }
 
@@ -390,6 +448,12 @@
   }
 
   function requestSaveCombo() {
+    // Check if we've reached the 4-combo limit
+    if (state.customCombos && state.customCombos.length >= 4) {
+      showNotification('Maximum of 4 saved combos reached. Delete an existing combo to save a new one.', 'error');
+      return;
+    }
+    
     const name = prompt('Enter a name for this model combo:');
     if (!name || !name.trim()) {
       return;
@@ -420,6 +484,149 @@
     });
   }
 
+  function requestAddCustomProvider() {
+    // Check if we've reached the 10 provider limit
+    if (state.customProviders && state.customProviders.length >= 10) {
+      showNotification('Maximum of 10 custom providers reached. Delete an existing provider to add a new one.', 'error');
+      return;
+    }
+    
+    const name = prompt('Enter a name for this custom provider:');
+    if (!name || !name.trim()) {
+      return;
+    }
+    
+    const baseUrl = prompt('Enter the base URL (e.g., https://api.example.com/v1):');
+    if (!baseUrl || !baseUrl.trim()) {
+      return;
+    }
+    
+    // Basic URL validation
+    try {
+      new URL(baseUrl);
+    } catch (e) {
+      showNotification('Please enter a valid URL', 'error');
+      return;
+    }
+    
+    // Generate ID from name
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    
+    // Check for conflicts with built-in providers
+    const builtinProviders = ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'];
+    if (builtinProviders.includes(id)) {
+      showNotification('Provider ID conflicts with built-in provider. Please choose a different name.', 'error');
+      return;
+    }
+    
+    // Check for duplicate ID
+    if (state.customProviders.some(p => p.id === id)) {
+      showNotification('A custom provider with this name already exists.', 'error');
+      return;
+    }
+    
+    console.log('[requestAddCustomProvider] Adding provider:', { name, baseUrl, id });
+    
+    vscode.postMessage({
+      type: 'saveCustomProvider',
+      name: name.trim(),
+      baseUrl: baseUrl.trim(),
+      id
+    });
+  }
+
+  function handleCustomProvidersLoaded(payload) {
+    console.log('[handleCustomProvidersLoaded] Custom providers loaded:', payload);
+    
+    if (payload.providers) {
+      state.customProviders = payload.providers;
+      updateProviderDropdown();
+      
+      // Set provider value after dropdown is populated
+      if (state.provider) {
+        document.getElementById('providerSelect').value = state.provider;
+        updateProviderUI();
+      }
+    }
+  }
+
+  function handleCustomProviderDeleted(payload) {
+    console.log('[handleCustomProviderDeleted] Custom provider deleted:', payload);
+    
+    if (payload.providers) {
+      state.customProviders = payload.providers;
+      updateProviderDropdown();
+      
+      // If the deleted provider was currently selected, switch to default
+      if (payload.deletedId && state.provider === payload.deletedId) {
+        state.provider = 'openrouter';
+        document.getElementById('providerSelect').value = 'openrouter';
+        updateProviderUI();
+        loadModels();
+      }
+    }
+    
+    showNotification('Custom provider deleted successfully', 'success');
+  }
+
+  function updateProviderDropdown() {
+    const providerSelect = document.getElementById('providerSelect');
+    if (!providerSelect) return;
+    
+    // Clear existing options except the first one
+    const currentValue = providerSelect.value;
+    providerSelect.innerHTML = '';
+    
+    // Add built-in providers
+    Object.keys(providers).forEach(providerId => {
+      const option = document.createElement('option');
+      option.value = providerId;
+      option.textContent = providers[providerId].name;
+      providerSelect.appendChild(option);
+    });
+    
+    // Add separator and custom providers if any exist
+    if (state.customProviders && state.customProviders.length > 0) {
+      const separator = document.createElement('option');
+      separator.disabled = true;
+      separator.textContent = '--- Custom Providers ---';
+      separator.style.fontStyle = 'italic';
+      separator.style.color = 'var(--vscode-descriptionForeground)';
+      providerSelect.appendChild(separator);
+      
+      state.customProviders.forEach(provider => {
+        const option = document.createElement('option');
+        option.value = provider.id;
+        option.textContent = provider.name;
+        providerSelect.appendChild(option);
+      });
+    }
+    
+    // Restore selection
+    if (currentValue) {
+      providerSelect.value = currentValue;
+    }
+  }
+
+  function deleteCustomProvider() {
+    const isCustomProvider = state.customProviders.some(p => p.id === state.provider);
+    if (!isCustomProvider) {
+      return;
+    }
+    
+    const provider = state.customProviders.find(p => p.id === state.provider);
+    if (!provider) {
+      return;
+    }
+    
+    if (confirm(`Delete custom provider "${provider.name}"? This will also remove its stored API key.`)) {
+      vscode.postMessage({
+        type: 'deleteCustomProvider',
+        id: provider.id
+      });
+    }
+  }
+
   function handleCombosLoaded(payload) {
     console.log('[handleCombosLoaded] Combos loaded:', payload);
     
@@ -441,7 +648,34 @@
     // Store the combos for later display
     if (payload.combos) {
       state.customCombos = payload.combos;
+      
+      // Re-render combo display with saved combos included
+      // Get current featured pairings and merge with saved combos
+      const currentPayload = {
+        pairings: window.lastFeaturedPairings || [],
+        savedCombos: payload.combos
+      };
+      handlePopularModels(currentPayload);
     }
+  }
+
+  function handleComboDeleted(payload) {
+    console.log('[handleComboDeleted] Combo deleted:', payload);
+    
+    // Update state with new combos
+    if (payload.combos) {
+      state.customCombos = payload.combos;
+      
+      // Re-render combo display
+      const currentPayload = {
+        pairings: window.lastFeaturedPairings || [],
+        savedCombos: payload.combos
+      };
+      handlePopularModels(currentPayload);
+    }
+    
+    // Show success notification
+    showNotification('Combo deleted successfully', 'success');
   }
 
   function handleKeysLoaded(keys) {
@@ -747,30 +981,96 @@
     });
   }
 
-  // Popular Combos
+  // Popular Combos - Now handles both featured and saved combos
   function handlePopularModels(payload) {
     const container = document.getElementById('combosGrid');
     if (!container) return;
 
-    const pairings = payload.pairings || [];
+    const featuredPairings = payload.pairings || [];
+    const savedCombos = payload.savedCombos || [];
         
-        if (pairings.length === 0) {
+    if (featuredPairings.length === 0 && savedCombos.length === 0) {
       container.innerHTML = '<div class="empty-state">No combos available</div>';
-            return;
-        }
-        
-    container.innerHTML = pairings.slice(0, 4).map(pairing => `
-      <button class="combo-btn" data-reasoning="${escapeHtml(pairing.reasoning)}" data-completion="${escapeHtml(pairing.completion)}">
-        ${escapeHtml(pairing.name)}
-      </button>
-    `).join('');
+      return;
+    }
+    
+    // Combine featured and saved combos
+    const allCombos = [
+      ...featuredPairings.map(combo => ({ ...combo, isSaved: false })),
+      ...savedCombos.map((combo, index) => ({ ...combo, isSaved: true, savedIndex: index }))
+    ];
+    
+    container.innerHTML = allCombos.map(combo => {
+      const baseClass = combo.isSaved ? 'combo-btn user-saved' : 'combo-btn';
+      const deleteBtn = combo.isSaved ? `<span class="combo-delete-btn" role="button" tabindex="0" data-index="${combo.savedIndex}">×</span>` : '';
+      
+      // Create tooltip with all three models
+      const tooltip = combo.value 
+        ? `Reasoning: ${combo.reasoning}\nCoding: ${combo.completion}\nValue: ${combo.value}`
+        : `Reasoning: ${combo.reasoning}\nCoding: ${combo.completion}`;
+      
+      return `
+        <button class="${baseClass}" 
+                data-reasoning="${escapeHtml(combo.reasoning)}" 
+                data-completion="${escapeHtml(combo.completion)}"
+                data-value="${escapeHtml(combo.value || '')}"
+                title="${escapeHtml(tooltip)}">
+          ${deleteBtn}${escapeHtml(combo.name)}
+        </button>
+      `;
+    }).join('');
 
-    // Add click handlers
-    container.querySelectorAll('.combo-btn').forEach(btn => {
+    // Add click handlers for combo buttons
+    container.querySelectorAll('.combo-btn:not(.user-saved)').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const reasoning = e.currentTarget.dataset.reasoning;
         const completion = e.currentTarget.dataset.completion;
-        applyCombo(reasoning, completion);
+        const value = e.currentTarget.dataset.value || completion;
+        applyCombo(reasoning, completion, value);
+      });
+    });
+    
+    // Add click handlers for user-saved combo buttons (excluding delete button clicks)
+    container.querySelectorAll('.combo-btn.user-saved').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        // Ignore clicks on delete button
+        if (e.target.classList.contains('combo-delete-btn')) {
+          return;
+        }
+        
+        const reasoning = e.currentTarget.dataset.reasoning;
+        const completion = e.currentTarget.dataset.completion;
+        const value = e.currentTarget.dataset.value || completion;
+        applyCombo(reasoning, completion, value);
+      });
+    });
+    
+    // Add click handlers for delete buttons (now spans with role="button")
+    container.querySelectorAll('.combo-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const index = parseInt(e.currentTarget.dataset.index);
+        if (!isNaN(index)) {
+          vscode.postMessage({
+            type: 'deleteCombo',
+            index: index
+          });
+        }
+      });
+      
+      // Add keyboard support for accessibility
+      btn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          const index = parseInt(e.currentTarget.dataset.index);
+          if (!isNaN(index)) {
+            vscode.postMessage({
+              type: 'deleteCombo',
+              index: index
+            });
+          }
+        }
       });
     });
   }
@@ -883,8 +1183,13 @@
     
     // Update UI with config
     if (config.provider) {
-      state.provider = config.provider;
-      document.getElementById('providerSelect').value = config.provider;
+      // Apply logic: if provider is 'custom' and we have selectedCustomProviderId, use that
+      if (config.provider === 'custom' && config.selectedCustomProviderId) {
+        state.provider = config.selectedCustomProviderId;
+      } else {
+        state.provider = config.provider;
+      }
+      // Note: provider dropdown value will be set after custom providers are loaded
       updateProviderUI();
     }
 

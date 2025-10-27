@@ -30,5 +30,17 @@ export class SecretsService {
   async deleteProviderKey(provider: string): Promise<void> {
     await this.deleteRaw(this.providerKey(provider))
   }
+
+  async getAnthropicKey(): Promise<string | undefined> {
+    return this.getRaw('claudeThrone:anthropic:apiKey')
+  }
+
+  async setAnthropicKey(value: string): Promise<void> {
+    await this.setRaw('claudeThrone:anthropic:apiKey', value)
+  }
+
+  async deleteAnthropicKey(): Promise<void> {
+    await this.deleteRaw('claudeThrone:anthropic:apiKey')
+  }
 }
 

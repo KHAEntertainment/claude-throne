@@ -1,6 +1,6 @@
 import { request } from 'undici'
 
-export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
+export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom' | string
 
 async function fetchModelsWithRetry(url: string, headers: Record<string, string>, maxRetries: number = 2): Promise<any> {
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {

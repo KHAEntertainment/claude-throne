@@ -185,6 +185,52 @@ body {
   display: block;
 }
 
+/* Add Custom Provider Button */
+.btn-add-custom-provider {
+  width: 100%;
+  height: 24px;
+  margin: 12px 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.btn-add-custom-provider:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.btn-add-custom-provider:active {
+  background-color: var(--vscode-button-secondaryBackground);
+}
+
+/* Custom Provider Delete Button */
+#deleteCustomProviderBtn {
+  border-left: 1px solid var(--vscode-input-border);
+  background-color: var(--vscode-errorForeground);
+  color: var(--vscode-button-foreground);
+}
+
+#deleteCustomProviderBtn:hover {
+  background-color: var(--vscode-errorForeground);
+  opacity: 0.8;
+}
+
+#deleteCustomProviderBtn span {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: bold;
+}
+
 /* Popular Combos */
 .combos-header {
   display: flex;
@@ -489,6 +535,32 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.settings-btn {
+  font-size: 14px;
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-btn:hover {
+  opacity: 1;
+  background-color: var(--vscode-list-hoverBackground);
+  border-radius: 2px;
+}
+
+.settings-btn:active,
+.settings-btn:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 .footer-right {

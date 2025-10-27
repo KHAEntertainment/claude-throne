@@ -89,6 +89,10 @@
         "title": "Thronekeeper: Store Provider API Key"
       },
       {
+        "command": "claudeThrone.storeAnthropicKey",
+        "title": "Thronekeeper: Store Anthropic API Key"
+      },
+      {
         "command": "claudeThrone.startProxy",
         "title": "Thronekeeper: Start Proxy"
       },
@@ -216,6 +220,27 @@
           "scope": "window",
           "markdownDescription": "User-saved model combinations for quick access."
         },
+        "claudeThrone.customProviders": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "baseUrl", "id"]
+          },
+          "scope": "window",
+          "markdownDescription": "Saved custom provider configurations. Each provider can have its own name, base URL, and API key. Manage these through the Thronekeeper panel."
+        },
         "claudeThrone.provider": {
           "type": "string",
           "default": "openrouter",
@@ -229,6 +254,12 @@
           ],
           "scope": "window",
           "markdownDescription": "AI provider to use for model routing."
+        },
+        "claudeThrone.selectedCustomProviderId": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Selected custom provider ID when provider is set to 'custom'."
         },
         "claudeThrone.customBaseUrl": {
           "type": "string",
@@ -252,6 +283,12 @@
           },
           "scope": "application",
           "markdownDescription": "Cached Anthropic default models (internal use)."
+        },
+        "claudeThrone.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "markdownDescription": "Anthropic API key for fetching latest model defaults. **This key is stored securely in your system keychain, not in settings.json.**\n\nTo set your key, run the command: `Thronekeeper: Store Anthropic API Key` from the Command Palette (Cmd/Ctrl+Shift+P).\n\nGet your API key from: [Anthropic Console](https://console.anthropic.com/settings/keys)\n\n**Note:** This is optional. The extension works without it, but having it ensures you always get the newest Claude models when reverting to Anthropic defaults."
         },
         "claudeThrone.customEndpointOverrides": {
           "type": "object",

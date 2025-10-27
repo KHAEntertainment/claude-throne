@@ -4,8 +4,9 @@ import * as path from 'node:path'
 import { SecretsService } from './Secrets'
 
 export interface ProxyStartOptions {
-  provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
+  provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom' | string
   customBaseUrl?: string
+  customProviderId?: string
   port: number
   debug?: boolean
   reasoningModel?: string
@@ -347,10 +348,34 @@ export class ProxyManager {
         const baseUrl = (opts.customBaseUrl || '').trim()
         if (!baseUrl) throw new Error('Custom base URL is empty; set claudeThrone.customBaseUrl')
         setBaseUrl(baseUrl)
-        const key = await this.secrets.getProviderKey('custom')
-        if (!key) throw new Error('Custom API key not set')
+        // Use customProviderId if provided, otherwise fall back to 'custom'
+        const providerId = opts.customProviderId || 'custom'
+        const key = await this.secrets.getProviderKey(providerId)
+        if (!key) throw new Error(`API key not set for provider: ${providerId}`)
         // The proxy resolves API key with CUSTOM_API_KEY / API_KEY first for custom URL
         base.API_KEY = key
+        break
+      }
+      default: {
+        // Handle dynamic custom providers (any string not in built-in cases)
+        const customProviders = vscode.workspace.getConfiguration('claudeThrone').get<any[]>('customProviders', [])
+        const customProvider = customProviders.find(p => p.id === opts.provider)
+        
+        if (customProvider) {
+          // This is a saved custom provider
+          setBaseUrl(customProvider.baseUrl)
+          const key = await this.secrets.getProviderKey(opts.provider)
+          if (!key) throw new Error(`API key not set for provider: ${opts.provider}`)
+          base.API_KEY = key
+        } else {
+          // Fallback for unknown providers
+          const baseUrl = (opts.customBaseUrl || '').trim()
+          if (!baseUrl) throw new Error('Custom base URL is empty; set claudeThrone.customBaseUrl')
+          setBaseUrl(baseUrl)
+          const key = await this.secrets.getProviderKey(opts.provider)
+          if (!key) throw new Error(`API key not set for provider: ${opts.provider}`)
+          base.API_KEY = key
+        }
         break
       }
     }

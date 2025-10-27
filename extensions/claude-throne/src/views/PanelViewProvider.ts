@@ -16,7 +16,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   ) {
     // Initialize provider from configuration
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    this.currentProvider = cfg.get<string>('provider', 'openrouter')
+    const provider = cfg.get<string>('provider', 'openrouter')
+    const selectedCustomProviderId = cfg.get<string>('selectedCustomProviderId', '')
+    
+    // If provider is 'custom' and we have a selectedCustomProviderId, use that as the current provider
+    if (provider === 'custom' && selectedCustomProviderId) {
+      this.currentProvider = selectedCustomProviderId
+    } else {
+      this.currentProvider = provider
+    }
   }
 
   async reveal() {
@@ -51,6 +59,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             this.postConfig()
             this.postModels()
             await this.postPopularModels()
+            await this.postCustomProviders()
+            // Refresh keys after custom providers are loaded to include custom provider keys
+            await this.postKeys()
             break
           case 'requestStatus':
             this.postStatus()
@@ -122,6 +133,18 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'saveCombo':
             await this.handleSaveCombo(msg.name, msg.reasoningModel, msg.codingModel, msg.valueModel)
             break
+          case 'deleteCombo':
+            await this.handleDeleteCombo(msg.index)
+            break
+          case 'saveCustomProvider':
+            await this.handleSaveCustomProvider(msg.name, msg.baseUrl, msg.id)
+            break
+          case 'deleteCustomProvider':
+            await this.handleDeleteCustomProvider(msg.id)
+            break
+          case 'requestCustomProviders':
+            await this.postCustomProviders()
+            break
           default:
             this.log.appendLine(`Unknown message type received: ${msg.type}`)
         }
@@ -154,6 +177,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async postKeys() {
     const providers = ['openrouter','openai','together','deepseek','glm','custom']
     const map: Record<string, boolean> = {}
+    
+    // Check built-in providers
     for (const p of providers) {
       try {
         const k = await this.secrets.getProviderKey(p)
@@ -162,6 +187,21 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         map[p] = false
       }
     }
+    
+    // Check custom providers
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const customProviders = cfg.get<any[]>('customProviders', [])
+    for (const p of customProviders) {
+      if (p.id && p.id.trim()) {
+        try {
+          const k = await this.secrets.getProviderKey(p.id)
+          map[p.id] = !!(k && k.trim())
+        } catch {
+          map[p.id] = false
+        }
+      }
+    }
+    
     this.log.appendLine(`📤 Sending keys status to webview: ${JSON.stringify(map)}`)
     this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
@@ -170,6 +210,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     if (!this.view) return;
     const config = vscode.workspace.getConfiguration('claudeThrone');
     const provider = config.get('provider');
+    const selectedCustomProviderId = config.get('selectedCustomProviderId', '');
     const reasoningModel = config.get('reasoningModel');
     const completionModel = config.get('completionModel');
     const valueModel = config.get('valueModel');
@@ -181,7 +222,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl }
+      payload: { provider, selectedCustomProviderId, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl }
     });
   }
 
@@ -238,11 +279,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`🔑 API key ${apiKey ? 'found' : 'NOT found'} for ${provider}`)
       
       // Get base URL for model listing
-      // Note: Deepseek and GLM use OpenAI-compatible endpoints for model listing
-      // but Anthropic-native endpoints for actual API calls
+      // Check if this is a saved custom provider first
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      const customProvider = customProviders.find(p => p.id === provider)
+      
       let baseUrl = 'https://openrouter.ai/api'
       
-      if (provider === 'custom') {
+      if (customProvider) {
+        // This is a saved custom provider
+        baseUrl = customProvider.baseUrl
+      } else if (provider === 'custom') {
         baseUrl = cfg.get<string>('customBaseUrl', '')
       } else if (provider === 'openai') {
         baseUrl = 'https://api.openai.com/v1'
@@ -304,6 +350,28 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async postCustomProviders() {
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      
+      // Validate each provider has required fields
+      const validProviders = customProviders.filter(provider => {
+        return provider && 
+               typeof provider.name === 'string' && provider.name.trim() &&
+               typeof provider.baseUrl === 'string' && provider.baseUrl.trim() &&
+               typeof provider.id === 'string' && provider.id.trim()
+      })
+      
+      this.view?.webview.postMessage({ 
+        type: 'customProvidersLoaded', 
+        payload: { providers: validProviders } 
+      })
+    } catch (err) {
+      this.log.appendLine(`Failed to load custom providers: ${err}`)
+    }
+  }
+
   private async postPopularModels() {
     // Try to load popular pairings from models configuration
     try {
@@ -317,10 +385,28 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const pairingsContent = await fs.readFile(pairingsPath.fsPath, 'utf8')
       const pairingsData = JSON.parse(pairingsContent)
       
+      // Load saved combos from config with validation
+      const rawSavedCombos = cfg.get<any[]>('savedCombos', [])
+      const savedCombos = rawSavedCombos.filter(combo => {
+        // Validate that combo has required string fields
+        return combo && 
+               typeof combo.name === 'string' && combo.name.trim() &&
+               typeof combo.reasoning === 'string' && combo.reasoning.trim() &&
+               typeof combo.completion === 'string' && combo.completion.trim() &&
+               (typeof combo.value === 'string' && combo.value.trim() || true); // value is optional
+      }).map(combo => {
+        // Normalize older two-field combos by setting value = completion for compatibility
+        return {
+          ...combo,
+          value: combo.value || combo.completion
+        };
+      })
+      
       this.view?.webview.postMessage({ 
         type: 'popularModels', 
         payload: {
           pairings: pairingsData.featured_pairings,
+          savedCombos: savedCombos,
           currentReasoning: reasoningModel,
           currentCompletion: completionModel
         }
@@ -329,7 +415,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       console.error('Failed to load popular models:', err)
       this.view?.webview.postMessage({ 
         type: 'popularModels', 
-        payload: { pairings: [] }
+        payload: { pairings: [], savedCombos: [] }
       })
     }
   }
@@ -341,9 +427,24 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     // Store current provider for model loading
     this.currentProvider = provider
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
     try {
-      await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
+      // Check if this is a custom provider
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      const customProvider = customProviders.find(p => p.id === provider)
+      
+      if (customProvider) {
+        // This is a saved custom provider - set provider to 'custom' and save the custom provider ID
+        await cfg.update('provider', 'custom', vscode.ConfigurationTarget.Workspace)
+        await cfg.update('selectedCustomProviderId', provider, vscode.ConfigurationTarget.Workspace)
+        await cfg.update('customBaseUrl', customProvider.baseUrl, vscode.ConfigurationTarget.Workspace)
+        await cfg.update('customEndpointKind', 'openai')
+      } else {
+        // Built-in provider - clear selectedCustomProviderId
+        await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
+        await cfg.update('selectedCustomProviderId', '', vscode.ConfigurationTarget.Workspace)
+        await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
+      }
     } catch (err) {
       console.error('Failed to update provider config:', err)
     }
@@ -357,7 +458,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         this.handleListModels(false)
       }
     } else {
-      this.handleListModels(false)
+      // Check if it's a saved custom provider
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      const customProvider = customProviders.find(p => p.id === provider)
+      
+      if (customProvider) {
+        this.handleListModels(false)
+      } else {
+        this.handleListModels(false)
+      }
     }
     this.postPopularModels()
   }
@@ -377,6 +486,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const config = vscode.workspace.getConfiguration('claudeThrone')
       const savedCombos = config.get<any[]>('savedCombos', [])
       
+      // Check if we've reached the 4-combo limit
+      if (savedCombos.length >= 4) {
+        vscode.window.showErrorMessage('Maximum of 4 saved combos reached. Delete an existing combo first.')
+        return
+      }
+      
       const newCombo = {
         name,
         reasoning: reasoningModel,
@@ -395,6 +510,176 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       this.log.appendLine(`❌ Failed to save combo: ${err}`)
       vscode.window.showErrorMessage(`Failed to save combo: ${err}`)
+    }
+  }
+
+  private async handleSaveCustomProvider(name: string, baseUrl: string, id: string) {
+    try {
+      // Validate inputs
+      if (!name || !name.trim()) {
+        vscode.window.showErrorMessage('Provider name is required')
+        return
+      }
+      
+      if (!baseUrl || !baseUrl.trim()) {
+        vscode.window.showErrorMessage('Base URL is required')
+        return
+      }
+      
+      if (!id || !id.trim()) {
+        vscode.window.showErrorMessage('Provider ID is required')
+        return
+      }
+      
+      // Validate URL format
+      try {
+        new URL(baseUrl.trim())
+      } catch (e) {
+        vscode.window.showErrorMessage('Please enter a valid URL')
+        return
+      }
+      
+      // Check for conflicts with built-in providers
+      const builtinProviders = ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom']
+      if (builtinProviders.includes(id.trim())) {
+        vscode.window.showErrorMessage('Provider ID conflicts with built-in provider. Please choose a different name.')
+        return
+      }
+      
+      const config = vscode.workspace.getConfiguration('claudeThrone')
+      const customProviders = config.get<any[]>('customProviders', [])
+      
+      // Check limit (10 providers)
+      if (customProviders.length >= 10) {
+        vscode.window.showErrorMessage('Maximum of 10 custom providers reached. Delete an existing provider first.')
+        return
+      }
+      
+      // Check for duplicate ID
+      if (customProviders.some(p => p.id === id.trim())) {
+        vscode.window.showErrorMessage('A custom provider with this name already exists.')
+        return
+      }
+      
+      const newProvider = {
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        id: id.trim()
+      }
+      
+      const updatedProviders = [...customProviders, newProvider]
+      await config.update('customProviders', updatedProviders, vscode.ConfigurationTarget.Workspace)
+      
+      vscode.window.showInformationMessage('Custom provider saved successfully')
+      
+      this.view?.webview.postMessage({ 
+        type: 'customProvidersLoaded', 
+        payload: { providers: updatedProviders } 
+      })
+      
+      this.log.appendLine(`✅ Saved custom provider: ${name} (${id})`)
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to save custom provider: ${err}`)
+      vscode.window.showErrorMessage(`Failed to save custom provider: ${err}`)
+    }
+  }
+
+  private async handleDeleteCustomProvider(id: string) {
+    try {
+      if (!id || !id.trim()) {
+        this.log.appendLine(`❌ Invalid custom provider ID: ${id}`)
+        vscode.window.showErrorMessage('Invalid provider ID')
+        return
+      }
+      
+      const config = vscode.workspace.getConfiguration('claudeThrone')
+      const customProviders = config.get<any[]>('customProviders', [])
+      
+      const index = customProviders.findIndex(p => p.id === id.trim())
+      if (index < 0) {
+        this.log.appendLine(`❌ Custom provider not found: ${id}`)
+        vscode.window.showErrorMessage('Custom provider not found')
+        return
+      }
+      
+      const provider = customProviders[index]
+      const updatedProviders = [...customProviders]
+      updatedProviders.splice(index, 1)
+      
+      // Delete the stored API key for this provider
+      try {
+        await this.secrets.deleteProviderKey(id.trim())
+        this.log.appendLine(`✅ Deleted API key for custom provider: ${id}`)
+      } catch (keyErr) {
+        this.log.appendLine(`⚠️ Failed to delete API key for provider ${id}: ${keyErr}`)
+        // Continue with provider deletion even if key deletion fails
+      }
+      
+      await config.update('customProviders', updatedProviders, vscode.ConfigurationTarget.Workspace)
+      
+      // If deleted provider was currently selected, switch to default
+      if (this.currentProvider === id.trim()) {
+        this.currentProvider = 'openrouter'
+        await config.update('provider', 'openrouter', vscode.ConfigurationTarget.Workspace)
+        await config.update('selectedCustomProviderId', '', vscode.ConfigurationTarget.Workspace)
+        this.postConfig()
+        this.handleListModels(false)
+      }
+      
+      // Refresh key status map
+      await this.postKeys()
+      
+      vscode.window.showInformationMessage('Custom provider deleted successfully')
+      
+      this.view?.webview.postMessage({ 
+        type: 'customProviderDeleted', 
+        payload: { providers: updatedProviders, deletedId: id.trim() } 
+      })
+      
+      this.log.appendLine(`✅ Deleted custom provider: ${provider.name} (${id})`)
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to delete custom provider: ${err}`)
+      vscode.window.showErrorMessage(`Failed to delete custom provider: ${err}`)
+    }
+  }
+
+  private async handleDeleteCombo(index: number) {
+    try {
+      // Validate index
+      if (typeof index !== 'number' || index < 0) {
+        this.log.appendLine(`❌ Invalid combo index: ${index}`)
+        vscode.window.showErrorMessage('Invalid combo index')
+        return
+      }
+      
+      const config = vscode.workspace.getConfiguration('claudeThrone')
+      const savedCombos = config.get<any[]>('savedCombos', [])
+      
+      // Check if index is within bounds
+      if (index >= savedCombos.length) {
+        this.log.appendLine(`❌ Combo index ${index} out of bounds for array of length ${savedCombos.length}`)
+        vscode.window.showErrorMessage('Combo not found')
+        return
+      }
+      
+      // Remove combo at specified index
+      const updatedCombos = [...savedCombos]
+      updatedCombos.splice(index, 1)
+      
+      // Update config
+      await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
+      
+      this.log.appendLine(`✅ Deleted combo at index ${index}`)
+      vscode.window.showInformationMessage('Model combo deleted successfully')
+      
+      // Send updated combo list back to webview
+      this.view?.webview.postMessage({ 
+        type: 'comboDeleted', 
+        payload: { combos: updatedCombos } 
+      })
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to delete combo: ${err}`)
+      vscode.window.showErrorMessage(`Failed to delete combo: ${err}`)
     }
   }
 
@@ -436,9 +721,24 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleStartProxy() {
     try {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const customBaseUrl = this.currentProvider === 'custom' 
-        ? cfg.get<string>('customBaseUrl', '')
-        : undefined
+      
+      let customBaseUrl = undefined
+      let customProviderId = undefined
+      
+      // Check if this is a saved custom provider
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      const customProvider = customProviders.find(p => p.id === this.currentProvider)
+      
+      if (customProvider) {
+        customBaseUrl = customProvider.baseUrl
+        customProviderId = this.currentProvider
+      } else if (this.currentProvider === 'custom') {
+        customBaseUrl = cfg.get<string>('customBaseUrl', '')
+        const selectedCustomProviderId = cfg.get<string>('selectedCustomProviderId', '')
+        if (selectedCustomProviderId) {
+          customProviderId = selectedCustomProviderId
+        }
+      }
       
       // All providers (including Deepseek, GLM, and custom Anthropic endpoints) now route through the proxy
       // The proxy handles authentication and forwards requests to the appropriate provider URL
@@ -466,15 +766,26 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (customBaseUrl) {
         this.log.appendLine(`[handleStartProxy] Custom Base URL: ${customBaseUrl}`)
       }
+      if (customProviderId) {
+        this.log.appendLine(`[handleStartProxy] Custom Provider ID: ${customProviderId}`)
+      }
       this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
+      // Determine the provider to pass to proxy.start
+      let proxyProvider = this.currentProvider
+      if (customProvider) {
+        // For saved custom providers, pass 'custom' as provider and customProviderId separately
+        proxyProvider = 'custom'
+      }
+      
       await this.proxy.start({
-        provider: this.currentProvider as any,
+        provider: proxyProvider,
         port,
         debug,
         reasoningModel,
         completionModel,
-        ...(this.currentProvider === 'custom' && { customBaseUrl })
+        ...(customBaseUrl && { customBaseUrl }),
+        ...(customProviderId && { customProviderId })
       })
       
       const elapsed = Date.now() - startTime
@@ -636,22 +947,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           <h2 class="card-title">Provider</h2>
           
           <div class="form-group">
-            <label class="form-label" for="providerSelect">Provider</label>
             <select class="form-select" id="providerSelect">
-              <option value="openrouter">OpenRouter</option>
-              <option value="openai">OpenAI</option>
-              <option value="together">Together AI</option>
-              <option value="deepseek">Deepseek</option>
-              <option value="glm">GLM (Z.AI)</option>
-              <option value="custom">Custom Provider</option>
+              <!-- Built-in providers will be populated dynamically -->
             </select>
             <div id="providerHelp" class="provider-help"></div>
           </div>
 
+          <button class="btn-add-custom-provider" id="addCustomProviderBtn" type="button">+ Add Custom Provider</button>
+          
           <div id="customUrlSection" class="custom-url-section">
             <div class="form-group">
               <label class="form-label" for="customUrl">Custom Endpoint URL</label>
-              <input class="form-input" type="text" id="customUrl" placeholder="https://api.example.com/v1">
+              <div class="input-group">
+                <input class="form-input" type="text" id="customUrl" placeholder="https://api.example.com/v1">
+                <button class="input-group-btn" id="deleteCustomProviderBtn" type="button" title="Delete Custom Provider" style="display: none;">
+                  <span>×</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -734,6 +1046,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
     <footer class="footer">
       <div class="footer-left">
+        <button class="settings-btn" id="settingsBtn" type="button" title="Open Thronekeeper Settings">⚙️</button>
         <a href="https://github.com/KHAEntertainment/thronekeeper" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
         <div class="status-text">
           Status: <strong id="statusText" class="status-stopped">Idle</strong>
