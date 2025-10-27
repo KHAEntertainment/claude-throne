@@ -2,6 +2,7 @@ import * as vscode from 'vscode'
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
+import { isAnthropicEndpoint, type CustomEndpointKind } from '../services/endpoints'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
@@ -266,6 +267,27 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           payload: { models: [], provider } 
         })
         return
+      }
+      
+      // Check if this custom provider has an anthropic endpoint
+      const endpointKind = cfg.get<CustomEndpointKind>('customEndpointKind', 'auto');
+      const isAnthropic = isAnthropicEndpoint(baseUrl);
+      
+      if ((endpointKind === 'anthropic' && isAnthropic) || (endpointKind === 'auto' && isAnthropic)) {
+        // Bypass model loading for anthropic endpoints - use native model discovery
+        this.view?.webview.postMessage({ 
+          type: 'models', 
+          payload: { 
+            models: [{
+              id: 'claude-3-5-sonnet-20241022',
+              name: 'Claude 3.5 Sonnet (Native)',
+              description: 'Anthropic native endpoint - models managed by Claude',
+              provider: provider
+            }],
+            provider
+          }
+        })
+        return;
       }
     }
     
