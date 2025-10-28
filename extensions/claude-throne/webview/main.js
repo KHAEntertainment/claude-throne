@@ -29,7 +29,9 @@
     proxyRunning: false,
     port: 3000,
     customCombos: [],
-    workspaceCombos: []
+    workspaceCombos: [],
+    inSaveOperation: false, // Track when we're in the middle of a save to prevent unnecessary reloads
+    autoHydratedProviders: new Set() // Track which providers have been auto-hydrated to prevent loops
   };
 
   // Provider metadata
@@ -268,6 +270,10 @@
 
   function handleModelsSaved(payload) {
     console.log('[handleModelsSaved] Model save confirmation received:', payload);
+    
+    // Clear the save operation flag regardless of success/failure
+    state.inSaveOperation = false;
+    console.log('[handleModelsSaved] Cleared inSaveOperation flag');
     
     if (!payload.success) {
       console.error('[handleModelsSaved] Model save failed:', payload);
@@ -1132,6 +1138,10 @@
     // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
     console.log(`[setModelFromList] Save round-trip - state.provider: ${state.provider}, models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
     
+    // Set flag to prevent unnecessary model reloads during save round-trip
+    state.inSaveOperation = true;
+    console.log('[setModelFromList] Setting inSaveOperation=true to prevent reload during save');
+    
     // Comment 4: Include providerId in saveModels message to avoid ambiguity and races
     vscode.postMessage({
       type: 'saveModels',
@@ -1666,20 +1676,8 @@
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
-    // Don't clear models and cache unless provider has changed
-    // This preserves model selections across config reloads
-    if (config.provider !== state.provider) {
-      console.log('[handleConfigLoaded] Provider changed from', state.provider, 'to', config.provider, '- clearing cache');
-      state.models = [];
-      state.modelsCache = {};
-    } else {
-      console.log('[handleConfigLoaded] Provider unchanged - preserving cache');
-    }
-    
-    // Handle cache age display
-    updateCacheDisplay(config);
-    
-    // Comment 2: Ensure webview uses effective provider id (custom providers) for reading/writing selections
+    // Comment 2: Calculate effective provider FIRST before comparison
+    // This is critical for custom providers where config.provider='custom' but state.provider='custom-provider-id'
     let effectiveProvider = 'openrouter'; // default fallback
     if (config.provider) {
       // Compute effective provider: if provider is 'custom' and we have selectedCustomProviderId, use that
@@ -1691,9 +1689,21 @@
       console.log(`[handleConfigLoaded] Effective provider resolution: config.provider=${config.provider}, selectedCustomProviderId=${config.selectedCustomProviderId} => effectiveProvider=${effectiveProvider}`);
     }
     
+    // NOW compare using effective provider to decide if we should clear models
+    if (effectiveProvider !== state.provider) {
+      console.log('[handleConfigLoaded] Provider changed from', state.provider, 'to', effectiveProvider, '- clearing cache');
+      state.models = [];
+      state.modelsCache = {};
+    } else {
+      console.log('[handleConfigLoaded] Provider unchanged - preserving cache');
+    }
+    
     // Set state.provider before reading or writing modelsByProvider
     state.provider = effectiveProvider;
     console.log(`[handleConfigLoaded] Set state.provider to effectiveProvider: ${state.provider}`);
+    
+    // Handle cache age display
+    updateCacheDisplay(config);
     
     // Note: provider dropdown value will be set after custom providers are loaded
     updateProviderUI();
@@ -1772,7 +1782,12 @@
     }
     
     // Auto-hydrate provider map after fallback (preferred, webview)
-    if (!config.modelSelectionsByProvider?.[state.provider]?.reasoning && (state.reasoningModel || state.codingModel || state.valueModel)) {
+    // Only auto-hydrate once per provider to prevent loops
+    if (!config.modelSelectionsByProvider?.[state.provider]?.reasoning && 
+        (state.reasoningModel || state.codingModel || state.valueModel) &&
+        !state.autoHydratedProviders.has(state.provider)) {
+      state.autoHydratedProviders.add(state.provider);
+      console.log(`[handleConfigLoaded] Auto-hydrating provider map for ${state.provider} (first time only)`);
       vscode.postMessage({
         type: 'saveModels',
         providerId: state.provider,
@@ -1781,6 +1796,8 @@
         value: state.valueModel || ''
       });
       console.log('[handleConfigLoaded] Hydrated provider map from legacy keys via saveModels');
+    } else if (state.autoHydratedProviders.has(state.provider)) {
+      console.log(`[handleConfigLoaded] Skipping auto-hydration - provider ${state.provider} already hydrated`);
     }
     
     // Comment 6: Log final state after fallback for save round-trip verification
@@ -1800,15 +1817,23 @@
     });
 
     // Check if two-model mode should be enabled
+    // Only trigger UI update if mode actually changed to prevent redundant renders
+    const previousTwoModelMode = state.twoModelMode;
     if (config.twoModelMode !== undefined) {
       state.twoModelMode = config.twoModelMode;
       document.getElementById('twoModelToggle').checked = config.twoModelMode;
-      updateTwoModelUI();
+      if (state.twoModelMode !== previousTwoModelMode) {
+        console.log(`[handleConfigLoaded] Two-model mode changed from ${previousTwoModelMode} to ${state.twoModelMode}`);
+        updateTwoModelUI();
+      }
     } else if (config.reasoningModel && config.completionModel && 
         config.reasoningModel !== config.completionModel) {
       state.twoModelMode = true;
       document.getElementById('twoModelToggle').checked = true;
-      updateTwoModelUI();
+      if (state.twoModelMode !== previousTwoModelMode) {
+        console.log(`[handleConfigLoaded] Two-model mode auto-enabled (was ${previousTwoModelMode})`);
+        updateTwoModelUI();
+      }
     }
 
     // Set debug checkbox state
@@ -1821,13 +1846,16 @@
 
     // Comment 5: Guard against config-induced reset loops by deferring model reload until after state merge
     // Only call loadModels() if state.models.length === 0 or if state.provider changed
+    // Also skip if we're in the middle of a save operation to prevent flashing
     const previousProvider = state.previousProvider || '';
     const providerChanged = state.provider !== previousProvider;
     const noModelsLoaded = state.models.length === 0;
     
-    console.log(`[handleConfigLoaded] Model reload guard - providerChanged: ${providerChanged}, noModelsLoaded: ${noModelsLoaded}, previousProvider: ${previousProvider}, currentProvider: ${state.provider}`);
+    console.log(`[handleConfigLoaded] Model reload guard - providerChanged: ${providerChanged}, noModelsLoaded: ${noModelsLoaded}, inSaveOperation: ${state.inSaveOperation}, previousProvider: ${previousProvider}, currentProvider: ${state.provider}`);
     
-    if (providerChanged || noModelsLoaded) {
+    if (state.inSaveOperation) {
+      console.log(`[handleConfigLoaded] Skipping model reload - currently in save operation`);
+    } else if (providerChanged || noModelsLoaded) {
       // Defer loadModels() with short timeout to reduce races where immediate re-render overrides selected model highlights
       setTimeout(() => {
         console.log(`[handleConfigLoaded] Triggering model reload (providerChanged=${providerChanged}, noModelsLoaded=${noModelsLoaded})`);

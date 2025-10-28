@@ -1,20 +1,37 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "gpt-5",
-  "claudeThrone.completionModel": "gpt-5-codex",
+  "claudeThrone.reasoningModel": "",
+  "claudeThrone.completionModel": "minimax/minimax-m2:free",
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
   "claudeThrone.provider": "openrouter",
-  "claudeThrone.valueModel": "codex-mini-latest",
+  "claudeThrone.valueModel": "",
   "claudeThrone.customBaseUrl": "https://api.moonshot.ai/anthropic",
   "claudeThrone.customProviders": [
     {
       "name": "Moonshot",
       "baseUrl": "https://api.moonshot.ai/anthropic",
       "id": "moonshot"
+    },
+    {
+      "name": "Minimax",
+      "baseUrl": "https://api.minimax.io/anthropic",
+      "id": "minimax"
     }
   ],
-  "claudeThrone.selectedCustomProviderId": ""
+  "claudeThrone.selectedCustomProviderId": "",
+  "claudeThrone.modelSelectionsByProvider": {
+    "openai": {
+      "reasoning": "",
+      "completion": "minimax/minimax-m2:free",
+      "value": ""
+    },
+    "openrouter": {
+      "reasoning": "",
+      "completion": "minimax/minimax-m2:free",
+      "value": ""
+    }
+  }
 }
