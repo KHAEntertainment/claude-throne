@@ -6,7 +6,7 @@
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
-  "claudeThrone.provider": "glm",
+  "claudeThrone.provider": "openrouter",
   "claudeThrone.valueModel": "kimi-latest",
   "claudeThrone.customBaseUrl": "https://api.moonshot.ai/anthropic",
   "claudeThrone.customProviders": [

@@ -1117,6 +1117,35 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
+      // Hydrate global keys with current provider's models before starting
+      // This ensures applyToClaudeCode reads the correct models when it runs
+      this.log.appendLine(`[handleStartProxy] Hydrating global keys for ${this.runtimeProvider} before apply`)
+      
+      const applyScope = cfg.get<string>('applyScope', 'workspace')
+      const target = applyScope === 'global' 
+        ? vscode.ConfigurationTarget.Global 
+        : vscode.ConfigurationTarget.Workspace
+      
+      try {
+        await cfg.update('reasoningModel', reasoningModel, target)
+        this.log.appendLine(`[handleStartProxy] Updated global reasoningModel: ${reasoningModel}`)
+        
+        if (twoModelMode && completionModel) {
+          await cfg.update('completionModel', completionModel, target)
+          this.log.appendLine(`[handleStartProxy] Updated global completionModel: ${completionModel}`)
+        }
+        
+        if (twoModelMode && valueModel) {
+          await cfg.update('valueModel', valueModel, target)
+          this.log.appendLine(`[handleStartProxy] Updated global valueModel: ${valueModel}`)
+        }
+        
+        this.log.appendLine(`[handleStartProxy] ✅ Global keys hydrated for provider ${this.runtimeProvider}`)
+      } catch (err) {
+        this.log.appendLine(`[handleStartProxy] ⚠️ WARNING: Failed to hydrate global keys: ${err}`)
+        // Continue anyway - proxy can still start, but apply might use stale values
+      }
+      
       // Determine the provider to pass to proxy.start
       let proxyProvider = this.runtimeProvider
       if (customProvider) {
