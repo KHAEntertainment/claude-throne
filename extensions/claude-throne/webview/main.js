@@ -213,6 +213,9 @@
       case 'keys':
         handleKeysLoaded(message.payload);
         break;
+      case 'keysLoaded':
+        handleKeysLoaded(message.payload.keyStatus || message.payload);
+        break;
       case 'keyStored':
         handleKeyStored(message.payload);
         break;
@@ -972,14 +975,20 @@
   }
 
   function handleKeysLoaded(keys) {
-    console.log('[handleKeysLoaded] Keys status:', keys);
+    console.log('[handleKeysLoaded] Keys status received:', keys);
+    console.log('[handleKeysLoaded] Current provider in state:', state.provider);
+    console.log('[handleKeysLoaded] Key status for current provider:', keys[state.provider]);
     
     // Update UI to show if key is stored
     const input = document.getElementById('apiKeyInput');
     const helpDiv = document.getElementById('providerHelp');
     const storeBtn = document.getElementById('storeKeyBtn');
     
-    if (keys[state.provider]) {
+    // Check if current provider has a stored key
+    const hasKey = !!(keys && keys[state.provider]);
+    console.log('[handleKeysLoaded] Provider', state.provider, 'has key:', hasKey);
+    
+    if (hasKey) {
       // Key is stored
       input.placeholder = '••••••••••••••••';
       input.value = '';
@@ -994,10 +1003,18 @@
       input.placeholder = 'Enter your API key';
       storeBtn.textContent = 'Store Key';
       
-      // Show "Get API Key" link
+      // Show "Get API Key" link for built-in providers
       const providerInfo = providers[state.provider];
       if (providerInfo && providerInfo.helpUrl && helpDiv) {
         helpDiv.innerHTML = `<a href="${providerInfo.helpUrl}" target="_blank">Get API Key →</a>`;
+      } else if (helpDiv) {
+        // For custom providers or providers without help URL, show generic message
+        const isCustomProvider = state.customProviders.some(p => p.id === state.provider);
+        if (isCustomProvider) {
+          helpDiv.innerHTML = '<span style="color: var(--vscode-descriptionForeground);">Custom provider - enter API key</span>';
+        } else {
+          helpDiv.innerHTML = '';
+        }
       }
     }
     
@@ -1013,6 +1030,9 @@
       anthropicInput.placeholder = 'sk-ant-...';
       anthropicStoreBtn.textContent = 'Store Key';
     }
+    
+    // Log the complete state for debugging
+    console.log('[handleKeysLoaded] Final UI state - Provider:', state.provider, 'Has key:', hasKey, 'Button text:', storeBtn?.textContent);
   }
 
   // Two Model Mode

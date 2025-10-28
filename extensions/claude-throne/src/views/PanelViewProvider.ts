@@ -223,39 +223,65 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async postKeys() {
-    const providers = ['openrouter','openai','together','deepseek','glm','custom']
-    const map: Record<string, boolean> = {}
-    
-    // Check built-in providers
-    for (const p of providers) {
-      try {
-        const k = await this.secrets.getProviderKey(p)
-        map[p] = !!(k && k.trim())
-      } catch {
-        map[p] = false
-      }
-    }
-    
-    // Check custom providers
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const customProviders = cfg.get<any[]>('customProviders', [])
-    for (const p of customProviders) {
-      if (p.id && p.id.trim()) {
-        try {
-          const k = await this.secrets.getProviderKey(p.id)
-          map[p.id] = !!(k && k.trim())
-        } catch {
-          map[p.id] = false
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const customProviders = cfg.get<any[]>('customProviders', [])
+
+      // Start with built-in providers
+      const providerIds = ['openrouter','openai','together','deepseek','glm']
+      
+      // Add all saved custom providers by ID
+      for (const cp of customProviders) {
+        if (cp?.id && cp.id.trim()) {
+          providerIds.push(cp.id)
         }
       }
+
+      const keyStatus: Record<string, boolean> = {}
+      
+      // Check each provider's key status
+      for (const id of providerIds) {
+        try {
+          const val = await this.secrets.getProviderKey(id)
+          keyStatus[id] = !!(val && val.trim())
+        } catch (err) {
+          keyStatus[id] = false
+          this.log.appendLine(`[postKeys] ERROR checking key for ${id}: ${err}`)
+        }
+      }
+      
+      // Check Anthropic key
+      try {
+        const anthropicKey = await this.secrets.getAnthropicKey()
+        keyStatus.anthropic = !!(anthropicKey && anthropicKey.trim())
+      } catch (err) {
+        keyStatus.anthropic = false
+        this.log.appendLine(`[postKeys] ERROR checking Anthropic key: ${err}`)
+      }
+
+      this.log.appendLine(`[postKeys] keyStatus for providers: ${JSON.stringify(keyStatus)}`)
+      this.log.appendLine(`[postKeys] runtimeProvider=${this.runtimeProvider}, configProvider=${this.configProvider}`)
+      
+      // Send keysLoaded message for consistency
+      this.view?.webview.postMessage({ 
+        type: 'keysLoaded', 
+        payload: { keyStatus } 
+      })
+      
+      // Also send legacy 'keys' message for backward compatibility
+      this.view?.webview.postMessage({ 
+        type: 'keys', 
+        payload: keyStatus 
+      })
+      
+    } catch (err) {
+      this.log.appendLine(`[postKeys] ERROR: ${err}`)
+      // Send empty status on error
+      this.view?.webview.postMessage({ 
+        type: 'keysLoaded', 
+        payload: { keyStatus: {} } 
+      })
     }
-    
-    // Check Anthropic key
-    const anthropicKey = await this.secrets.getAnthropicKey()
-    map.anthropic = !!(anthropicKey && anthropicKey.trim())
-    
-    this.log.appendLine(`📤 Sending keys status to webview: ${JSON.stringify(map)}`)
-    this.view?.webview.postMessage({ type: 'keys', payload: map })
   }
 
   public postConfig() {
