@@ -954,9 +954,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[handleStartProxy] Full modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
       
       if (modelSelectionsByProvider[this.runtimeProvider]) {
-        reasoningModel = modelSelectionsByProvider[this.runtimeProvider].reasoning || ''
-        completionModel = modelSelectionsByProvider[this.runtimeProvider].completion || ''
-        valueModel = modelSelectionsByProvider[this.runtimeProvider].value || ''
+        const providerModels = modelSelectionsByProvider[this.runtimeProvider]
+        reasoningModel = providerModels.reasoning || ''
+        // Fallback to .coding for backward compatibility with old saved models
+        completionModel = providerModels.completion || providerModels.coding || ''
+        valueModel = providerModels.value || ''
+        
+        // Log which key format is being used
+        if (providerModels.completion) {
+          this.log.appendLine(`[handleStartProxy] Using completion key for coding model`)
+        } else if (providerModels.coding) {
+          this.log.appendLine(`[handleStartProxy] Falling back to coding key (old format) for coding model`)
+        }
+        
         this.log.appendLine(`[handleStartProxy] Found provider-specific models: reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`)
       } else {
         this.log.appendLine(`[handleStartProxy] No models found for provider ${this.runtimeProvider} in modelSelectionsByProvider`)

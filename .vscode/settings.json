@@ -1,12 +1,12 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "kimi-k2-0711-preview",
-  "claudeThrone.completionModel": "kimi-k2-0905-preview",
-  "claudeThrone.customEndpointKind": "openai",
+  "claudeThrone.reasoningModel": "kimi-thinking-preview",
+  "claudeThrone.completionModel": "moonshot-v1-32k-vision-preview",
+  "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
-  "claudeThrone.provider": "custom",
+  "claudeThrone.provider": "glm",
   "claudeThrone.valueModel": "kimi-latest",
   "claudeThrone.customBaseUrl": "https://api.moonshot.ai/anthropic",
   "claudeThrone.customProviders": [
@@ -21,7 +21,7 @@
       "id": "minimax"
     }
   ],
-  "claudeThrone.selectedCustomProviderId": "moonshot",
+  "claudeThrone.selectedCustomProviderId": "",
   "claudeThrone.modelSelectionsByProvider": {
     "openai": {
       "reasoning": "gpt-5-chat-latest",
@@ -34,8 +34,8 @@
       "value": "ibm-granite/granite-4.0-h-micro"
     },
     "moonshot": {
-      "reasoning": "kimi-k2-0711-preview",
-      "completion": "kimi-k2-0905-preview",
+      "reasoning": "kimi-thinking-preview",
+      "completion": "moonshot-v1-32k-vision-preview",
       "value": "kimi-latest"
     },
     "deepseek": {
