@@ -243,6 +243,9 @@
       case 'customProviderDeleted':
         handleCustomProviderDeleted(message.payload);
         break;
+      case 'modelsSaved':
+        handleModelsSaved(message.payload);
+        break;
       default:
         console.log('[handleMessage] Unknown message type:', message.type);
     }
@@ -261,6 +264,32 @@
 
   function saveState() {
     vscode.setState(state);
+  }
+
+  function handleModelsSaved(payload) {
+    console.log('[handleModelsSaved] Model save confirmation received:', payload);
+    
+    if (!payload.success) {
+      console.error('[handleModelsSaved] Model save failed:', payload);
+      showNotification('Failed to save model selection', 'error');
+      return;
+    }
+    
+    // Only process if this save is for the current provider
+    if (payload.providerId !== state.provider) {
+      console.log(`[handleModelsSaved] Ignoring save for different provider: ${payload.providerId} (current: ${state.provider})`);
+      return;
+    }
+    
+    console.log('[handleModelsSaved] Model selections successfully saved, synchronizing UI state');
+    
+    // Update selected models display to ensure consistency with extension
+    updateSelectedModelsDisplay();
+    
+    // Re-render model list to update button states correctly
+    renderModelList();
+    
+    console.log('[handleModelsSaved] UI state synchronized with extension');
   }
 
   // Provider handling
@@ -1115,7 +1144,8 @@
     updateSaveComboButton();
     updateSelectedModelsDisplay();
     saveState();
-    renderModelList();
+    // Remove immediate renderModelList() - let handleModelsSaved trigger re-render after confirmation
+    // renderModelList(); // REMOVED: Prevents race condition with extension state
   }
 
   function updateSelectedModelsDisplay() {
