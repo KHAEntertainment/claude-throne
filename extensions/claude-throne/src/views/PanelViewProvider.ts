@@ -167,6 +167,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'storeAnthropicKey':
             await this.handleStoreAnthropicKey(msg.key)
             break
+          case 'refreshAnthropicDefaults':
+            try {
+              await vscode.commands.executeCommand('claudeThrone.refreshAnthropicDefaults')
+              this.postConfig()
+            } catch (err) {
+              this.log.appendLine(`❌ Error refreshing Anthropic defaults: ${err}`)
+              vscode.window.showErrorMessage(`Error refreshing Anthropic defaults: ${err}`)
+            }
+            break
           case 'updateDebug':
             await this.handleUpdateDebug(msg.enabled)
             break
@@ -250,11 +259,36 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const customBaseUrl = config.get('customBaseUrl', '');
     const debug = config.get('proxy.debug', false);
     
-    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}, debug=${debug}`);
+    // Add cache age information
+    const cachedTimestamp = config.get<number>('anthropicDefaultsTimestamp', 0);
+    const cachedDefaults = config.get<any>('anthropicDefaults', null);
+    let cacheAgeDays = 0;
+    let cacheStale = false;
+    
+    if (cachedTimestamp > 0) {
+      const cacheAge = Date.now() - cachedTimestamp;
+      cacheAgeDays = Math.floor(cacheAge / (24 * 60 * 60 * 1000));
+      cacheStale = cacheAgeDays >= 7;
+    }
+    
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}, debug=${debug}, cacheAge=${cacheAgeDays} days`);
     
     this.view.webview.postMessage({
       type: 'config',
-      payload: { provider, selectedCustomProviderId, reasoningModel, completionModel, valueModel, twoModelMode, port, customBaseUrl, debug }
+      payload: { 
+        provider, 
+        selectedCustomProviderId, 
+        reasoningModel, 
+        completionModel, 
+        valueModel, 
+        twoModelMode, 
+        port, 
+        customBaseUrl, 
+        debug,
+        cacheAgeDays,
+        cacheStale,
+        cachedDefaults
+      }
     });
   }
 

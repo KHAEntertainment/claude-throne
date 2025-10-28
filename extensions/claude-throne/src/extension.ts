@@ -63,12 +63,16 @@ async function fetchAnthropicDefaults(secrets?: SecretsService): Promise<{ opus:
     const selectBestModel = (filtered: any[], fallback: string): string => {
       if (filtered.length === 0) return fallback;
       
+      // Filter out models without valid IDs
+      const validModels = filtered.filter((m: any) => m && m.id && typeof m.id === 'string');
+      if (validModels.length === 0) return fallback;
+      
       // First, look for -latest alias (most stable and recommended)
-      const latestAlias = filtered.find((m: any) => m.id.endsWith('-latest'));
+      const latestAlias = validModels.find((m: any) => m.id.endsWith('-latest'));
       if (latestAlias) return latestAlias.id;
       
       // Filter out preview/unstable versions
-      const stable = filtered.filter((m: any) => 
+      const stable = validModels.filter((m: any) => 
         !m.id.includes('-preview') && 
         !m.id.includes('-beta') && 
         !m.id.includes('-alpha')
@@ -76,33 +80,80 @@ async function fetchAnthropicDefaults(secrets?: SecretsService): Promise<{ opus:
       
       // Sort stable versions descending and take first
       if (stable.length > 0) {
-        stable.sort((a: any, b: any) => b.id.localeCompare(a.id));
-        return stable[0].id;
+        // Add major version family filtering
+        const majorVersions = stable.map((m: any) => {
+          const match = m.id.match(/-(\d+)(?:-|$)/);
+          return match ? parseInt(match[1]) : 0;
+        }).filter(v => v > 0);
+        
+        if (majorVersions.length === 0) {
+          // Skip major family filter and sort by date instead
+          stable.sort((a: any, b: any) => {
+            const aDateMatch = a.id.match(/(\d{8})$/);
+            const bDateMatch = b.id.match(/(\d{8})$/);
+            const aDate = aDateMatch ? parseInt(aDateMatch[1]) : 0;
+            const bDate = bDateMatch ? parseInt(bDateMatch[1]) : 0;
+            return bDate - aDate; // Descending by date
+          });
+          return stable[0].id;
+        }
+        
+        const maxMajorVersion = Math.max(...majorVersions);
+        const latestMajorFamily = stable.filter((m: any) => {
+          const match = m.id.match(/-(\d+)(?:-|$)/);
+          return match ? parseInt(match[1]) === maxMajorVersion : false;
+        });
+        
+        // Replace broken lexicographic sorting with date-based sorting
+        latestMajorFamily.sort((a: any, b: any) => {
+          const aDateMatch = a.id.match(/(\d{8})$/);
+          const bDateMatch = b.id.match(/(\d{8})$/);
+          const aDate = aDateMatch ? parseInt(aDateMatch[1]) : 0;
+          const bDate = bDateMatch ? parseInt(bDateMatch[1]) : 0;
+          return bDate - aDate; // Descending by date
+        });
+        
+        return latestMajorFamily[0].id;
       }
       
       // If no stable versions, fall back to any version (sorted)
-      filtered.sort((a: any, b: any) => b.id.localeCompare(a.id));
-      return filtered[0].id;
+      validModels.sort((a: any, b: any) => b.id.localeCompare(a.id));
+      return validModels[0].id;
     };
     
     // Find latest Opus model
     const opusModels = models.filter((m: any) => m.id.includes('opus'));
-    const opus = selectBestModel(opusModels, 'claude-opus-4-0');
+    const opus = selectBestModel(opusModels, 'claude-opus-4-1-20250805');
     
     // Find latest Sonnet model
     const sonnetModels = models.filter((m: any) => m.id.includes('sonnet'));
-    const sonnet = selectBestModel(sonnetModels, 'claude-sonnet-4-0');
+    const sonnet = selectBestModel(sonnetModels, 'claude-sonnet-4-5-20250929');
     
     // Find latest Haiku model
     const haikuModels = models.filter((m: any) => m.id.includes('haiku'));
     const haiku = selectBestModel(haikuModels, 'claude-3-5-haiku-latest');
+    
+    // Add detailed logging
+    console.log(`[fetchAnthropicDefaults] Model selection summary:`);
+    console.log(`  Opus: ${opusModels.length} candidates, selected: ${opus}`);
+    console.log(`  Sonnet: ${sonnetModels.length} candidates, selected: ${sonnet}`);
+    console.log(`  Haiku: ${haikuModels.length} candidates, selected: ${haiku}`);
+    if (opusModels.length > 0) {
+      console.log(`  Opus candidates: ${opusModels.map((m: any) => m.id).join(', ')}`);
+    }
+    if (sonnetModels.length > 0) {
+      console.log(`  Sonnet candidates: ${sonnetModels.map((m: any) => m.id).join(', ')}`);
+    }
+    if (haikuModels.length > 0) {
+      console.log(`  Haiku candidates: ${haikuModels.map((m: any) => m.id).join(', ')}`);
+    }
     
     return { opus, sonnet, haiku };
   } catch (error) {
     const authStatus = secrets ? (await secrets.getAnthropicKey() ? 'authenticated' : 'unauthenticated') : 'no secrets service';
     console.error(`[fetchAnthropicDefaults] Failed to fetch (${authStatus}):`, error);
     // Return hardcoded fallbacks if fetch fails
-    return { opus: 'claude-opus-4-0', sonnet: 'claude-sonnet-4-0', haiku: 'claude-3-5-haiku-latest' };
+    return { opus: 'claude-opus-4-1-20250805', sonnet: 'claude-sonnet-4-5-20250929', haiku: 'claude-3-5-haiku-latest' };
   }
 }
 
@@ -137,6 +188,7 @@ export function activate(context: vscode.ExtensionContext) {
   fetchAnthropicDefaults(secrets).then(async (defaults) => {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
+    await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global)
     log.appendLine(`✅ Cached Anthropic defaults: opus=${defaults.opus}, sonnet=${defaults.sonnet}, haiku=${defaults.haiku}`)
   }).catch((err) => {
     log.appendLine(`⚠️ Failed to cache Anthropic defaults: ${err}`)
@@ -192,6 +244,21 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
+    // Check cache age before fetching fresh defaults
+    const cachedTimestamp = cfg.get<number>('anthropicDefaultsTimestamp', 0);
+    const cacheAge = Date.now() - cachedTimestamp;
+    const stalenessThreshold = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+    
+    if (cachedTimestamp > 0 && cacheAge > stalenessThreshold) {
+      const daysOld = Math.floor(cacheAge / (24 * 60 * 60 * 1000));
+      log.appendLine(`[revertApply] ⚠️ Cache is ${daysOld} days old (threshold: 7 days), fetching fresh defaults...`);
+    } else if (cachedTimestamp > 0) {
+      const daysOld = Math.floor(cacheAge / (24 * 60 * 60 * 1000));
+      log.appendLine(`[revertApply] Cache is ${daysOld} days old, fetching fresh defaults...`);
+    } else {
+      log.appendLine('[revertApply] No cache timestamp found, fetching fresh defaults...');
+    }
+    
     // Try to fetch fresh defaults from API (if key is available)
     log.appendLine('[revertApply] Attempting to fetch fresh Anthropic model defaults...');
     let defaults = await fetchAnthropicDefaults(secrets);
@@ -201,6 +268,7 @@ export function activate(context: vscode.ExtensionContext) {
       log.appendLine(`[revertApply] ✅ Fetched fresh defaults: opus=${defaults.opus}, sonnet=${defaults.sonnet}, haiku=${defaults.haiku}`);
       // Update cache with fresh values
       await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global);
+      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global);
     } else {
       // Should not happen since fetchAnthropicDefaults always returns defaults, but keep fallback logic
       log.appendLine('[revertApply] ⚠️ Unexpected: defaults missing fields, falling back to cached values');
@@ -368,6 +436,8 @@ export function activate(context: vscode.ExtensionContext) {
       const defaults = await fetchAnthropicDefaults(secrets)
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
+      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global)
+      log.appendLine(`[refreshAnthropicDefaults] ✅ Successfully refreshed defaults: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
       vscode.window.showInformationMessage(`Anthropic defaults refreshed: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
     } catch (err: any) {
       log.appendLine(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
@@ -714,6 +784,7 @@ async function storeAnthropicKeyHelper(secrets: SecretsService) {
       // Update cached defaults
       const cfg = vscode.workspace.getConfiguration('claudeThrone');
       await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global);
+      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global);
       
       // Show success with discovered versions
       vscode.window.showInformationMessage(
