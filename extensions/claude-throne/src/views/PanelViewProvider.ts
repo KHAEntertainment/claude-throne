@@ -326,7 +326,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         cacheAgeDays,
         cacheStale,
         cachedDefaults,
-        modelSelectionsByProvider
+        modelSelectionsByProvider,
+        // Comment 2: Add legacy model keys to payload for webview fallback
+        reasoningModel,
+        completionModel,
+        valueModel
       }
     });
   }

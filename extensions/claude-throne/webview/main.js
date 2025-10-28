@@ -17,13 +17,14 @@
     modelsCache: {},
     customProviders: [],
     // Provider-specific model storage
+    // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
     modelsByProvider: {
-      openrouter: { reasoning: '', coding: '', value: '' },
-      openai: { reasoning: '', coding: '', value: '' },
-      together: { reasoning: '', coding: '', value: '' },
-      deepseek: { reasoning: '', coding: '', value: '' },
-      glm: { reasoning: '', coding: '', value: '' },
-      custom: { reasoning: '', coding: '', value: '' }
+      openrouter: { reasoning: '', completion: '', coding: '', value: '' },
+      openai: { reasoning: '', completion: '', coding: '', value: '' },
+      together: { reasoning: '', completion: '', coding: '', value: '' },
+      deepseek: { reasoning: '', completion: '', coding: '', value: '' },
+      glm: { reasoning: '', completion: '', coding: '', value: '' },
+      custom: { reasoning: '', completion: '', coding: '', value: '' }
     },
     proxyRunning: false,
     port: 3000,
@@ -267,6 +268,9 @@
     // Save current models for the old provider
     if (state.provider && state.modelsByProvider[state.provider]) {
       state.modelsByProvider[state.provider].reasoning = state.reasoningModel;
+      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
+      state.modelsByProvider[state.provider].completion = state.codingModel;
+      // Also set .coding for backward compatibility
       state.modelsByProvider[state.provider].coding = state.codingModel;
       state.modelsByProvider[state.provider].value = state.valueModel;
     }
@@ -284,13 +288,15 @@
     
     // Initialize models storage for custom provider if needed
     if (!state.modelsByProvider[newProvider]) {
-      state.modelsByProvider[newProvider] = { reasoning: '', coding: '', value: '' };
+      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+      state.modelsByProvider[newProvider] = { reasoning: '', completion: '', coding: '', value: '' };
     }
     
     // Restore models for the new provider
     if (state.modelsByProvider[newProvider]) {
       state.reasoningModel = state.modelsByProvider[newProvider].reasoning || '';
-      state.codingModel = state.modelsByProvider[newProvider].coding || '';
+      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
+      state.codingModel = state.modelsByProvider[newProvider].completion || state.modelsByProvider[newProvider].coding || '';
       state.valueModel = state.modelsByProvider[newProvider].value || '';
     } else {
       state.reasoningModel = '';
@@ -1073,7 +1079,8 @@
   function setModelFromList(modelId, type) {
     // Comment 3: Initialize provider entry in webview before writing to modelsByProvider when selecting from list
     if (!state.modelsByProvider[state.provider]) {
-      state.modelsByProvider[state.provider] = { reasoning: '', coding: '', value: '' };
+      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
       console.log(`[setModelFromList] Initialized modelsByProvider entry for provider: ${state.provider}`);
     }
     
@@ -1083,7 +1090,9 @@
       state.modelsByProvider[state.provider].reasoning = modelId;
     } else if (type === 'coding') {
       state.codingModel = modelId;
-      // Save to provider-specific storage
+      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
+      state.modelsByProvider[state.provider].completion = modelId;
+      // Also set .coding for backward compatibility
       state.modelsByProvider[state.provider].coding = modelId;
     } else if (type === 'value') {
       state.valueModel = modelId;
@@ -1425,6 +1434,17 @@
     state.codingModel = coding;
     state.valueModel = value;
 
+    // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
+    // Save to provider-specific storage
+    if (!state.modelsByProvider[state.provider]) {
+      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
+    }
+    state.modelsByProvider[state.provider].reasoning = reasoning;
+    state.modelsByProvider[state.provider].completion = coding;
+    state.modelsByProvider[state.provider].coding = coding; // backward compatibility
+    state.modelsByProvider[state.provider].value = value;
+
     // Save
     saveState();
     renderModelList();
@@ -1667,7 +1687,8 @@
       // Ensure built-in providers have entries
       ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'].forEach(provider => {
         if (!state.modelsByProvider[provider]) {
-          state.modelsByProvider[provider] = { reasoning: '', coding: '', value: '' };
+          // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+          state.modelsByProvider[provider] = { reasoning: '', completion: '', coding: '', value: '' };
         }
       });
     }
@@ -1677,14 +1698,16 @@
     
     // Only seed modelsByProvider for the current provider if no entry exists
     if (!state.modelsByProvider[state.provider]) {
-      state.modelsByProvider[state.provider] = { reasoning: '', coding: '', value: '' };
+      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
     }
     
     // Set models from provider-specific storage, with validation
     if (state.modelsByProvider[state.provider]) {
       const providerModels = state.modelsByProvider[state.provider];
       state.reasoningModel = providerModels.reasoning || '';
-      state.codingModel = providerModels.coding || '';
+      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
+      state.codingModel = providerModels.completion || providerModels.coding || '';
       state.valueModel = providerModels.value || '';
       
       // Validation: check if all models are empty for this provider
