@@ -66,5 +66,17 @@ if [[ ${#NEW_VSIX[@]} -eq 0 ]]; then
   exit 1
 fi
 
-echo "Success: ${NEW_VSIX[0]}"
+# Ensure VSIX is in the extensions/claude-throne directory specifically
+VSIX_FILE="${NEW_VSIX[0]}"
+VSIX_BASENAME=$(basename "$VSIX_FILE")
+EXPECTED_PATH="$EXT_DIR/$VSIX_BASENAME"
+
+if [[ "$VSIX_FILE" != "$EXPECTED_PATH" ]]; then
+  echo "Moving VSIX to correct location: $VSIX_FILE -> $EXPECTED_PATH"
+  mv "$VSIX_FILE" "$EXPECTED_PATH"
+  VSIX_FILE="$EXPECTED_PATH"
+fi
+
+echo "Success: $VSIX_FILE"
+echo "VSIX created at: extensions/claude-throne/$VSIX_BASENAME"
 

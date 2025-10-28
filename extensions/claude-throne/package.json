@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.25",
+  "version": "1.5.28",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -179,16 +179,19 @@
         "claudeThrone.reasoningModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The reasoning model for complex problem-solving tasks (maps to Opus tier in Claude Code)."
         },
         "claudeThrone.completionModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The coding model for balanced development tasks (maps to Sonnet tier in Claude Code)."
         },
         "claudeThrone.valueModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
         },
         "claudeThrone.savedCombos": {
@@ -287,6 +290,12 @@
           "default": 0,
           "scope": "application",
           "markdownDescription": "Timestamp when Anthropic defaults were last refreshed (internal use)."
+        },
+        "claudeThrone.modelSelectionsByProvider": {
+          "type": "object",
+          "default": {},
+          "scope": "window",
+          "markdownDescription": "Provider-specific model selections (internal use). Maps provider IDs to selected reasoning, completion, and value models."
         },
         "claudeThrone.customEndpointOverrides": {
           "type": "object",

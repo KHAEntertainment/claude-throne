@@ -193,9 +193,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async postStatus() {
     const s = this.proxy?.getStatus() || { running: false }
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    const reasoningModel = String(cfg.get('reasoningModel') || '')
-    const completionModel = String(cfg.get('completionModel') || '')
-    const valueModel = String(cfg.get('valueModel') || '')
+    
+    // Read from provider-specific configuration with fallback to global keys
+    const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+    let reasoningModel = ''
+    let completionModel = ''
+    let valueModel = ''
+    
+    if (modelSelectionsByProvider[this.runtimeProvider]) {
+      reasoningModel = String(modelSelectionsByProvider[this.runtimeProvider].reasoning || '')
+      completionModel = String(modelSelectionsByProvider[this.runtimeProvider].completion || '')
+      valueModel = String(modelSelectionsByProvider[this.runtimeProvider].value || '')
+    }
+    
+    // Fallback to global keys if provider-specific not found
+    if (!reasoningModel) reasoningModel = String(cfg.get('reasoningModel') || '')
+    if (!completionModel) completionModel = String(cfg.get('completionModel') || '')
+    if (!valueModel) valueModel = String(cfg.get('valueModel') || '')
     
     this.view?.webview.postMessage({ 
       type: 'status', 
@@ -258,6 +272,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const port = config.get('proxy.port');
     const customBaseUrl = config.get('customBaseUrl', '');
     const debug = config.get('proxy.debug', false);
+    const modelSelectionsByProvider = config.get('modelSelectionsByProvider', {});
     
     // Add cache age information
     const cachedTimestamp = config.get<number>('anthropicDefaultsTimestamp', 0);
@@ -271,23 +286,21 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       cacheStale = cacheAgeDays >= 7;
     }
     
-    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}, debug=${debug}, cacheAge=${cacheAgeDays} days`);
+    this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, debug=${debug}, cacheAge=${cacheAgeDays} days`);
     
     this.view.webview.postMessage({
       type: 'config',
       payload: { 
         provider, 
         selectedCustomProviderId, 
-        reasoningModel, 
-        completionModel, 
-        valueModel, 
         twoModelMode, 
         port, 
         customBaseUrl, 
         debug,
         cacheAgeDays,
         cacheStale,
-        cachedDefaults
+        cachedDefaults,
+        modelSelectionsByProvider
       }
     });
   }
@@ -510,12 +523,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleUpdateProvider(provider: string) {
-    // Clear the cache for the old provider before changing
-    this.modelsCache.delete(this.currentProvider)
+    // Capture the old provider first, then clear its cache before changing
+    const oldProvider = this.currentProvider
+    this.modelsCache.delete(oldProvider)
     
     // Store current provider for model loading
     this.currentProvider = provider
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
+    // Clear the webview with an empty list immediately after switching to prevent stale renders
+    this.view?.webview.postMessage({ 
+      type: 'models', 
+      payload: { models: [], provider } 
+    })
     
     try {
       // Check if this is a custom provider
@@ -893,14 +913,157 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const debug = cfg.get<boolean>('proxy.debug', false)
       const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
-      const reasoningModel = cfg.get<string>('reasoningModel')
-      const completionModel = cfg.get<string>('completionModel')
+      // Read models from provider-specific configuration with detailed logging
+      const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+      let reasoningModel = ''
+      let completionModel = ''
+      let valueModel = ''
       
-      // Log model configuration (but don't block startup - proxy has fallback defaults)
-      if (!reasoningModel || !completionModel) {
-        this.log.appendLine(`[handleStartProxy] INFO: Models not configured, proxy will use fallback defaults`)
-        this.log.appendLine(`[handleStartProxy] - reasoningModel: ${reasoningModel || 'EMPTY (will use fallback)'}`)
-        this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel || 'EMPTY (will use fallback)'}`)
+      this.log.appendLine(`[handleStartProxy] Reading models for provider: ${this.runtimeProvider}`)
+      this.log.appendLine(`[handleStartProxy] Full modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
+      
+      if (modelSelectionsByProvider[this.runtimeProvider]) {
+        reasoningModel = modelSelectionsByProvider[this.runtimeProvider].reasoning || ''
+        completionModel = modelSelectionsByProvider[this.runtimeProvider].completion || ''
+        valueModel = modelSelectionsByProvider[this.runtimeProvider].value || ''
+        this.log.appendLine(`[handleStartProxy] Found provider-specific models: reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`)
+      } else {
+        this.log.appendLine(`[handleStartProxy] No models found for provider ${this.runtimeProvider} in modelSelectionsByProvider`)
+      }
+      
+      // Fallback to global keys if provider-specific not found, with explicit confirmation
+      if (!reasoningModel) {
+        const fallbackReasoning = cfg.get<string>('reasoningModel', '')
+        if (fallbackReasoning) {
+          const useFallback = await vscode.window.showWarningMessage(
+            `No reasoning model selected for provider "${this.runtimeProvider}". Using global model "${fallbackReasoning}" which may be from a different provider. Continue anyway?`,
+            'Continue',
+            'Cancel'
+          )
+          
+          if (useFallback !== 'Continue') {
+            this.log.appendLine(`[handleStartProxy] User cancelled due to fallback requirement`)
+            return
+          }
+          
+          reasoningModel = fallbackReasoning
+          this.log.appendLine(`[handleStartProxy] Falling back to global reasoningModel: ${reasoningModel}`)
+          this.log.appendLine(`[handleStartProxy] WARNING: Using fallback global keys. This may indicate a configuration save issue.`)
+        }
+      }
+      if (!completionModel) {
+        const fallbackCompletion = cfg.get<string>('completionModel', '')
+        if (fallbackCompletion) {
+          const useFallback = await vscode.window.showWarningMessage(
+            `No coding model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackCompletion}" which may be from a different provider. Continue anyway?`,
+            'Continue',
+            'Cancel'
+          )
+          
+          if (useFallback !== 'Continue') {
+            this.log.appendLine(`[handleStartProxy] User cancelled due to fallback requirement`)
+            return
+          }
+          
+          completionModel = fallbackCompletion
+          this.log.appendLine(`[handleStartProxy] Falling back to global completionModel: ${completionModel}`)
+        }
+      }
+      
+      if (!valueModel) {
+        const fallbackValue = cfg.get<string>('valueModel', '')
+        if (fallbackValue) {
+          const useFallback = await vscode.window.showWarningMessage(
+            `No value model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackValue}" which may be from a different provider. Continue anyway?`,
+            'Continue',
+            'Cancel'
+          )
+          
+          if (useFallback !== 'Continue') {
+            this.log.appendLine(`[handleStartProxy] User cancelled due to fallback requirement`)
+            return
+          }
+          
+          valueModel = fallbackValue
+          this.log.appendLine(`[handleStartProxy] Falling back to global valueModel: ${valueModel}`)
+        }
+      }
+      
+      // Log the source of each model
+      const hasProviderSpecific = modelSelectionsByProvider[this.runtimeProvider] && 
+                               modelSelectionsByProvider[this.runtimeProvider].reasoning
+      this.log.appendLine(`[handleStartProxy] Model source - Provider-specific: ${hasProviderSpecific ? 'YES' : 'NO'}, Fallback used: ${hasProviderSpecific ? 'NO' : 'YES'}`)
+      
+      // Add guard: if required models are missing for the active provider, return error
+      if (!reasoningModel || reasoningModel.trim() === '') {
+        const errorMsg = `No reasoning model selected for provider "${this.runtimeProvider}". Please select a model before starting the proxy.`
+        this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
+        vscode.window.showWarningMessage(errorMsg)
+        this.view?.webview.postMessage({ 
+          type: 'proxyError', 
+          payload: errorMsg
+        })
+        return
+      }
+      
+      if (twoModelMode && (!completionModel || completionModel.trim() === '')) {
+        const errorMsg = `No completion model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
+        this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
+        vscode.window.showWarningMessage(errorMsg)
+        this.view?.webview.postMessage({ 
+          type: 'proxyError', 
+          payload: errorMsg
+        })
+        return
+      }
+
+      if (twoModelMode && (!valueModel || valueModel.trim() === '')) {
+        const errorMsg = `No value model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
+        this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
+        vscode.window.showWarningMessage(errorMsg)
+        this.view?.webview.postMessage({ 
+          type: 'proxyError', 
+          payload: errorMsg
+        })
+        return
+      }
+      
+      // Add validation before starting proxy for stale fallback usage
+      
+      if (!hasProviderSpecific && reasoningModel) {
+        // Check if we're using stale fallback values (e.g., GPT models for Deepseek provider)
+        const isStaleCombination = 
+          (this.runtimeProvider === 'deepseek' && reasoningModel.includes('gpt')) ||
+          (this.runtimeProvider === 'glm' && reasoningModel.includes('gpt')) ||
+          (this.runtimeProvider === 'together' && reasoningModel.includes('gpt') && !reasoningModel.includes('meta-llama')) ||
+          (this.runtimeProvider === 'openrouter' && reasoningModel.startsWith('gpt-') && !completionModel)
+        
+        if (isStaleCombination) {
+          const errorMsg = `Using stale global model "${reasoningModel}" for provider "${this.runtimeProvider}". Please re-select models for this provider.`
+          this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
+          vscode.window.showWarningMessage(errorMsg)
+          this.view?.webview.postMessage({ 
+            type: 'proxyError', 
+            payload: errorMsg
+          })
+          return
+        }
+      }
+
+      // Log model configuration
+      this.log.appendLine(`[handleStartProxy] Models configured for provider "${this.runtimeProvider}":`)
+      this.log.appendLine(`[handleStartProxy] - reasoningModel: ${reasoningModel}`)
+      if (completionModel) {
+        this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel}`)
+      }
+      
+      // Log the final models that will be used
+      const reasoningSource = hasProviderSpecific ? 'from provider-specific config' : 'from global fallback'
+      const completionSource = hasProviderSpecific ? 'from provider-specific config' : 'from global fallback'
+      this.log.appendLine(`[handleStartProxy] Final models for proxy start:`)
+      this.log.appendLine(`[handleStartProxy] - reasoning=${reasoningModel} (${reasoningSource})`)
+      if (completionModel) {
+        this.log.appendLine(`[handleStartProxy] - completion=${completionModel} (${completionSource})`)
       }
       
       this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.runtimeProvider}, port=${port}, twoModelMode=${twoModelMode}`)
@@ -975,11 +1138,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand('claudeThrone.revertApply', { autoSelectFirstFolder: true })
       }
       
-      // Clear caches and refresh webview config after stopping
-      this.modelsCache.clear()
-      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      // Don't clear models cache - let it expire naturally (5 minutes TTL)
+      // this.modelsCache.clear()
+      
+      // Don't send empty models to webview - preserve current selections
+      // this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      
+      // Send config without clearing models - model selections should persist in modelSelectionsByProvider
       this.postConfig()
       this.postStatus()
+      
+      this.log.appendLine(`[handleStopProxy] Proxy stopped, model selections preserved in modelSelectionsByProvider`)
       
       if (autoApply) {
         vscode.window.showInformationMessage('Proxy stopped and Claude Code settings reverted')
@@ -1025,19 +1194,85 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
       this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, coding=${coding}, value=${value}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleSaveModels] Current provider: ${this.runtimeProvider}`)
+      this.log.appendLine(`[handleSaveModels] Configuration target: Workspace`)
       
-      // Explicitly save to Workspace configuration to ensure persistence
-      await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('completionModel', coding, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('valueModel', value, vscode.ConfigurationTarget.Workspace)
+      // Read current modelSelectionsByProvider before mutation
+      const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+      this.log.appendLine(`[handleSaveModels] Current modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
       
-      this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config`)
+      if (!modelSelectionsByProvider[this.runtimeProvider]) {
+        modelSelectionsByProvider[this.runtimeProvider] = {}
+      }
+      
+      // Update provider-specific configuration
+      modelSelectionsByProvider[this.runtimeProvider].reasoning = reasoning
+      modelSelectionsByProvider[this.runtimeProvider].completion = coding
+      modelSelectionsByProvider[this.runtimeProvider].value = value
+      
+      this.log.appendLine(`[handleSaveModels] Updated modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
+      
+      // Save the provider-specific configuration with detailed logging
+      try {
+        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
+        this.log.appendLine(`[handleSaveModels] Successfully saved modelSelectionsByProvider to Workspace config`)
+      } catch (err: any) {
+        this.log.appendLine(`[handleSaveModels] ERROR saving modelSelectionsByProvider: ${err.message}`)
+        this.log.appendLine(`[handleSaveModels] ERROR stack: ${err.stack}`)
+        vscode.window.showErrorMessage(`Failed to save modelSelectionsByProvider: ${err.message}`)
+      }
+      
+      // Also save to global keys for backward compatibility with individual try-catch
+      try {
+        await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
+        this.log.appendLine(`[handleSaveModels] Successfully saved reasoningModel to Workspace config: ${reasoning}`)
+      } catch (err: any) {
+        this.log.appendLine(`[handleSaveModels] ERROR saving reasoningModel: ${err.message}`)
+        vscode.window.showErrorMessage(`Failed to save reasoningModel: ${err.message}`)
+      }
+      
+      try {
+        await cfg.update('completionModel', coding, vscode.ConfigurationTarget.Workspace)
+        this.log.appendLine(`[handleSaveModels] Successfully saved completionModel to Workspace config: ${coding}`)
+      } catch (err: any) {
+        this.log.appendLine(`[handleSaveModels] ERROR saving completionModel: ${err.message}`)
+        vscode.window.showErrorMessage(`Failed to save completionModel: ${err.message}`)
+      }
+      
+      try {
+        await cfg.update('valueModel', value, vscode.ConfigurationTarget.Workspace)
+        this.log.appendLine(`[handleSaveModels] Successfully saved valueModel to Workspace config: ${value}`)
+      } catch (err: any) {
+        this.log.appendLine(`[handleSaveModels] ERROR saving valueModel: ${err.message}`)
+        vscode.window.showErrorMessage(`Failed to save valueModel: ${err.message}`)
+      }
+      
+      this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config for provider: ${this.runtimeProvider}`)
+      
+      // Verification: read back the saved value to confirm it was persisted
+      try {
+        const verification = cfg.get<any>('modelSelectionsByProvider', {})
+        this.log.appendLine(`[handleSaveModels] Verification - modelSelectionsByProvider after save: ${JSON.stringify(verification)}`)
+        if (verification[this.runtimeProvider]) {
+          const saved = verification[this.runtimeProvider]
+          if (saved.reasoning === reasoning && saved.completion === coding && saved.value === value) {
+            this.log.appendLine(`[handleSaveModels] Verification passed - models correctly saved`)
+          } else {
+            this.log.appendLine(`[handleSaveModels] WARNING - Verification failed. Expected: reasoning=${reasoning}, coding=${coding}, value=${value}. Got: ${JSON.stringify(saved)}`)
+          }
+        } else {
+          this.log.appendLine(`[handleSaveModels] WARNING - No saved data found for provider ${this.runtimeProvider} after save`)
+        }
+      } catch (verr: any) {
+        this.log.appendLine(`[handleSaveModels] ERROR during verification: ${verr.message}`)
+      }
       
       // Immediately send updated config back to webview to confirm save
       this.postConfig()
     } catch (err) {
-      this.log.appendLine(`[handleSaveModels] Error: ${err}`)
+      this.log.appendLine(`[handleSaveModels] Unexpected error: ${err}`)
       console.error('Failed to save models:', err)
+      vscode.window.showErrorMessage(`Unexpected error saving models: ${err}`)
     }
   }
 
@@ -1048,13 +1283,29 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleSetModelFromList(modelId: string, modelType: 'reasoning' | 'coding' | 'value') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
+    // Update provider-specific configuration
+    const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+    if (!modelSelectionsByProvider[this.runtimeProvider]) {
+      modelSelectionsByProvider[this.runtimeProvider] = {}
+    }
+    
     if (modelType === 'reasoning') {
+      // Update both provider-specific and global configs
+      modelSelectionsByProvider[this.runtimeProvider].reasoning = modelId
+      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
       await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
       this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId}`)
     } else if (modelType === 'coding') {
+      // Update both provider-specific and global configs
+      modelSelectionsByProvider[this.runtimeProvider].completion = modelId
+      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
       await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
       this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId}`)
     } else if (modelType === 'value') {
+      // Update both provider-specific and global configs
+      modelSelectionsByProvider[this.runtimeProvider].value = modelId
+      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
       await cfg.update('valueModel', modelId, vscode.ConfigurationTarget.Workspace)
       this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId}`)
     }

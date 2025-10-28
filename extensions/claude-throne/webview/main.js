@@ -268,12 +268,16 @@
       state.modelsByProvider[state.provider].value = state.valueModel;
     }
     
-    // Clear the specific provider's cache before changing
-    delete state.modelsCache[state.provider];
+    // Capture old provider and delete its cache before changing
+    const oldProvider = state.provider;
+    delete state.modelsCache[oldProvider];
     
     const newProvider = e.target.value;
     state.provider = newProvider;
     state.models = [];
+    
+    // Reset models and clear the visual list before loading
+    renderModelList();
     
     // Initialize models storage for custom provider if needed
     if (!state.modelsByProvider[newProvider]) {
@@ -1090,7 +1094,7 @@
         const modelName = state.reasoningModel.split('/').pop() || state.reasoningModel;
         reasoningDisplay.innerHTML = `<strong>Reasoning:</strong> ${escapeHtml(modelName)}`;
         } else {
-        reasoningDisplay.innerHTML = '<em>No reasoning model selected</em>';
+        reasoningDisplay.innerHTML = '<em>No model(s) selected for this provider</em>';
       }
     }
     
@@ -1099,8 +1103,12 @@
         const modelName = state.codingModel.split('/').pop() || state.codingModel;
         codingDisplay.innerHTML = `<strong>Coding:</strong> ${escapeHtml(modelName)}`;
         codingDisplay.style.display = 'block';
-            } else {
-        codingDisplay.innerHTML = '';
+      } else {
+        if (state.twoModelMode) {
+          codingDisplay.innerHTML = '<em>No model(s) selected for this provider</em>';
+        } else {
+          codingDisplay.innerHTML = '';
+        }
         codingDisplay.style.display = 'none';
       }
     }
@@ -1110,8 +1118,12 @@
         const modelName = state.valueModel.split('/').pop() || state.valueModel;
         valueDisplay.innerHTML = `<strong>Value:</strong> ${escapeHtml(modelName)}`;
         valueDisplay.style.display = 'block';
-            } else {
-        valueDisplay.innerHTML = '';
+      } else {
+        if (state.twoModelMode) {
+          valueDisplay.innerHTML = '<em>No model(s) selected for this provider</em>';
+        } else {
+          valueDisplay.innerHTML = '';
+        }
         valueDisplay.style.display = 'none';
       }
     }
@@ -1211,7 +1223,7 @@
     if (!container) return;
 
     if (state.models.length === 0) {
-      container.innerHTML = '<div class="empty-state">No models available</div>';
+      container.innerHTML = '<div class="empty-state">No model(s) selected for this provider.</div>';
       return;
     }
 
@@ -1415,6 +1427,25 @@
    * two-model mode flag, and configured port.
    */
   function startProxy() {
+    // Validate that required models are selected for the current provider
+    if (!state.reasoningModel || state.reasoningModel.trim() === '') {
+      const errorMsg = `No models selected for ${state.provider}. Please select models from the list or enter them manually before starting the proxy.`;
+      showNotification(errorMsg, 'error', 5000); // Longer duration for prominence
+      return;
+    }
+    
+    if (state.twoModelMode && (!state.codingModel || state.codingModel.trim() === '')) {
+      const errorMsg = `No coding model selected for ${state.provider} in two-model mode. Please select a model before starting the proxy.`;
+      showNotification(errorMsg, 'error', 5000);
+      return;
+    }
+    
+    if (state.twoModelMode && (!state.valueModel || state.valueModel.trim() === '')) {
+      const errorMsg = `No value model selected for ${state.provider} in two-model mode. Please select a model before starting the proxy.`;
+      showNotification(errorMsg, 'error', 5000);
+      return;
+    }
+    
     // Log diagnostic info before starting proxy
     console.log('[startProxy] Starting proxy with config:', {
       twoModelMode: state.twoModelMode,
@@ -1559,9 +1590,15 @@
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
-    // Clear models and cache when config is reloaded (e.g., after revert)
-    state.models = [];
-    state.modelsCache = {};
+    // Don't clear models and cache unless provider has changed
+    // This preserves model selections across config reloads
+    if (config.provider !== state.provider) {
+      console.log('[handleConfigLoaded] Provider changed from', state.provider, 'to', config.provider, '- clearing cache');
+      state.models = [];
+      state.modelsCache = {};
+    } else {
+      console.log('[handleConfigLoaded] Provider unchanged - preserving cache');
+    }
     
     // Handle cache age display
     updateCacheDisplay(config);
@@ -1591,12 +1628,48 @@
       }
     }
 
-    // Always update state to match config, even if empty (prevents stale cached values)
-    state.reasoningModel = config.reasoningModel || '';
-    state.codingModel = config.completionModel || '';
-    state.valueModel = config.valueModel || '';
+    // Read modelSelectionsByProvider from the payload
+    if (config.modelSelectionsByProvider) {
+      state.modelsByProvider = config.modelSelectionsByProvider;
+      // Ensure built-in providers have entries
+      ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'].forEach(provider => {
+        if (!state.modelsByProvider[provider]) {
+          state.modelsByProvider[provider] = { reasoning: '', coding: '', value: '' };
+        }
+      });
+    }
     
-    console.log('[handleConfigLoaded] Updated model state:', {
+    // Only seed modelsByProvider for the current provider if no entry exists
+    if (!state.modelsByProvider[state.provider]) {
+      state.modelsByProvider[state.provider] = { reasoning: '', coding: '', value: '' };
+    }
+    
+    // Set models from provider-specific storage, with validation
+    if (state.modelsByProvider[state.provider]) {
+      const providerModels = state.modelsByProvider[state.provider];
+      state.reasoningModel = providerModels.reasoning || '';
+      state.codingModel = providerModels.coding || '';
+      state.valueModel = providerModels.value || '';
+      
+      // Validation: check if all models are empty for this provider
+      if (!state.reasoningModel && !state.codingModel && !state.valueModel) {
+        console.log(`[handleConfigLoaded] No models found for provider ${state.provider} in modelSelectionsByProvider`);
+        console.log(`[handleConfigLoaded] Provider entry exists but models are empty - may indicate a save failure`);
+      }
+    } else {
+      state.reasoningModel = '';
+      state.codingModel = '';
+      state.valueModel = '';
+      console.log(`[handleConfigLoaded] No provider entry found for ${state.provider} in modelSelectionsByProvider`);
+    }
+    
+    // Debug: log the full modelSelectionsByProvider for inspection
+    console.log(`[handleConfigLoaded] Full modelsByProvider object:`, JSON.stringify(state.modelsByProvider));
+    console.log(`[handleConfigLoaded] Current provider: ${state.provider}`);
+    console.log(`[handleConfigLoaded] Model selections: reasoning=${state.reasoningModel}, coding=${state.codingModel}, value=${state.valueModel}`);
+    
+    console.log('[handleConfigLoaded] Updated model state from provider-specific storage:', {
+      provider: state.provider,
       reasoningModel: state.reasoningModel,
       codingModel: state.codingModel,
       valueModel: state.valueModel,
@@ -1649,11 +1722,24 @@
     const providerExamples = {
       'openrouter': 'anthropic/claude-3-opus, openai/gpt-4-turbo, meta-llama/llama-3.1-70b-instruct',
       'openai': 'gpt-4, gpt-4-turbo, gpt-3.5-turbo',
-      'together': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo, mistralai/Mixtral-8x7B-Instruct-v0.1',
+      'together': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo, mistralai/Mixtral-8x7B-Instruct-v0.1, Qwen/Qwen2.5-72B-Instruct-Turbo',
       'deepseek': 'deepseek-chat, deepseek-coder',
       'glm': 'glm-4-plus, glm-4',
       'custom': 'gpt-4, claude-3-opus, llama-3'
     };
+    
+    // Show dedicated hint for Together AI when 401/403 is encountered
+    let dedicatedHint = '';
+    if (state.provider === 'together' && payload.error && (payload.error.includes('401') || payload.error.includes('403'))) {
+      dedicatedHint = `
+        <div class="manual-entry-hint" style="background: var(--vscode-inputValidation-warningBackground); padding: 8px; border-radius: 4px; margin-bottom: 12px;">
+          <p class="manual-entry-hint-title">🔑 Together AI Authentication Issue</p>
+          <p>• Verify your API key at <a href="https://api.together.xyz/settings/api-keys" target="_blank">api.together.xyz/settings/api-keys</a></p>
+          <p>• Ensure the key is active and has credits available</p>
+          <p>• Some keys may be restricted to specific models - check your account settings</p>
+        </div>
+      `;
+    }
     
     const example = providerExamples[state.provider] || 'gpt-4, claude-3-opus';
     
@@ -1661,6 +1747,7 @@
     container.innerHTML = `
       <div class="empty-state">
         <p class="empty-state-error">${escapeHtml(payload.error)}</p>
+        ${dedicatedHint}
         
         <div class="manual-entry-section">
           <h4 class="manual-entry-header">Manual Model Entry</h4>

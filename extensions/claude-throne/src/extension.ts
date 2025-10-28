@@ -821,57 +821,198 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   // Diagnostic command to check configuration health
-  const checkConfigHealth = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
+  // Diagnostic command to check configuration health
+  const checkConfigHealthCommand = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
     try {
+      console.log('[checkConfigHealth] Starting configuration health check...');
+      const healthIssues: string[] = [];
       const cfg = vscode.workspace.getConfiguration('claudeThrone');
-      const configProps = [
-        'anthropicDefaults',
-        'anthropicDefaultsTimestamp',
-        'provider',
-        'proxy.port',
-        'autoApply',
-        'applyScope'
+      
+      // Keys to check for scope conflicts
+      const keysToCheck = [
+        'modelSelectionsByProvider',
+        'reasoningModel',
+        'completionModel',
+        'valueModel',
+        'provider'
       ];
       
-      console.log('[checkConfigHealth] Checking configuration properties...');
-      const health: Record<string, any> = {};
+      console.log('[checkConfigHealth] Checking scope configurations...');
       
-      for (const prop of configProps) {
-        try {
-          const value = cfg.get(prop);
-          health[prop] = { value, status: 'OK' };
-          console.log(`[checkConfigHealth] ✅ claudeThrone.${prop}:`, value);
-        } catch (err: any) {
-          health[prop] = { error: err.message, status: 'ERROR' };
-          console.error(`[checkConfigHealth] ❌ claudeThrone.${prop}:`, err);
+      // Collect scope issues using inspect()
+      const scopeIssues: Array<{
+        key: string;
+        defaultValue: any;
+        globalValue: any;
+        workspaceValue: any;
+        workspaceFolderValue: any;
+        hasWorkspace: boolean;
+        hasGlobal: boolean;
+        hasWorkspaceFolder: boolean;
+      }> = [];
+      
+      for (const key of keysToCheck) {
+        const inspection = cfg.inspect(key);
+        
+        if (!inspection) {
+          continue;
+        }
+        
+        const { defaultValue, globalValue, workspaceValue, workspaceFolderValue } = inspection;
+        
+        const hasWorkspace = workspaceValue !== undefined && workspaceValue !== null && 
+                           (typeof workspaceValue === 'string' ? workspaceValue.trim() !== '' : true);
+        const hasGlobal = globalValue !== undefined && globalValue !== null && 
+                        (typeof globalValue === 'string' ? globalValue.trim() !== '' : true);
+        const hasWorkspaceFolder = workspaceFolderValue !== undefined && workspaceFolderValue !== null && 
+                                 (typeof workspaceFolderValue === 'string' ? workspaceFolderValue.trim() !== '' : true);
+        
+        // Check for conflicts between global and workspace
+        if (hasWorkspace && hasGlobal && JSON.stringify(workspaceValue) !== JSON.stringify(globalValue)) {
+          scopeIssues.push({
+            key,
+            defaultValue,
+            globalValue,
+            workspaceValue,
+            workspaceFolderValue,
+            hasWorkspace,
+            hasGlobal,
+            hasWorkspaceFolder
+          });
+        }
+        
+        // Check if workspace-scoped keys are set only in global (potential issue)
+        if (!hasWorkspace && hasGlobal && ['reasoningModel', 'completionModel', 'valueModel'].includes(key)) {
+          scopeIssues.push({
+            key,
+            defaultValue,
+            globalValue,
+            workspaceValue,
+            workspaceFolderValue,
+            hasWorkspace,
+            hasGlobal,
+            hasWorkspaceFolder
+          });
         }
       }
       
-      // Show results
-      const results = Object.entries(health).map(([key, info]: [string, any]) => {
-        const status = info.status === 'OK' ? '✅' : '❌';
-        const value = info.value || 'N/A';
-        const error = info.error || '';
-        return `${status} **claudeThrone.${key}**: ${value}${error ? ` (${error})` : ''}`;
-      });
+      if (scopeIssues.length > 0) {
+        healthIssues.push(`Found ${scopeIssues.length} configuration value(s) with scope conflicts (Global vs Workspace). This may indicate manual edits or import issues.`);
+        healthIssues.push('');
+        
+        // Add detailed scope information for each issue
+        for (const issue of scopeIssues) {
+          healthIssues.push(`### **${issue.key}**`);
+          
+          // Show which scopes have values
+          if (issue.hasGlobal) {
+            healthIssues.push(`- **Global**: ${JSON.stringify(issue.globalValue)}`);
+          }
+          if (issue.hasWorkspace) {
+            healthIssues.push(`- **Workspace**: ${JSON.stringify(issue.workspaceValue)}`);
+          }
+          if (issue.hasWorkspaceFolder) {
+            healthIssues.push(`- **Workspace Folder**: ${JSON.stringify(issue.workspaceFolderValue)}`);
+          }
+          if (issue.defaultValue !== undefined) {
+            healthIssues.push(`- **Default**: ${JSON.stringify(issue.defaultValue)}`);
+          }
+          
+          // Special handling for modelSelectionsByProvider
+          if (issue.key === 'modelSelectionsByProvider' && issue.hasGlobal && issue.hasWorkspace) {
+            const globalModels = issue.globalValue;
+            const workspaceModels = issue.workspaceValue;
+            
+            // Compare provider entries
+            const allProviders = new Set([...Object.keys(globalModels || {}), ...Object.keys(workspaceModels || {})]);
+            const differingProviders: string[] = [];
+            
+            for (const provider of allProviders) {
+              const globalProvider = globalModels?.[provider];
+              const workspaceProvider = workspaceModels?.[provider];
+              
+              if (JSON.stringify(globalProvider) !== JSON.stringify(workspaceProvider)) {
+                differingProviders.push(provider);
+              }
+            }
+            
+            if (differingProviders.length > 0) {
+              healthIssues.push(`- **Differing providers**: ${differingProviders.join(', ')}`);
+            }
+          }
+          
+          healthIssues.push('');
+        }
+      }
       
-      const message = results.join('\n\n');
+      // Check for stale model combinations
+      const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {});
+      const provider = cfg.get<string>('provider', 'openrouter');
+      if (modelSelectionsByProvider[provider]) {
+        const providerModels = modelSelectionsByProvider[provider];
+        if (providerModels.reasoning) {
+          const reasoning = providerModels.reasoning;
+          const isStaleCombination = 
+            (provider === 'deepseek' && reasoning.includes('gpt')) ||
+            (provider === 'glm' && reasoning.includes('gpt')) ||
+            (provider === 'together' && reasoning.includes('gpt') && !reasoning.includes('meta-llama')) ||
+            (provider === 'openrouter' && reasoning.startsWith('gpt-') && !providerModels.completion);
+          
+          if (isStaleCombination) {
+            healthIssues.push(`⚠️ **Stale Model Detected**: Using "${reasoning}" for ${provider}. This may be from a different provider. Consider re-selecting models.`);
+          }
+        }
+      }
       
+      // Generate health report
+      let report = '# Thronekeeper Configuration Health Report\n\n';
+      
+      if (healthIssues.length === 0) {
+        report += '✅ **All checks passed!** No configuration issues detected.\n\n';
+        report += 'Configuration is healthy and properly scoped.\n';
+      } else {
+        report += '## Issues Found\n\n';
+        report += healthIssues.join('\n');
+        report += '\n## Recommended Actions\n\n';
+        report += 'To fix scope conflicts:\n';
+        report += '1. Use "Thronekeeper: Reset Configuration" to clear all values and reconfigure\n';
+        report += '2. OR manually ensure values exist in only one scope (Global OR Workspace)\n';
+        report += '3. Use VS Code Settings editor to view values across all scopes\n';
+      }
+      
+      report += '\n---\n';
+      report += `Generated: ${new Date().toISOString()}\n`;
+      
+      // Always show details - provide action options
       const action = await vscode.window.showInformationMessage(
-        'Configuration Health Check Complete',
-        'Show Details',
-        'Copy to Clipboard'
+        healthIssues.length === 0 
+          ? 'Configuration health check: All good!' 
+          : `Configuration issues found: ${healthIssues.length}`,
+        healthIssues.length > 0 ? 'Show Details' : 'Show Report',
+        'Copy to Clipboard',
+        healthIssues.length > 0 ? 'Reset Config' : 'OK'
       );
       
-      if (action === 'Show Details') {
+      if (action === 'Show Report' || action === 'Show Details' || (action === 'OK' && healthIssues.length === 0)) {
         const doc = await vscode.workspace.openTextDocument({
-          content: `# Thronekeeper Configuration Health Report\n\n${message}\n\n---\nGenerated: ${new Date().toISOString()}`,
+          content: report,
           language: 'markdown'
         });
         await vscode.window.showTextDocument(doc);
       } else if (action === 'Copy to Clipboard') {
-        await vscode.env.clipboard.writeText(message);
+        await vscode.env.clipboard.writeText(report);
         vscode.window.showInformationMessage('Configuration health report copied to clipboard');
+      } else if (action === 'Reset Config') {
+        await resetConfiguration(cfg);
+        const reload = await vscode.window.showInformationMessage(
+          'Configuration reset complete. Please restart VS Code to ensure UI reflects the clean state.',
+          'Restart Now',
+          'Later'
+        );
+        
+        if (reload === 'Restart Now') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
       }
       
     } catch (err: any) {
@@ -880,65 +1021,75 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Diagnostic command to check configuration health
-  const checkConfigHealthCommand = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
+  async function resetConfiguration(cfg: vscode.WorkspaceConfiguration) {
     try {
-      const cfg = vscode.workspace.getConfiguration('claudeThrone');
-      const configProps = [
-        'anthropicDefaults',
-        'anthropicDefaultsTimestamp',
+      console.log('[resetConfiguration] Clearing all Thronekeeper settings from both scopes...');
+      
+      // Keys to clear from both scopes
+      const keysToClear = [
+        'modelSelectionsByProvider',
+        'reasoningModel',
+        'completionModel', 
+        'valueModel',
         'provider',
+        'selectedCustomProviderId',
+        'customBaseUrl',
+        'customProviders',
+        'savedCombos',
+        'twoModelMode',
         'proxy.port',
+        'proxy.debug',
         'autoApply',
         'applyScope'
       ];
       
-      console.log('[checkConfigHealth] Checking configuration properties...');
-      const health: Record<string, any> = {};
-      
-      for (const prop of configProps) {
+      // Clear from Workspace scope
+      for (const key of keysToClear) {
         try {
-          const value = cfg.get(prop);
-          health[prop] = { value, status: 'OK' };
-          console.log(`[checkConfigHealth] ✅ claudeThrone.${prop}:`, value);
-        } catch (err: any) {
-          health[prop] = { error: err.message, status: 'ERROR' };
-          console.error(`[checkConfigHealth] ❌ claudeThrone.${prop}:`, err);
+          await cfg.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+        } catch (err) {
+          console.warn(`[resetConfiguration] Failed to clear ${key} from Workspace:`, err);
         }
       }
       
-      // Show results
-      const results = Object.entries(health).map(([key, info]: [string, any]) => {
-        const status = info.status === 'OK' ? '✅' : '❌';
-        const value = info.value || 'N/A';
-        const error = info.error || '';
-        return `${status} **claudeThrone.${key}**: ${value}${error ? ` (${error})` : ''}`;
-      });
-      
-      const message = results.join('\n\n');
-      
-      const action = await vscode.window.showInformationMessage(
-        'Configuration Health Check Complete',
-        'Show Details',
-        'Copy to Clipboard'
-      );
-      
-      if (action === 'Show Details') {
-        const doc = await vscode.workspace.openTextDocument({
-          content: `# Thronekeeper Configuration Health Report\n\n${message}\n\n---\nGenerated: ${new Date().toISOString()}`,
-          language: 'markdown'
-        });
-        await vscode.window.showTextDocument(doc);
-      } else if (action === 'Copy to Clipboard') {
-        await vscode.env.clipboard.writeText(message);
-        vscode.window.showInformationMessage('Configuration health report copied to clipboard');
+      // Clear from Global scope
+      for (const key of keysToClear) {
+        try {
+          await cfg.update(key, undefined, vscode.ConfigurationTarget.Global);
+        } catch (err) {
+          console.warn(`[resetConfiguration] Failed to clear ${key} from Global:`, err);
+        }
       }
       
-    } catch (err: any) {
-      console.error('[checkConfigHealth] Unexpected error:', err);
-      vscode.window.showErrorMessage(`Configuration health check failed: ${err?.message || err}`);
+      // Write minimal baseline configuration to appropriate scope
+      try {
+        console.log('[resetConfiguration] Writing baseline configuration...');
+        
+        // Set default provider to Global scope (as it's typically a user preference)
+        await cfg.update('provider', 'openrouter', vscode.ConfigurationTarget.Global);
+        
+        // Restore anthropicDefaults from cache if available
+        const cachedDefaults = cfg.get<any>('anthropicDefaults');
+        if (cachedDefaults && cachedDefaults.opus && cachedDefaults.sonnet && cachedDefaults.haiku) {
+          await safeConfigUpdate(
+            cfg,
+            'anthropicDefaults',
+            cachedDefaults,
+            vscode.ConfigurationTarget.Global
+          );
+        }
+        
+        console.log('[resetConfiguration] Baseline configuration written successfully');
+      } catch (err) {
+        console.warn('[resetConfiguration] Failed to write baseline configuration:', err);
+      }
+      
+      console.log('[resetConfiguration] Configuration cleared successfully from both scopes');
+    } catch (err) {
+      console.error('[resetConfiguration] Error during reset:', err);
+      throw err;
     }
-  });
+  }
 
   context.subscriptions.push(
     openPanel,

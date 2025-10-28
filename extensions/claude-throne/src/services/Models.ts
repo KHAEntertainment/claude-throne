@@ -39,9 +39,22 @@ async function fetchModelsWithRetry(url: string, headers: Record<string, string>
           // If reading body fails, continue without snippet
         }
         
+        // Provider-specific error handling
+        if ((res.statusCode === 401 || res.statusCode === 403) && url.includes('together.xyz')) {
+          throw new Error(`Together AI authentication failed (${res.statusCode}). Please check your API key and ensure it has the required permissions.`)
+        }
+        
         const errorMsg = errorSnippet 
           ? `Model list failed (${res.statusCode}): ${errorSnippet}`
           : `Model list failed (${res.statusCode})`
+          
+        // Log attempted URL and status code/body snippet for debugging
+        console.log(`[Models] Request failed for URL: ${url}`)
+        console.log(`[Models] Status code: ${res.statusCode}`)
+        if (errorSnippet) {
+          console.log(`[Models] Response snippet: ${errorSnippet}`)
+        }
+        
         throw new Error(errorMsg)
       }
 
@@ -79,12 +92,30 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+  
+  // Log attempted URL for debugging
+  console.log(`[Models] Listing models for provider: ${provider}`)
+  console.log(`[Models] Base URL: ${baseUrl}`)
+  console.log(`[Models] API key provided: ${apiKey ? 'YES' : 'NO'}`)
 
   // normalize base URL - use proper endpoint for Anthropic-style providers
   const base = baseUrl.replace(/\/$/, '')
-  const url = provider === 'openrouter'
+  let url = provider === 'openrouter'
     ? 'https://openrouter.ai/api/v1/models'
     : getModelsEndpointForBase(base)
+    
+  // Provider-specific logic for TogetherAI
+  if (provider === 'together' || (provider === 'custom' && url.includes('together.xyz'))) {
+    if (!apiKey) {
+      throw new Error('API key required for Together AI. Please set your API key in the provider settings.')
+    }
+    // Ensure proper Authorization header for TogetherAI
+    headers.Authorization = `Bearer ${apiKey}`
+    url = 'https://api.together.xyz/v1/models'
+  }
+
+  console.log(`[Models] Fetching models from: ${url}`)
+  console.log(`[Models] Authorization header: ${headers.Authorization ? 'PRESENT' : 'MISSING'}`)
 
   try {
     const data = await fetchModelsWithRetry(url, headers)

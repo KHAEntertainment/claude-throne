@@ -1,13 +1,13 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "inclusionai/ring-1t",
-  "claudeThrone.completionModel": "minimax/minimax-m2:free",
+  "claudeThrone.reasoningModel": "gpt-5",
+  "claudeThrone.completionModel": "gpt-5-codex",
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
   "claudeThrone.provider": "openrouter",
-  "claudeThrone.valueModel": "anthropic/claude-haiku-4.5",
+  "claudeThrone.valueModel": "codex-mini-latest",
   "claudeThrone.customBaseUrl": "https://api.moonshot.ai/anthropic",
   "claudeThrone.customProviders": [
     {
