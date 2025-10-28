@@ -1,4 +1,5 @@
 import { request } from 'undici'
+import { getModelsEndpointForBase } from './endpoints'
 
 export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom' | string
 
@@ -28,7 +29,20 @@ async function fetchModelsWithRetry(url: string, headers: Record<string, string>
       clearTimeout(timeoutId)
       
       if (res.statusCode !== 200) {
-        throw new Error(`Model list failed (${res.statusCode})`)
+        // Read a short slice of response body for debugging
+        let errorSnippet = ''
+        try {
+          const bodyText = await res.body.text()
+          errorSnippet = bodyText.slice(0, 500)
+          if (errorSnippet.length === 500) errorSnippet += '...'
+        } catch {
+          // If reading body fails, continue without snippet
+        }
+        
+        const errorMsg = errorSnippet 
+          ? `Model list failed (${res.statusCode}): ${errorSnippet}`
+          : `Model list failed (${res.statusCode})`
+        throw new Error(errorMsg)
       }
 
       return await res.body.json()
@@ -66,11 +80,11 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
 
-  // normalize base URL
+  // normalize base URL - use proper endpoint for Anthropic-style providers
   const base = baseUrl.replace(/\/$/, '')
   const url = provider === 'openrouter'
     ? 'https://openrouter.ai/api/v1/models'
-    : `${base}/models`
+    : getModelsEndpointForBase(base)
 
   try {
     const data = await fetchModelsWithRetry(url, headers)

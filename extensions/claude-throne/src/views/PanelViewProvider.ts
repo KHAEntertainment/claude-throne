@@ -6,8 +6,26 @@ import { isAnthropicEndpoint, type CustomEndpointKind } from '../services/endpoi
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
-  private currentProvider: string = 'openrouter'
+  private currentProvider: string = 'openrouter' // Runtime source of truth for current provider selection
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
+
+  /**
+   * Helper getter for accessing current provider for runtime operations.
+   * Returns this.currentProvider (runtime state) for UI/actions,
+   * and config.get('provider') (persistent state) only for persistence operations.
+   */
+  private get runtimeProvider(): string {
+    return this.currentProvider
+  }
+
+  /**
+   * Helper getter for accessing persistent provider config from VS Code settings.
+   * Use this only when you need to read/write the actual configuration value.
+   */
+  private get configProvider(): string {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    return cfg.get<string>('provider', 'openrouter')
+  }
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -220,6 +238,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   public postConfig() {
     if (!this.view) return;
     const config = vscode.workspace.getConfiguration('claudeThrone');
+    // Note: config.get('provider') returns the persistent value from settings,
+    // which may differ from runtimeProvider when using saved custom providers
     const provider = config.get('provider');
     const selectedCustomProviderId = config.get('selectedCustomProviderId', '');
     const reasoningModel = config.get('reasoningModel');
@@ -239,7 +259,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async postModels() {
-    const provider = this.currentProvider || 'openrouter'
+    // Use runtimeProvider for UI operations
+    const provider = this.runtimeProvider || 'openrouter'
     const CACHE_TTL_MS = 5 * 60 * 1000
     const cached = this.modelsCache.get(provider)
     
@@ -254,7 +275,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleListModels(freeOnly: boolean) {
-    const provider = this.currentProvider || 'openrouter'
+    // Use runtimeProvider for UI operations - this represents the actual provider being used
+    const provider = this.runtimeProvider || 'openrouter'
     this.log.appendLine(`📋 Loading models for provider: ${provider}`)
     
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
@@ -319,7 +341,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       let baseUrl = 'https://openrouter.ai/api'
       
       if (customProvider) {
-        // This is a saved custom provider
+        // This is a saved custom provider - use the base URL directly
         baseUrl = customProvider.baseUrl
       } else if (provider === 'custom') {
         baseUrl = cfg.get<string>('customBaseUrl', '')
@@ -765,8 +787,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // Show VS Code notification
       vscode.window.showInformationMessage('Anthropic API key stored. Fetching latest models...')
       
-      // Refresh defaults without prompting user
-      await vscode.commands.executeCommand('claudeThrone.refreshAnthropicDefaults')
+      // Refresh defaults without prompting user - handle potential settings conflicts
+      try {
+        await vscode.commands.executeCommand('claudeThrone.refreshAnthropicDefaults')
+      } catch (refreshErr: any) {
+        this.log.appendLine(`⚠️ Could not refresh Anthropic defaults: ${refreshErr}`)
+        
+        // Check if it's a settings conflict error
+        if (refreshErr.message?.includes('unsaved changes') || refreshErr.message?.includes('CodeExpectedError')) {
+          vscode.window.showInformationMessage(
+            'Anthropic API key stored. To update model defaults, please save your VS Code settings and run "Thronekeeper: Refresh Anthropic Defaults".'
+          )
+        } else {
+          vscode.window.showWarningMessage(
+            `Anthropic API key stored, but could not refresh defaults: ${refreshErr.message}`
+          )
+        }
+      }
       
       // Send success message to webview
       this.view?.webview.postMessage({ 
@@ -792,19 +829,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       let customBaseUrl = undefined
       let customProviderId = undefined
       
-      // Check if this is a saved custom provider
+      // Use runtimeProvider to determine which custom provider configuration to load
       const customProviders = cfg.get<any[]>('customProviders', [])
-      const customProvider = customProviders.find(p => p.id === this.currentProvider)
+      const customProvider = customProviders.find(p => p.id === this.runtimeProvider)
       
       if (customProvider) {
+        // Validate customBaseUrl and provider label for saved custom providers
         customBaseUrl = customProvider.baseUrl
-        customProviderId = this.currentProvider
-      } else if (this.currentProvider === 'custom') {
+        customProviderId = this.runtimeProvider
+        this.log.appendLine(`[handleStartProxy] Using saved custom provider: ${customProvider.name} (${customProviderId})`)
+      } else if (this.runtimeProvider === 'custom') {
+        // For generic custom provider, get URL from config
         customBaseUrl = cfg.get<string>('customBaseUrl', '')
         const selectedCustomProviderId = cfg.get<string>('selectedCustomProviderId', '')
         if (selectedCustomProviderId) {
           customProviderId = selectedCustomProviderId
         }
+        this.log.appendLine(`[handleStartProxy] Using generic custom provider with URL: ${customBaseUrl}`)
       }
       
       // All providers (including Deepseek, GLM, and custom Anthropic endpoints) now route through the proxy
@@ -828,7 +869,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         this.log.appendLine(`[handleStartProxy] - completionModel: ${completionModel || 'EMPTY (will use fallback)'}`)
       }
       
-      this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.currentProvider}, port=${port}, twoModelMode=${twoModelMode}`)
+      this.log.appendLine(`[handleStartProxy] Starting proxy: provider=${this.runtimeProvider}, port=${port}, twoModelMode=${twoModelMode}`)
       this.log.appendLine(`[handleStartProxy] Models: reasoning=${reasoningModel || 'NOT SET'}, completion=${completionModel || 'NOT SET'}`)
       if (customBaseUrl) {
         this.log.appendLine(`[handleStartProxy] Custom Base URL: ${customBaseUrl}`)
@@ -839,7 +880,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
       // Determine the provider to pass to proxy.start
-      let proxyProvider = this.currentProvider
+      let proxyProvider = this.runtimeProvider
       if (customProvider) {
         // For saved custom providers, pass 'custom' as provider and customProviderId separately
         proxyProvider = 'custom'

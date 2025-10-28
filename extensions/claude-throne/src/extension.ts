@@ -370,7 +370,20 @@ export function activate(context: vscode.ExtensionContext) {
       await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
       vscode.window.showInformationMessage(`Anthropic defaults refreshed: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
     } catch (err: any) {
-      vscode.window.showErrorMessage(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
+      log.appendLine(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
+      
+      // Check if it's a settings conflict error
+      if (err?.message?.includes('unsaved changes') || err?.name === 'CodeExpectedError') {
+        const action = await vscode.window.showWarningMessage(
+          'Could not update Anthropic defaults: Please save your VS Code settings first, then try again.',
+          'Open Settings'
+        )
+        if (action === 'Open Settings') {
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone.anthropicDefaults')
+        }
+      } else {
+        vscode.window.showErrorMessage(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
+      }
     }
   })
 
@@ -683,12 +696,18 @@ async function storeAnthropicKeyHelper(secrets: SecretsService) {
     vscode.window.showWarningMessage('Key does not start with "sk-"; please verify it is correct');
   }
   
+  // Split key storage from defaults update
   try {
-    // Store the key
+    // Store the key first
     await secrets.setAnthropicKey(key);
     vscode.window.showInformationMessage('Anthropic API key stored securely. Fetching latest model defaults...');
-    
-    // Immediately fetch fresh defaults
+  } catch (err: any) {
+    vscode.window.showErrorMessage(`Failed to store Anthropic API key: ${err?.message || err}`);
+    return;
+  }
+  
+  // Then attempt to update defaults in a separate try-catch
+  try {
     const defaults = await fetchAnthropicDefaults(secrets);
     
     if (defaults) {
@@ -704,7 +723,21 @@ async function storeAnthropicKeyHelper(secrets: SecretsService) {
       vscode.window.showWarningMessage('Anthropic API key stored, but failed to fetch model defaults. Will use cached values.');
     }
   } catch (err: any) {
-    vscode.window.showErrorMessage(`Failed to store Anthropic API key: ${err?.message || err}`);
+    // Check if it's a settings conflict error
+    if (err?.message?.includes('unsaved changes') || err?.name === 'CodeExpectedError') {
+      vscode.window.showWarningMessage(
+        'Anthropic API key stored. To update model defaults, please save your VS Code settings and run "Thronekeeper: Refresh Anthropic Defaults".',
+        'Open Settings'
+      ).then(selection => {
+        if (selection === 'Open Settings') {
+          vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone.anthropicDefaults');
+        }
+      });
+    } else {
+      vscode.window.showWarningMessage(
+        `Anthropic API key stored, but could not refresh defaults: ${err?.message || err}`
+      );
+    }
   }
 }
 

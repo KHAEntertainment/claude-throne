@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.22",
+  "version": "1.5.23",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -187,7 +187,6 @@
           "default": "",
           "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
         },
-
         "claudeThrone.savedCombos": {
           "type": "array",
           "default": [],
@@ -227,7 +226,11 @@
                 "type": "string"
               }
             },
-            "required": ["name", "baseUrl", "id"]
+            "required": [
+              "name",
+              "baseUrl",
+              "id"
+            ]
           },
           "scope": "window",
           "markdownDescription": "Saved custom provider configurations. Each provider can have its own name, base URL, and API key. Manage these through the Thronekeeper panel."
@@ -275,7 +278,6 @@
           "scope": "application",
           "markdownDescription": "## Advanced Settings\n\nCached Anthropic default models (internal use). Updated when you store an Anthropic API key."
         },
-
         "claudeThrone.customEndpointOverrides": {
           "type": "object",
           "default": {},
