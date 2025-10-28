@@ -1,8 +1,8 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "kimi-k2-0905-preview",
-  "claudeThrone.completionModel": "moonshot-v1-8k",
+  "claudeThrone.reasoningModel": "kimi-k2-0711-preview",
+  "claudeThrone.completionModel": "kimi-k2-0905-preview",
   "claudeThrone.customEndpointKind": "openai",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
@@ -34,8 +34,8 @@
       "value": "ibm-granite/granite-4.0-h-micro"
     },
     "moonshot": {
-      "reasoning": "kimi-k2-0905-preview",
-      "completion": "moonshot-v1-8k",
+      "reasoning": "kimi-k2-0711-preview",
+      "completion": "kimi-k2-0905-preview",
       "value": "kimi-latest"
     },
     "deepseek": {

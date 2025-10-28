@@ -1308,44 +1308,29 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // Immediately send updated config back to webview to confirm save
       this.postConfig()
       
-      // Comment 5: Ensure webview uses the same provider as config to prevent confusing state
-      // Send explicit provider reconciliation message after successful save
+      // Always send modelsSaved confirmation to webview
+      // This ensures handleModelsSaved() is called and UI updates correctly
       const configProvider = this.configProvider
       const runtimeProvider = this.runtimeProvider
       const scopeUsed = applyScope
       
-      this.log.appendLine(`[handleSaveModels] Provider synchronization - runtimeProvider: ${runtimeProvider}, configProvider: ${configProvider}, scope: ${scopeUsed}`)
+      this.log.appendLine(`[handleSaveModels] Provider state - providerId: ${providerId}, runtimeProvider: ${runtimeProvider}, configProvider: ${configProvider}, scope: ${scopeUsed}`)
       
-      // If providers don't match or scope changed, request webview to reload selections from config
-      if (runtimeProvider !== configProvider) {
-        this.log.appendLine(`[handleSaveModels] WARNING: Provider mismatch detected - runtime: ${runtimeProvider} vs config: ${configProvider}`)
-        this.log.appendLine(`[handleSaveModels] Requesting webview to reload model selections from config`)
-        
-        this.view?.webview.postMessage({
-          type: 'reloadModelSelections',
-          payload: {
-            providerId: configProvider,
-            reason: 'provider_mismatch_after_save',
-            runtimeProvider,
-            configProvider,
-            scope: scopeUsed
-          }
-        })
-      } else {
-        // Providers match - just confirm the save was successful
-        this.log.appendLine(`[handleSaveModels] Provider synchronization - runtime and config providers match (${runtimeProvider})`)
-        
-        this.view?.webview.postMessage({
-          type: 'modelsSaved',
-          payload: {
-            providerId: providerId,
-            success: true,
-            scope: scopeUsed,
-            runtimeProvider,
-            configProvider
-          }
-        })
-      }
+      // Send modelsSaved message regardless of provider type
+      // Critical: Custom providers have runtimeProvider != configProvider (e.g., "moonshot" vs "custom")
+      // but they still need the modelsSaved message to trigger UI updates
+      this.log.appendLine(`[handleSaveModels] Sending modelsSaved confirmation to webview for provider: ${providerId}`)
+      
+      this.view?.webview.postMessage({
+        type: 'modelsSaved',
+        payload: {
+          providerId: providerId,
+          success: true,
+          scope: scopeUsed,
+          runtimeProvider,
+          configProvider
+        }
+      })
     } catch (err) {
       this.log.appendLine(`[handleSaveModels] Unexpected error: ${err}`)
       console.error('Failed to save models:', err)
