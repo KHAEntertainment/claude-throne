@@ -31173,6 +31173,12 @@ var require_set_cookie = __commonJS({
       map: false,
       silent: false
     };
+    function isForbiddenKey(key2) {
+      return typeof key2 !== "string" || key2 in {};
+    }
+    function createNullObj() {
+      return /* @__PURE__ */ Object.create(null);
+    }
     function isNonEmptyString(str) {
       return typeof str === "string" && !!str.trim();
     }
@@ -31183,26 +31189,32 @@ var require_set_cookie = __commonJS({
       var name = parsed.name;
       var value = parsed.value;
       options = options ? Object.assign({}, defaultParseOptions, options) : defaultParseOptions;
+      if (isForbiddenKey(name)) {
+        return null;
+      }
       try {
         value = options.decodeValues ? decodeURIComponent(value) : value;
       } catch (e) {
         console.error(
-          "set-cookie-parser encountered an error while decoding a cookie with value '" + value + "'. Set options.decodeValues to false to disable this feature.",
+          "set-cookie-parser: failed to decode cookie value. Set options.decodeValues=false to disable decoding.",
           e
         );
       }
-      var cookie = {
-        name,
-        value
-      };
+      var cookie = createNullObj();
+      cookie.name = name;
+      cookie.value = value;
       parts.forEach(function(part) {
         var sides = part.split("=");
         var key2 = sides.shift().trimLeft().toLowerCase();
+        if (isForbiddenKey(key2)) {
+          return;
+        }
         var value2 = sides.join("=");
         if (key2 === "expires") {
           cookie.expires = new Date(value2);
         } else if (key2 === "max-age") {
-          cookie.maxAge = parseInt(value2, 10);
+          var n = parseInt(value2, 10);
+          if (!Number.isNaN(n)) cookie.maxAge = n;
         } else if (key2 === "secure") {
           cookie.secure = true;
         } else if (key2 === "httponly") {
@@ -31211,7 +31223,7 @@ var require_set_cookie = __commonJS({
           cookie.sameSite = value2;
         } else if (key2 === "partitioned") {
           cookie.partitioned = true;
-        } else {
+        } else if (key2) {
           cookie[key2] = value2;
         }
       });
@@ -31235,7 +31247,7 @@ var require_set_cookie = __commonJS({
         if (!options.map) {
           return [];
         } else {
-          return {};
+          return createNullObj();
         }
       }
       if (input.headers) {
@@ -31261,12 +31273,14 @@ var require_set_cookie = __commonJS({
       if (!options.map) {
         return input.filter(isNonEmptyString).map(function(str) {
           return parseString(str, options);
-        });
+        }).filter(Boolean);
       } else {
-        var cookies = {};
+        var cookies = createNullObj();
         return input.filter(isNonEmptyString).reduce(function(cookies2, str) {
           var cookie = parseString(str, options);
-          cookies2[cookie.name] = cookie;
+          if (cookie && !isForbiddenKey(cookie.name)) {
+            cookies2[cookie.name] = cookie;
+          }
           return cookies2;
         }, cookies);
       }

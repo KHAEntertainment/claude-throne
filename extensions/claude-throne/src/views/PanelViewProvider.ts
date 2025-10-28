@@ -997,9 +997,25 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand('claudeThrone.revertApply', { autoSelectFirstFolder: true })
       this.postStatus()
       vscode.window.showInformationMessage('Reverted Claude Code settings to Anthropic defaults')
-    } catch (err) {
+    } catch (err: any) {
       this.log.appendLine(`[handleRevertApply] Error: ${err}`)
-      vscode.window.showErrorMessage(`Failed to revert settings: ${err}`)
+      
+      // Handle specific configuration errors
+      if (err?.message?.includes('not a registered configuration') || err?.name === 'CodeExpectedError') {
+        const action = await vscode.window.showWarningMessage(
+          'Configuration error during revert. Some settings may not be available. Try checking configuration health.',
+          'Check Config Health',
+          'Reload VS Code'
+        );
+        
+        if (action === 'Check Config Health') {
+          await vscode.commands.executeCommand('claudeThrone.checkConfigHealth');
+        } else if (action === 'Reload VS Code') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      } else {
+        vscode.window.showErrorMessage(`Failed to revert settings: ${err?.message || err}`)
+      }
     }
   }
 

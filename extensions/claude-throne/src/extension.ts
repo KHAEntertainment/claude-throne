@@ -9,6 +9,66 @@ import { updateClaudeSettings } from './services/ClaudeSettings';
 let proxy: ProxyManager | null = null;
 
 /**
+ * Safely updates VS Code configuration with validation and error handling
+ * @param config VS Code configuration instance
+ * @param key Configuration key (without claudeThrone. prefix)
+ * @param value Value to set
+ * @param target Configuration target (Global/Workspace)
+ * @param fallback Optional fallback action if update fails
+ */
+async function safeConfigUpdate(
+  config: vscode.WorkspaceConfiguration,
+  key: string,
+  value: any,
+  target: vscode.ConfigurationTarget,
+  fallback?: () => Promise<void>
+): Promise<boolean> {
+  try {
+    const fullKey = `claudeThrone.${key}`;
+    
+    // Check if configuration property exists by attempting to read it first
+    try {
+      const currentValue = config.get(key);
+      console.log(`[safeConfigUpdate] Updating ${fullKey}, current value:`, currentValue, 'new value:', value);
+    } catch (readErr) {
+      console.warn(`[safeConfigUpdate] Configuration property ${fullKey} may not be registered:`, readErr);
+      if (fallback) {
+        await fallback();
+        return false;
+      }
+      // Continue with update attempt anyway
+    }
+    
+    await config.update(key, value, target);
+    console.log(`[safeConfigUpdate] ✅ Successfully updated ${fullKey}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[safeConfigUpdate] ❌ Failed to update claudeThrone.${key}:`, err);
+    
+    // Handle specific configuration errors
+    if (err?.name === 'CodeExpectedError' || err?.message?.includes('not a registered configuration')) {
+      console.warn(`[safeConfigUpdate] Configuration property not recognized, attempting fallback...`);
+      if (fallback) {
+        await fallback();
+        return false;
+      }
+      
+      // Suggest configuration reload
+      vscode.window.showWarningMessage(
+        `Configuration property 'claudeThrone.${key}' is not available. Try reloading VS Code or check extension installation.`,
+        'Reload VS Code'
+      ).then(selection => {
+        if (selection === 'Reload VS Code') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      });
+    }
+    
+    return false;
+  }
+}
+
+/**
  * Retrieves the latest Anthropic model IDs for opus, sonnet, and haiku, falling back to hardcoded defaults when necessary.
  *
  * @param secrets - Optional SecretsService instance to retrieve Anthropic API key for authenticated requests
@@ -215,10 +275,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
   })
 
-  const revertApply = vscode.commands.registerCommand('claudeThrone.revertApply', async () => {
-    const cfg = vscode.workspace.getConfiguration('claudeThrone');
-    const scopeStr = cfg.get<string>('applyScope', 'workspace');
-    const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+  const revertApply = vscode.commands.registerCommand('claudeThrone.revertApply', async (options?: { autoSelectFirstFolder?: boolean }) => {
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone');
+      const scopeStr = cfg.get<string>('applyScope', 'workspace');
+      const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
 
     let settingsDir: string | undefined;
     if (scopeStr === 'global') {
@@ -226,19 +287,25 @@ export function activate(context: vscode.ExtensionContext) {
     } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         // Multi-root workspace support: allow user to select target folder
         if (vscode.workspace.workspaceFolders.length > 1) {
-            const items = vscode.workspace.workspaceFolders.map(folder => ({
-                label: folder.name,
-                description: folder.uri.fsPath,
-                folder: folder
-            }));
-            const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Select workspace folder to revert Claude Code settings',
-                ignoreFocusOut: true
-            });
-            if (!selected) {
-                return; // User cancelled
+            // Auto-select first folder if requested (e.g., when called from stopProxy)
+            if (options?.autoSelectFirstFolder) {
+                log.appendLine('[revertApply] Auto-selecting first workspace folder (called from stopProxy)');
+                settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            } else {
+                const items = vscode.workspace.workspaceFolders.map(folder => ({
+                    label: folder.name,
+                    description: folder.uri.fsPath,
+                    folder: folder
+                }));
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select workspace folder to revert Claude Code settings',
+                    ignoreFocusOut: true
+                });
+                if (!selected) {
+                    return; // User cancelled
+                }
+                settingsDir = selected.folder.uri.fsPath;
             }
-            settingsDir = selected.folder.uri.fsPath;
         } else {
             settingsDir = vscode.workspace.workspaceFolders[0].uri.fsPath;
         }
@@ -266,9 +333,25 @@ export function activate(context: vscode.ExtensionContext) {
     
     if (defaults.opus && defaults.sonnet && defaults.haiku) {
       log.appendLine(`[revertApply] ✅ Fetched fresh defaults: opus=${defaults.opus}, sonnet=${defaults.sonnet}, haiku=${defaults.haiku}`);
-      // Update cache with fresh values
-      await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global);
-      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global);
+      
+      // Update cache with fresh values using safe configuration updates
+      const defaultsSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaults', 
+        defaults, 
+        vscode.ConfigurationTarget.Global
+      );
+      
+      const timestampSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaultsTimestamp', 
+        Date.now(), 
+        vscode.ConfigurationTarget.Global
+      );
+      
+      if (!defaultsSuccess || !timestampSuccess) {
+        log.appendLine('[revertApply] ⚠️ Failed to cache fresh defaults, but will continue with revert operation');
+      }
     } else {
       // Should not happen since fetchAnthropicDefaults always returns defaults, but keep fallback logic
       log.appendLine('[revertApply] ⚠️ Unexpected: defaults missing fields, falling back to cached values');
@@ -394,6 +477,26 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.window.showInformationMessage('No Claude overrides were found to restore.')
     }
+    } catch (err: any) {
+      log.appendLine(`[revertApply] Unexpected error during revert: ${err?.stack || err}`);
+      
+      // Handle configuration errors specifically
+      if (err?.message?.includes('not a registered configuration') || err?.name === 'CodeExpectedError') {
+        const action = await vscode.window.showWarningMessage(
+          'Configuration error during revert. Some configuration properties may not be available. Try reloading VS Code or run "Thronekeeper: Check Configuration Health".',
+          'Check Config Health',
+          'Reload VS Code'
+        );
+        
+        if (action === 'Check Config Health') {
+          await vscode.commands.executeCommand('claudeThrone.checkConfigHealth');
+        } else if (action === 'Reload VS Code') {
+          vscode.commands.executeCommand('workbench.action.reloadWindow');
+        }
+      } else {
+        vscode.window.showErrorMessage(`Failed to revert settings: ${err?.message || err}`);
+      }
+    }
   })
 
   const storeOpenRouterKey = vscode.commands.registerCommand('claudeThrone.storeOpenRouterKey', async () => {
@@ -435,10 +538,28 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const defaults = await fetchAnthropicDefaults(secrets)
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global)
-      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global)
-      log.appendLine(`[refreshAnthropicDefaults] ✅ Successfully refreshed defaults: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
-      vscode.window.showInformationMessage(`Anthropic defaults refreshed: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
+      
+      // Use safe configuration updates for both properties
+      const defaultsSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaults', 
+        defaults, 
+        vscode.ConfigurationTarget.Global
+      )
+      
+      const timestampSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaultsTimestamp', 
+        Date.now(), 
+        vscode.ConfigurationTarget.Global
+      )
+      
+      if (defaultsSuccess && timestampSuccess) {
+        log.appendLine(`[refreshAnthropicDefaults] ✅ Successfully refreshed defaults: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
+        vscode.window.showInformationMessage(`Anthropic defaults refreshed: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`)
+      } else {
+        log.appendLine(`[refreshAnthropicDefaults] ⚠️ Partial success - some configuration updates failed`)
+      }
     } catch (err: any) {
       log.appendLine(`Failed to refresh Anthropic defaults: ${err?.message || err}`)
       
@@ -504,7 +625,7 @@ export function activate(context: vscode.ExtensionContext) {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const auto = cfg.get<boolean>('autoApply', true)
       if (auto) {
-        await vscode.commands.executeCommand('claudeThrone.revertApply')
+        await vscode.commands.executeCommand('claudeThrone.revertApply', { autoSelectFirstFolder: true })
       }
     } catch (err: any) {
       vscode.window.showErrorMessage(`Failed to stop proxy: ${err?.message || err}`)
@@ -699,6 +820,126 @@ export function activate(context: vscode.ExtensionContext) {
     }
   })
 
+  // Diagnostic command to check configuration health
+  const checkConfigHealth = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone');
+      const configProps = [
+        'anthropicDefaults',
+        'anthropicDefaultsTimestamp',
+        'provider',
+        'proxy.port',
+        'autoApply',
+        'applyScope'
+      ];
+      
+      console.log('[checkConfigHealth] Checking configuration properties...');
+      const health: Record<string, any> = {};
+      
+      for (const prop of configProps) {
+        try {
+          const value = cfg.get(prop);
+          health[prop] = { value, status: 'OK' };
+          console.log(`[checkConfigHealth] ✅ claudeThrone.${prop}:`, value);
+        } catch (err: any) {
+          health[prop] = { error: err.message, status: 'ERROR' };
+          console.error(`[checkConfigHealth] ❌ claudeThrone.${prop}:`, err);
+        }
+      }
+      
+      // Show results
+      const results = Object.entries(health).map(([key, info]: [string, any]) => {
+        const status = info.status === 'OK' ? '✅' : '❌';
+        const value = info.value || 'N/A';
+        const error = info.error || '';
+        return `${status} **claudeThrone.${key}**: ${value}${error ? ` (${error})` : ''}`;
+      });
+      
+      const message = results.join('\n\n');
+      
+      const action = await vscode.window.showInformationMessage(
+        'Configuration Health Check Complete',
+        'Show Details',
+        'Copy to Clipboard'
+      );
+      
+      if (action === 'Show Details') {
+        const doc = await vscode.workspace.openTextDocument({
+          content: `# Thronekeeper Configuration Health Report\n\n${message}\n\n---\nGenerated: ${new Date().toISOString()}`,
+          language: 'markdown'
+        });
+        await vscode.window.showTextDocument(doc);
+      } else if (action === 'Copy to Clipboard') {
+        await vscode.env.clipboard.writeText(message);
+        vscode.window.showInformationMessage('Configuration health report copied to clipboard');
+      }
+      
+    } catch (err: any) {
+      console.error('[checkConfigHealth] Unexpected error:', err);
+      vscode.window.showErrorMessage(`Configuration health check failed: ${err?.message || err}`);
+    }
+  });
+
+  // Diagnostic command to check configuration health
+  const checkConfigHealthCommand = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
+    try {
+      const cfg = vscode.workspace.getConfiguration('claudeThrone');
+      const configProps = [
+        'anthropicDefaults',
+        'anthropicDefaultsTimestamp',
+        'provider',
+        'proxy.port',
+        'autoApply',
+        'applyScope'
+      ];
+      
+      console.log('[checkConfigHealth] Checking configuration properties...');
+      const health: Record<string, any> = {};
+      
+      for (const prop of configProps) {
+        try {
+          const value = cfg.get(prop);
+          health[prop] = { value, status: 'OK' };
+          console.log(`[checkConfigHealth] ✅ claudeThrone.${prop}:`, value);
+        } catch (err: any) {
+          health[prop] = { error: err.message, status: 'ERROR' };
+          console.error(`[checkConfigHealth] ❌ claudeThrone.${prop}:`, err);
+        }
+      }
+      
+      // Show results
+      const results = Object.entries(health).map(([key, info]: [string, any]) => {
+        const status = info.status === 'OK' ? '✅' : '❌';
+        const value = info.value || 'N/A';
+        const error = info.error || '';
+        return `${status} **claudeThrone.${key}**: ${value}${error ? ` (${error})` : ''}`;
+      });
+      
+      const message = results.join('\n\n');
+      
+      const action = await vscode.window.showInformationMessage(
+        'Configuration Health Check Complete',
+        'Show Details',
+        'Copy to Clipboard'
+      );
+      
+      if (action === 'Show Details') {
+        const doc = await vscode.workspace.openTextDocument({
+          content: `# Thronekeeper Configuration Health Report\n\n${message}\n\n---\nGenerated: ${new Date().toISOString()}`,
+          language: 'markdown'
+        });
+        await vscode.window.showTextDocument(doc);
+      } else if (action === 'Copy to Clipboard') {
+        await vscode.env.clipboard.writeText(message);
+        vscode.window.showInformationMessage('Configuration health report copied to clipboard');
+      }
+      
+    } catch (err: any) {
+      console.error('[checkConfigHealth] Unexpected error:', err);
+      vscode.window.showErrorMessage(`Configuration health check failed: ${err?.message || err}`);
+    }
+  });
+
   context.subscriptions.push(
     openPanel,
     storeOpenRouterKey,
@@ -716,7 +957,9 @@ export function activate(context: vscode.ExtensionContext) {
     applyToClaudeCode,
     revertApply,
     log,
+    checkConfigHealthCommand,
   )
+
   log.appendLine('✅ Thronekeeper extension fully activated and ready')
 }
 
@@ -781,15 +1024,30 @@ async function storeAnthropicKeyHelper(secrets: SecretsService) {
     const defaults = await fetchAnthropicDefaults(secrets);
     
     if (defaults) {
-      // Update cached defaults
+      // Update cached defaults using safe configuration updates
       const cfg = vscode.workspace.getConfiguration('claudeThrone');
-      await cfg.update('anthropicDefaults', defaults, vscode.ConfigurationTarget.Global);
-      await cfg.update('anthropicDefaultsTimestamp', Date.now(), vscode.ConfigurationTarget.Global);
+      const defaultsSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaults', 
+        defaults, 
+        vscode.ConfigurationTarget.Global
+      );
+      
+      const timestampSuccess = await safeConfigUpdate(
+        cfg, 
+        'anthropicDefaultsTimestamp', 
+        Date.now(), 
+        vscode.ConfigurationTarget.Global
+      );
       
       // Show success with discovered versions
-      vscode.window.showInformationMessage(
-        `Updated Anthropic defaults: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`
-      );
+      if (defaultsSuccess && timestampSuccess) {
+        vscode.window.showInformationMessage(
+          `Updated Anthropic defaults: Opus=${defaults.opus}, Sonnet=${defaults.sonnet}, Haiku=${defaults.haiku}`
+        );
+      } else {
+        vscode.window.showWarningMessage('Anthropic API key stored, but some configuration updates failed. See logs for details.');
+      }
     } else {
       vscode.window.showWarningMessage('Anthropic API key stored, but failed to fetch model defaults. Will use cached values.');
     }

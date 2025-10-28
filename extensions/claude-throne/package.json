@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.23",
+  "version": "1.5.25",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -111,6 +111,10 @@
       {
         "command": "claudeThrone.revertApply",
         "title": "Thronekeeper: Revert to Claude Defaults"
+      },
+      {
+        "command": "claudeThrone.checkConfigHealth",
+        "title": "Thronekeeper: Check Configuration Health"
       }
     ],
     "configuration": {
@@ -277,6 +281,12 @@
           },
           "scope": "application",
           "markdownDescription": "## Advanced Settings\n\nCached Anthropic default models (internal use). Updated when you store an Anthropic API key."
+        },
+        "claudeThrone.anthropicDefaultsTimestamp": {
+          "type": "number",
+          "default": 0,
+          "scope": "application",
+          "markdownDescription": "Timestamp when Anthropic defaults were last refreshed (internal use)."
         },
         "claudeThrone.customEndpointOverrides": {
           "type": "object",

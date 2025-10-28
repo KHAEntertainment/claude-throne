@@ -1,9 +1,9 @@
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:3616",
-    "ANTHROPIC_MODEL": "glm-4.5",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-4.5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.6",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4.5-air"
+    "ANTHROPIC_MODEL": "inclusionai/ring-1t",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "inclusionai/ring-1t",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "minimax/minimax-m2:free",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "anthropic/claude-haiku-4.5"
   }
 }
