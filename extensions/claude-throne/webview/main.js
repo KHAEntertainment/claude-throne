@@ -1741,6 +1741,18 @@
       updateSelectedModelsDisplay();
     }
     
+    // Auto-hydrate provider map after fallback (preferred, webview)
+    if (!config.modelSelectionsByProvider?.[state.provider]?.reasoning && (state.reasoningModel || state.codingModel || state.valueModel)) {
+      vscode.postMessage({
+        type: 'saveModels',
+        providerId: state.provider,
+        reasoning: state.reasoningModel || '',
+        coding: state.codingModel || '',
+        value: state.valueModel || ''
+      });
+      console.log('[handleConfigLoaded] Hydrated provider map from legacy keys via saveModels');
+    }
+    
     // Comment 6: Log final state after fallback for save round-trip verification
     console.log(`[handleConfigLoaded] Final state after fallback - state.provider: ${state.provider}, final models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
 
