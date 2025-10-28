@@ -1071,28 +1071,33 @@
 
   // Model Selection
   function setModelFromList(modelId, type) {
+    // Comment 3: Initialize provider entry in webview before writing to modelsByProvider when selecting from list
+    if (!state.modelsByProvider[state.provider]) {
+      state.modelsByProvider[state.provider] = { reasoning: '', coding: '', value: '' };
+      console.log(`[setModelFromList] Initialized modelsByProvider entry for provider: ${state.provider}`);
+    }
+    
     if (type === 'reasoning') {
       state.reasoningModel = modelId;
       // Save to provider-specific storage
-      if (state.modelsByProvider[state.provider]) {
-        state.modelsByProvider[state.provider].reasoning = modelId;
-      }
+      state.modelsByProvider[state.provider].reasoning = modelId;
     } else if (type === 'coding') {
       state.codingModel = modelId;
       // Save to provider-specific storage
-      if (state.modelsByProvider[state.provider]) {
-        state.modelsByProvider[state.provider].coding = modelId;
-      }
+      state.modelsByProvider[state.provider].coding = modelId;
     } else if (type === 'value') {
       state.valueModel = modelId;
       // Save to provider-specific storage
-      if (state.modelsByProvider[state.provider]) {
-        state.modelsByProvider[state.provider].value = modelId;
-      }
+      state.modelsByProvider[state.provider].value = modelId;
     }
     
+    // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
+    console.log(`[setModelFromList] Save round-trip - state.provider: ${state.provider}, models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
+    
+    // Comment 4: Include providerId in saveModels message to avoid ambiguity and races
     vscode.postMessage({
       type: 'saveModels',
+      providerId: state.provider,
       reasoning: state.reasoningModel,
       coding: state.codingModel,
       value: state.valueModel
@@ -1429,6 +1434,7 @@
 
     vscode.postMessage({
       type: 'saveModels',
+      providerId: state.provider,
       reasoning: reasoning,
       coding: coding,
       value: value
@@ -1623,17 +1629,24 @@
     // Handle cache age display
     updateCacheDisplay(config);
     
-    // Update UI with config
+    // Comment 2: Ensure webview uses effective provider id (custom providers) for reading/writing selections
+    let effectiveProvider = 'openrouter'; // default fallback
     if (config.provider) {
-      // Apply logic: if provider is 'custom' and we have selectedCustomProviderId, use that
+      // Compute effective provider: if provider is 'custom' and we have selectedCustomProviderId, use that
       if (config.provider === 'custom' && config.selectedCustomProviderId) {
-        state.provider = config.selectedCustomProviderId;
+        effectiveProvider = config.selectedCustomProviderId;
       } else {
-        state.provider = config.provider;
+        effectiveProvider = config.provider;
       }
-      // Note: provider dropdown value will be set after custom providers are loaded
-      updateProviderUI();
+      console.log(`[handleConfigLoaded] Effective provider resolution: config.provider=${config.provider}, selectedCustomProviderId=${config.selectedCustomProviderId} => effectiveProvider=${effectiveProvider}`);
     }
+    
+    // Set state.provider before reading or writing modelsByProvider
+    state.provider = effectiveProvider;
+    console.log(`[handleConfigLoaded] Set state.provider to effectiveProvider: ${state.provider}`);
+    
+    // Note: provider dropdown value will be set after custom providers are loaded
+    updateProviderUI();
 
     if (config.port) {
         state.port = config.port;
@@ -1659,6 +1672,9 @@
       });
     }
     
+    // Comment 6: Log incoming config for save round-trip verification
+    console.log(`[handleConfigLoaded] Config round-trip - state.provider: ${state.provider}, incoming config.modelSelectionsByProvider[${state.provider}]:`, JSON.stringify(config.modelSelectionsByProvider?.[state.provider] || null));
+    
     // Only seed modelsByProvider for the current provider if no entry exists
     if (!state.modelsByProvider[state.provider]) {
       state.modelsByProvider[state.provider] = { reasoning: '', coding: '', value: '' };
@@ -1683,6 +1699,28 @@
       console.log(`[handleConfigLoaded] No provider entry found for ${state.provider} in modelSelectionsByProvider`);
     }
     
+    // Comment 1: Add fallback to legacy keys when provider entries are empty
+    if (!state.reasoningModel || !state.codingModel || !state.valueModel) {
+      console.log(`[handleConfigLoaded] Applying fallback to legacy keys - missing: reasoning=${!state.reasoningModel}, coding=${!state.codingModel}, value=${!state.valueModel}`);
+      if (!state.reasoningModel && config.reasoningModel) {
+        state.reasoningModel = config.reasoningModel;
+        console.log(`[handleConfigLoaded] Fallback: set reasoningModel from legacy key: ${state.reasoningModel}`);
+      }
+      if (!state.codingModel && config.completionModel) {
+        state.codingModel = config.completionModel;
+        console.log(`[handleConfigLoaded] Fallback: set codingModel from legacy key: ${state.codingModel}`);
+      }
+      if (!state.valueModel && config.valueModel) {
+        state.valueModel = config.valueModel;
+        console.log(`[handleConfigLoaded] Fallback: set valueModel from legacy key: ${state.valueModel}`);
+      }
+      // Update display after applying fallback values
+      updateSelectedModelsDisplay();
+    }
+    
+    // Comment 6: Log final state after fallback for save round-trip verification
+    console.log(`[handleConfigLoaded] Final state after fallback - state.provider: ${state.provider}, final models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
+
     // Debug: log the full modelSelectionsByProvider for inspection
     console.log(`[handleConfigLoaded] Full modelsByProvider object:`, JSON.stringify(state.modelsByProvider));
     console.log(`[handleConfigLoaded] Current provider: ${state.provider}`);
@@ -1716,8 +1754,26 @@
     // Update selected models display
     updateSelectedModelsDisplay();
 
-    // Try to load models if we have the config
-    loadModels();
+    // Comment 5: Guard against config-induced reset loops by deferring model reload until after state merge
+    // Only call loadModels() if state.models.length === 0 or if state.provider changed
+    const previousProvider = state.previousProvider || '';
+    const providerChanged = state.provider !== previousProvider;
+    const noModelsLoaded = state.models.length === 0;
+    
+    console.log(`[handleConfigLoaded] Model reload guard - providerChanged: ${providerChanged}, noModelsLoaded: ${noModelsLoaded}, previousProvider: ${previousProvider}, currentProvider: ${state.provider}`);
+    
+    if (providerChanged || noModelsLoaded) {
+      // Defer loadModels() with short timeout to reduce races where immediate re-render overrides selected model highlights
+      setTimeout(() => {
+        console.log(`[handleConfigLoaded] Triggering model reload (providerChanged=${providerChanged}, noModelsLoaded=${noModelsLoaded})`);
+        loadModels();
+      }, 150); // 150ms delay to allow state merge to complete
+    } else {
+      console.log(`[handleConfigLoaded] Skipping model reload - provider unchanged and models already loaded`);
+    }
+    
+    // Store current provider for next comparison
+    state.previousProvider = state.provider;
   }
 
   function handleModelsLoaded(payload) {

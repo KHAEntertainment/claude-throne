@@ -1217,14 +1217,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveModels(data: any): Promise<void> {
     try {
       const { providerId, reasoning, coding, value } = data
-      this.log.appendLine(`[handleSaveModels] Saving models for provider: ${providerId}, reasoning: ${reasoning}, coding: ${coding}, value: ${value}`)
-
+      // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      
-      // Determine configuration target based on applyScope setting
       const applyScope = cfg.get<string>('applyScope', 'workspace')
       const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
       
+      this.log.appendLine(`[handleSaveModels] Save round-trip - providerId: ${providerId}, target: ${vscode.ConfigurationTarget[target]}, models: { reasoning: ${reasoning}, coding: ${coding}, value: ${value} }`)
+
       this.log.appendLine(`[handleSaveModels] Using config target: ${vscode.ConfigurationTarget[target]} (applyScope: ${applyScope})`)
       
       // Preflight-check registration of modelSelectionsByProvider
