@@ -1,13 +1,13 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "",
-  "claudeThrone.completionModel": "minimax/minimax-m2:free",
-  "claudeThrone.customEndpointKind": "auto",
+  "claudeThrone.reasoningModel": "kimi-k2-0905-preview",
+  "claudeThrone.completionModel": "moonshot-v1-8k",
+  "claudeThrone.customEndpointKind": "openai",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
-  "claudeThrone.provider": "openrouter",
-  "claudeThrone.valueModel": "",
+  "claudeThrone.provider": "custom",
+  "claudeThrone.valueModel": "kimi-latest",
   "claudeThrone.customBaseUrl": "https://api.moonshot.ai/anthropic",
   "claudeThrone.customProviders": [
     {
@@ -21,17 +21,32 @@
       "id": "minimax"
     }
   ],
-  "claudeThrone.selectedCustomProviderId": "",
+  "claudeThrone.selectedCustomProviderId": "moonshot",
   "claudeThrone.modelSelectionsByProvider": {
     "openai": {
-      "reasoning": "",
-      "completion": "minimax/minimax-m2:free",
-      "value": ""
+      "reasoning": "gpt-5-chat-latest",
+      "completion": "gpt-5-codex",
+      "value": "codex-mini-latest"
     },
     "openrouter": {
-      "reasoning": "",
+      "reasoning": "inclusionai/ring-1t",
       "completion": "minimax/minimax-m2:free",
-      "value": ""
+      "value": "ibm-granite/granite-4.0-h-micro"
+    },
+    "moonshot": {
+      "reasoning": "kimi-k2-0905-preview",
+      "completion": "moonshot-v1-8k",
+      "value": "kimi-latest"
+    },
+    "deepseek": {
+      "reasoning": "deepseek-reasoner",
+      "completion": "deepseek-chat",
+      "value": "deepseek-chat"
+    },
+    "glm": {
+      "reasoning": "glm-4.6",
+      "completion": "glm-4.6",
+      "value": "glm-4.5-air"
     }
   }
 }

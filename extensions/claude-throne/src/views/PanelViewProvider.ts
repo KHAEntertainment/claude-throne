@@ -132,7 +132,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
           case 'saveModels':
-            await this.handleSaveModels({providerId: this.runtimeProvider, reasoning: msg.reasoning, coding: msg.coding, value: msg.value})
+            // Use providerId from message, not runtimeProvider, to ensure correct provider is used
+            await this.handleSaveModels({providerId: msg.providerId, reasoning: msg.reasoning, coding: msg.coding, value: msg.value})
             break
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
@@ -1221,6 +1222,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveModels(data: any): Promise<void> {
     try {
       const { providerId, reasoning, coding, value } = data
+      
+      // Update runtime provider to match what we're saving to keep them in sync
+      if (providerId && providerId !== this.currentProvider) {
+        this.log.appendLine(`[handleSaveModels] Updating currentProvider from ${this.currentProvider} to ${providerId}`)
+        this.currentProvider = providerId
+      }
+      
       // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const applyScope = cfg.get<string>('applyScope', 'workspace')
