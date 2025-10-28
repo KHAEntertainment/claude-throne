@@ -132,7 +132,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await vscode.commands.executeCommand('workbench.action.openSettings', 'claudeThrone')
             break
           case 'saveModels':
-            await this.handleSaveModels(msg.reasoning, msg.coding, msg.value)
+            await this.handleSaveModels({providerId: this.runtimeProvider, reasoning: msg.reasoning, coding: msg.coding, value: msg.value})
             break
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
@@ -955,7 +955,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const fallbackCompletion = cfg.get<string>('completionModel', '')
         if (fallbackCompletion) {
           const useFallback = await vscode.window.showWarningMessage(
-            `No coding model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackCompletion}" which may be from a different provider. Continue anyway?`,
+            `No completion model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackCompletion}" which may be from a different provider. Continue anyway?`,
             'Continue',
             'Cancel'
           )
@@ -1188,80 +1188,81 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleSaveModels(reasoning: string, coding: string, value: string) {
+  private async handleSaveModels(data: any): Promise<void> {
     try {
+      const { providerId, reasoning, coding, value } = data
+      this.log.appendLine(`[handleSaveModels] Saving models for provider: ${providerId}, reasoning: ${reasoning}, coding: ${coding}, value: ${value}`)
+
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
-      const twoModelMode = cfg.get<boolean>('twoModelMode', false)
       
-      this.log.appendLine(`[handleSaveModels] Saving models: reasoning=${reasoning}, coding=${coding}, value=${value}, twoModelMode=${twoModelMode}`)
-      this.log.appendLine(`[handleSaveModels] Current provider: ${this.runtimeProvider}`)
-      this.log.appendLine(`[handleSaveModels] Configuration target: Workspace`)
+      // Determine configuration target based on applyScope setting
+      const applyScope = cfg.get<string>('applyScope', 'workspace')
+      const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
       
-      // Read current modelSelectionsByProvider before mutation
-      const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
-      this.log.appendLine(`[handleSaveModels] Current modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
+      this.log.appendLine(`[handleSaveModels] Using config target: ${vscode.ConfigurationTarget[target]} (applyScope: ${applyScope})`)
       
-      if (!modelSelectionsByProvider[this.runtimeProvider]) {
-        modelSelectionsByProvider[this.runtimeProvider] = {}
+      // Preflight-check registration of modelSelectionsByProvider
+      const insp = cfg.inspect('modelSelectionsByProvider')
+      if (insp && insp.defaultValue !== undefined) {
+        // Key is registered - update provider-specific configuration
+        const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+        if (!modelSelectionsByProvider[providerId]) {
+          modelSelectionsByProvider[providerId] = {}
+        }
+        
+        modelSelectionsByProvider[providerId].reasoning = reasoning
+        modelSelectionsByProvider[providerId].completion = coding
+        modelSelectionsByProvider[providerId].value = value
+        
+        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
+        this.log.appendLine(`[handleSaveModels] Successfully saved modelSelectionsByProvider for provider: ${providerId} to ${vscode.ConfigurationTarget[target]}`)
+      } else {
+        // Key not registered - log warning and skip provider map write
+        this.log.appendLine(`[handleSaveModels] WARNING: modelSelectionsByProvider key not registered, skipping provider map write`)
+        this.log.appendLine(`[handleSaveModels] INFO: Write to modelSelectionsByProvider skipped due to missing registration. Only individual keys will be updated.`)
+        this.log.appendLine(`[handleSaveModels] ADVICE: Reload window or reinstall extension build to enable provider map functionality.`)
       }
       
-      // Update provider-specific configuration
-      modelSelectionsByProvider[this.runtimeProvider].reasoning = reasoning
-      modelSelectionsByProvider[this.runtimeProvider].completion = coding
-      modelSelectionsByProvider[this.runtimeProvider].value = value
-      
-      this.log.appendLine(`[handleSaveModels] Updated modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
-      
-      // Save the provider-specific configuration with detailed logging
+      // Always save to individual keys for backward compatibility
       try {
-        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
-        this.log.appendLine(`[handleSaveModels] Successfully saved modelSelectionsByProvider to Workspace config`)
-      } catch (err: any) {
-        this.log.appendLine(`[handleSaveModels] ERROR saving modelSelectionsByProvider: ${err.message}`)
-        this.log.appendLine(`[handleSaveModels] ERROR stack: ${err.stack}`)
-        vscode.window.showErrorMessage(`Failed to save modelSelectionsByProvider: ${err.message}`)
-      }
-      
-      // Also save to global keys for backward compatibility with individual try-catch
-      try {
-        await cfg.update('reasoningModel', reasoning, vscode.ConfigurationTarget.Workspace)
-        this.log.appendLine(`[handleSaveModels] Successfully saved reasoningModel to Workspace config: ${reasoning}`)
+        await cfg.update('reasoningModel', reasoning, target)
+        this.log.appendLine(`[handleSaveModels] Successfully saved reasoningModel: ${reasoning} to ${vscode.ConfigurationTarget[target]}`)
       } catch (err: any) {
         this.log.appendLine(`[handleSaveModels] ERROR saving reasoningModel: ${err.message}`)
         vscode.window.showErrorMessage(`Failed to save reasoningModel: ${err.message}`)
       }
       
       try {
-        await cfg.update('completionModel', coding, vscode.ConfigurationTarget.Workspace)
-        this.log.appendLine(`[handleSaveModels] Successfully saved completionModel to Workspace config: ${coding}`)
+        await cfg.update('completionModel', coding, target)
+        this.log.appendLine(`[handleSaveModels] Successfully saved completionModel: ${coding} to ${vscode.ConfigurationTarget[target]}`)
       } catch (err: any) {
         this.log.appendLine(`[handleSaveModels] ERROR saving completionModel: ${err.message}`)
         vscode.window.showErrorMessage(`Failed to save completionModel: ${err.message}`)
       }
       
       try {
-        await cfg.update('valueModel', value, vscode.ConfigurationTarget.Workspace)
-        this.log.appendLine(`[handleSaveModels] Successfully saved valueModel to Workspace config: ${value}`)
+        await cfg.update('valueModel', value, target)
+        this.log.appendLine(`[handleSaveModels] Successfully saved valueModel: ${value} to ${vscode.ConfigurationTarget[target]}`)
       } catch (err: any) {
         this.log.appendLine(`[handleSaveModels] ERROR saving valueModel: ${err.message}`)
         vscode.window.showErrorMessage(`Failed to save valueModel: ${err.message}`)
       }
       
-      this.log.appendLine(`[handleSaveModels] Models saved successfully to Workspace config for provider: ${this.runtimeProvider}`)
+      this.log.appendLine(`[handleSaveModels] Models saved successfully for provider: ${providerId}`)
       
       // Verification: read back the saved value to confirm it was persisted
       try {
         const verification = cfg.get<any>('modelSelectionsByProvider', {})
         this.log.appendLine(`[handleSaveModels] Verification - modelSelectionsByProvider after save: ${JSON.stringify(verification)}`)
-        if (verification[this.runtimeProvider]) {
-          const saved = verification[this.runtimeProvider]
+        if (verification[providerId]) {
+          const saved = verification[providerId]
           if (saved.reasoning === reasoning && saved.completion === coding && saved.value === value) {
             this.log.appendLine(`[handleSaveModels] Verification passed - models correctly saved`)
           } else {
             this.log.appendLine(`[handleSaveModels] WARNING - Verification failed. Expected: reasoning=${reasoning}, coding=${coding}, value=${value}. Got: ${JSON.stringify(saved)}`)
           }
         } else {
-          this.log.appendLine(`[handleSaveModels] WARNING - No saved data found for provider ${this.runtimeProvider} after save`)
+          this.log.appendLine(`[handleSaveModels] WARNING - No saved data found for provider ${providerId} after save`)
         }
       } catch (verr: any) {
         this.log.appendLine(`[handleSaveModels] ERROR during verification: ${verr.message}`)
@@ -1269,6 +1270,45 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       // Immediately send updated config back to webview to confirm save
       this.postConfig()
+      
+      // Comment 5: Ensure webview uses the same provider as config to prevent confusing state
+      // Send explicit provider reconciliation message after successful save
+      const configProvider = this.configProvider
+      const runtimeProvider = this.runtimeProvider
+      const scopeUsed = applyScope
+      
+      this.log.appendLine(`[handleSaveModels] Provider synchronization - runtimeProvider: ${runtimeProvider}, configProvider: ${configProvider}, scope: ${scopeUsed}`)
+      
+      // If providers don't match or scope changed, request webview to reload selections from config
+      if (runtimeProvider !== configProvider) {
+        this.log.appendLine(`[handleSaveModels] WARNING: Provider mismatch detected - runtime: ${runtimeProvider} vs config: ${configProvider}`)
+        this.log.appendLine(`[handleSaveModels] Requesting webview to reload model selections from config`)
+        
+        this.view?.webview.postMessage({
+          type: 'reloadModelSelections',
+          payload: {
+            providerId: configProvider,
+            reason: 'provider_mismatch_after_save',
+            runtimeProvider,
+            configProvider,
+            scope: scopeUsed
+          }
+        })
+      } else {
+        // Providers match - just confirm the save was successful
+        this.log.appendLine(`[handleSaveModels] Provider synchronization - runtime and config providers match (${runtimeProvider})`)
+        
+        this.view?.webview.postMessage({
+          type: 'modelsSaved',
+          payload: {
+            providerId: providerId,
+            success: true,
+            scope: scopeUsed,
+            runtimeProvider,
+            configProvider
+          }
+        })
+      }
     } catch (err) {
       this.log.appendLine(`[handleSaveModels] Unexpected error: ${err}`)
       console.error('Failed to save models:', err)
@@ -1284,30 +1324,57 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private async handleSetModelFromList(modelId: string, modelType: 'reasoning' | 'coding' | 'value') {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     
-    // Update provider-specific configuration
-    const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
-    if (!modelSelectionsByProvider[this.runtimeProvider]) {
-      modelSelectionsByProvider[this.runtimeProvider] = {}
-    }
+    // Determine configuration target based on applyScope setting
+    const applyScope = cfg.get<string>('applyScope', 'workspace')
+    const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
     
-    if (modelType === 'reasoning') {
-      // Update both provider-specific and global configs
-      modelSelectionsByProvider[this.runtimeProvider].reasoning = modelId
-      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('reasoningModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId}`)
-    } else if (modelType === 'coding') {
-      // Update both provider-specific and global configs
-      modelSelectionsByProvider[this.runtimeProvider].completion = modelId
-      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('completionModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId}`)
-    } else if (modelType === 'value') {
-      // Update both provider-specific and global configs
-      modelSelectionsByProvider[this.runtimeProvider].value = modelId
-      await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, vscode.ConfigurationTarget.Workspace)
-      await cfg.update('valueModel', modelId, vscode.ConfigurationTarget.Workspace)
-      this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId}`)
+    this.log.appendLine(`[handleSetModelFromList] Using config target: ${vscode.ConfigurationTarget[target]} (applyScope: ${applyScope})`)
+    
+    // Preflight-check registration of modelSelectionsByProvider
+    const insp = cfg.inspect('modelSelectionsByProvider')
+    if (insp && insp.defaultValue !== undefined) {
+      // Key is registered - update provider-specific configuration
+      const modelSelectionsByProvider = cfg.get<any>('modelSelectionsByProvider', {})
+      if (!modelSelectionsByProvider[this.runtimeProvider]) {
+        modelSelectionsByProvider[this.runtimeProvider] = {}
+      }
+      
+      if (modelType === 'reasoning') {
+        // Update both provider-specific and global configs
+        modelSelectionsByProvider[this.runtimeProvider].reasoning = modelId
+        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
+        await cfg.update('reasoningModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      } else if (modelType === 'coding') {
+        // Update both provider-specific and global configs
+        modelSelectionsByProvider[this.runtimeProvider].completion = modelId
+        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
+        await cfg.update('completionModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      } else if (modelType === 'value') {
+        // Update both provider-specific and global configs
+        modelSelectionsByProvider[this.runtimeProvider].value = modelId
+        await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
+        await cfg.update('valueModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      }
+    } else {
+      // Key not registered - log warning and skip provider map write
+      this.log.appendLine(`[handleSetModelFromList] WARNING: modelSelectionsByProvider key not registered, skipping provider map write`)
+      this.log.appendLine(`[handleSetModelFromList] INFO: Write to modelSelectionsByProvider skipped due to missing registration. Only individual keys will be updated.`)
+      this.log.appendLine(`[handleSetModelFromList] ADVICE: Reload window or reinstall extension build to enable provider map functionality.`)
+      
+      // Only update individual keys
+      if (modelType === 'reasoning') {
+        await cfg.update('reasoningModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      } else if (modelType === 'coding') {
+        await cfg.update('completionModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      } else if (modelType === 'value') {
+        await cfg.update('valueModel', modelId, target)
+        this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
+      }
     }
     this.postConfig()
   }

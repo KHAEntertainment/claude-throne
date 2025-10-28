@@ -821,7 +821,6 @@ export function activate(context: vscode.ExtensionContext) {
   })
 
   // Diagnostic command to check configuration health
-  // Diagnostic command to check configuration health
   const checkConfigHealthCommand = vscode.commands.registerCommand('claudeThrone.checkConfigHealth', async () => {
     try {
       console.log('[checkConfigHealth] Starting configuration health check...');
@@ -850,11 +849,18 @@ export function activate(context: vscode.ExtensionContext) {
         hasGlobal: boolean;
         hasWorkspaceFolder: boolean;
       }> = [];
+
+      
       
       for (const key of keysToCheck) {
         const inspection = cfg.inspect(key);
         
         if (!inspection) {
+          // Key is not registered - append report line and continue
+          healthIssues.push(`⚠️ **Unregistered Configuration Key**: '${key}' is not registered in extension contributions.`);
+          healthIssues.push('**Suggestion**: Reload the window or reinstall the extension build.');
+          healthIssues.push('');
+          console.warn(`[checkConfigHealth] Key '${key}' is not registered in extension contributions`);
           continue;
         }
         
@@ -895,6 +901,8 @@ export function activate(context: vscode.ExtensionContext) {
           });
         }
       }
+      
+      
       
       if (scopeIssues.length > 0) {
         healthIssues.push(`Found ${scopeIssues.length} configuration value(s) with scope conflicts (Global vs Workspace). This may indicate manual edits or import issues.`);
@@ -974,6 +982,9 @@ export function activate(context: vscode.ExtensionContext) {
         report += '## Issues Found\n\n';
         report += healthIssues.join('\n');
         report += '\n## Recommended Actions\n\n';
+        
+        
+        
         report += 'To fix scope conflicts:\n';
         report += '1. Use "Thronekeeper: Reset Configuration" to clear all values and reconfigure\n';
         report += '2. OR manually ensure values exist in only one scope (Global OR Workspace)\n';
