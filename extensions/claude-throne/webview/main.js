@@ -227,9 +227,11 @@
         break;
       case 'combosLoaded':
         handleCombosLoaded(message.payload);
+        updateComboSaveButton();
         break;
       case 'comboDeleted':
         handleComboDeleted(message.payload);
+        updateComboSaveButton();
         break;
       case 'customProvidersLoaded':
         handleCustomProvidersLoaded(message.payload);
@@ -608,7 +610,7 @@
     }
   }
 
-  function showNotification(message, type = 'info') {
+  function showNotification(message, type = 'info', duration = 3000) {
     console.log(`[${type.toUpperCase()}] ${message}`);
     
     // Create or update inline notification
@@ -648,14 +650,55 @@
       notificationEl.style.opacity = '1';
       notificationEl.style.display = 'block';
       
-      // Auto-hide after 3 seconds
+      // Auto-hide after specified duration
       setTimeout(() => {
         notificationEl.style.opacity = '0';
         setTimeout(() => {
           notificationEl.style.display = 'none';
         }, 300);
-      }, 3000);
+      }, duration);
     }
+  }
+
+  function clearNotifications() {
+    const notificationEl = document.getElementById('inlineNotification');
+    if (notificationEl) {
+      notificationEl.style.display = 'none';
+    }
+  }
+
+  function updateComboSaveButton() {
+    const saveBtn = document.getElementById('saveComboBtn');
+    if (saveBtn) {
+      const currentCount = state.customCombos ? state.customCombos.length : 0;
+      if (currentCount > 0) {
+        saveBtn.textContent = `+ Save Model Combo (${currentCount}/4)`;
+      } else {
+        saveBtn.textContent = '+ Save Model Combo';
+      }
+    }
+  }
+
+  function highlightNewCombo(combos) {
+    if (!combos || combos.length === 0) return;
+    
+    // Find the newest combo (last in array)
+    const newCombo = combos[combos.length - 1];
+    const comboElements = document.querySelectorAll('.combo-item');
+    
+    comboElements.forEach(el => {
+      const comboName = el.querySelector('.combo-name')?.textContent;
+      if (comboName === newCombo.name) {
+        // Add highlight animation
+        el.style.backgroundColor = 'var(--vscode-list-hoverBackground)';
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        // Remove highlight after 2 seconds
+        setTimeout(() => {
+          el.style.backgroundColor = '';
+        }, 2000);
+      }
+    });
   }
 
   function requestSaveCombo() {
@@ -672,18 +715,27 @@
     
     console.log('[requestSaveCombo] Saving combo:', name);
     
+    // Clear any previous notifications
+    clearNotifications();
+    
     // Show saving state on button
     const saveBtn = document.getElementById('saveComboBtn');
     if (saveBtn) {
       const originalText = saveBtn.textContent;
       saveBtn.textContent = '✓ Saving...';
+      saveBtn.style.backgroundColor = 'var(--vscode-button-secondaryBackground)';
       saveBtn.disabled = true;
       
-      // Reset after a delay
-      setTimeout(() => {
+      // Set a timeout for error handling
+      const timeoutId = setTimeout(() => {
         saveBtn.textContent = originalText;
+        saveBtn.style.backgroundColor = '';
         saveBtn.disabled = false;
-      }, 2000);
+        showNotification('Save request timed out. Please try again.', 'error');
+      }, 5000);
+      
+      // Store timeout ID so we can clear it on success
+      window.saveComboTimeout = timeoutId;
     }
     
     vscode.postMessage({
@@ -847,19 +899,29 @@
   function handleCombosLoaded(payload) {
     console.log('[handleCombosLoaded] Combos loaded:', payload);
     
+    // Clear any pending timeout
+    if (window.saveComboTimeout) {
+      clearTimeout(window.saveComboTimeout);
+      window.saveComboTimeout = null;
+    }
+    
     // Show success feedback when combo is saved
     const saveBtn = document.getElementById('saveComboBtn');
     if (saveBtn && saveBtn.textContent.includes('Saving')) {
       saveBtn.textContent = '✓ Saved!';
       saveBtn.style.backgroundColor = 'var(--vscode-testing-iconPassed)';
+      saveBtn.disabled = false;
       
-      // Also show inline notification
-      showNotification('Model combo saved successfully!', 'success');
+      // Show prominent inline notification
+      showNotification('Model combo saved successfully! You can now select it from the Quick Combos section.', 'success', 3000);
+      
+      // Update save button to show combo count
+      updateComboSaveButton();
       
       setTimeout(() => {
         saveBtn.textContent = '+ Save Model Combo';
         saveBtn.style.backgroundColor = '';
-      }, 2000);
+      }, 3000);
     }
     
     // Store the combos for later display
@@ -873,11 +935,21 @@
         savedCombos: payload.combos
       };
       handlePopularModels(currentPayload);
+      
+      // Highlight the newly added combo if we just saved one
+      if (saveBtn && saveBtn.textContent.includes('Saved')) {
+        setTimeout(() => {
+          highlightNewCombo(payload.combos);
+        }, 100);
+      }
     }
   }
 
   function handleComboDeleted(payload) {
     console.log('[handleComboDeleted] Combo deleted:', payload);
+    
+    // Clear any existing notifications
+    clearNotifications();
     
     // Update state with new combos
     if (payload.combos) {
@@ -892,7 +964,7 @@
     }
     
     // Show success notification
-    showNotification('Combo deleted successfully', 'success');
+    showNotification('Model combo deleted successfully', 'success');
   }
 
   function handleKeysLoaded(keys) {
@@ -1404,12 +1476,95 @@
     }
   }
 
+  function updateCacheDisplay(config) {
+    // Get the static cache container in Advanced Settings
+    const cacheContainer = document.getElementById('anthropicCacheContainer');
+    
+    if (!cacheContainer) {
+      console.warn('Anthropic cache container not found');
+      return;
+    }
+    
+    // Update content based on cache information
+    if (config.cacheAgeDays !== undefined) {
+      const cacheAgeText = config.cacheAgeDays === 0 
+        ? 'today' 
+        : config.cacheAgeDays === 1 
+          ? 'yesterday' 
+          : `${config.cacheAgeDays} days ago`;
+      
+      const staleWarning = config.cacheStale 
+        ? '<span style="color: var(--vscode-warningForeground); margin-left: 4px;">⚠️ Cache is stale</span>' 
+        : '';
+      
+      // Show container when we have cache data
+      cacheContainer.style.display = 'block';
+      
+      let cacheContent = `
+        <fieldset style="border: 1px solid var(--vscode-input-border); padding: 8px; border-radius: 4px;">
+          <legend style="font-size: 11px; font-weight: bold;">Anthropic Defaults</legend>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+            <div>Last refreshed ${cacheAgeText} ${staleWarning}</div>
+            <button id="refreshCacheBtn" class="btn-primary" style="font-size: 11px; padding: 2px 8px;">Refresh Now</button>
+          </div>
+      `;
+      
+      // Show cached model IDs if available
+      if (config.cachedDefaults) {
+        const defaults = config.cachedDefaults;
+        
+        // Safely extract model names with null checks
+        const getShortModelId = (value) => {
+          if (!value || typeof value !== 'string') return 'Unknown';
+          return value.split('-').slice(-2).join('-').slice(0, 8);
+        };
+        
+        const opusId = getShortModelId(defaults.opus);
+        const sonnetId = getShortModelId(defaults.sonnet);
+        const haikuId = getShortModelId(defaults.haiku);
+        
+        cacheContent += `
+          <div style="margin-top: 4px; font-size: 10px; opacity: 0.8;">
+            Cached: Opus: ${opusId} • Sonnet: ${sonnetId} • Haiku: ${haikuId}
+          </div>
+        `;
+      }
+      
+      cacheContent += '</fieldset>';
+      cacheContainer.innerHTML = cacheContent;
+      
+      // Add click handler for refresh button
+      const refreshBtn = document.getElementById('refreshCacheBtn');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+          refreshBtn.textContent = 'Refreshing...';
+          refreshBtn.disabled = true;
+          
+          vscode.postMessage({ type: 'refreshAnthropicDefaults' });
+          
+          // Listen for config update to restore button
+          const originalHandleConfig = window.handleConfigLoaded;
+          window.handleConfigLoaded = function(newConfig) {
+            originalHandleConfig.call(this, newConfig);
+            window.handleConfigLoaded = originalHandleConfig; // Restore original handler
+          };
+        });
+      }
+    } else {
+      // Hide container when no cache data is available
+      cacheContainer.style.display = 'none';
+    }
+  }
+
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
     // Clear models and cache when config is reloaded (e.g., after revert)
     state.models = [];
     state.modelsCache = {};
+    
+    // Handle cache age display
+    updateCacheDisplay(config);
     
     // Update UI with config
     if (config.provider) {

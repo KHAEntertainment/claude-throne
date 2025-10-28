@@ -972,7 +972,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const autoApply = cfg.get<boolean>('autoApply', true)
       if (autoApply) {
-        await vscode.commands.executeCommand('claudeThrone.revertApply')
+        await vscode.commands.executeCommand('claudeThrone.revertApply', { autoSelectFirstFolder: true })
       }
       
       // Clear caches and refresh webview config after stopping
@@ -986,13 +986,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (err) {
       console.error('Failed to stop proxy:', err)
+      this.log.appendLine(`[handleStopProxy] Error: ${err}`)
+      vscode.window.showErrorMessage(`Failed to stop proxy: ${err}`)
     }
   }
 
   private async handleRevertApply() {
     try {
       this.log.appendLine('[handleRevertApply] Reverting Claude Code settings to Anthropic defaults')
-      await vscode.commands.executeCommand('claudeThrone.revertApply')
+      await vscode.commands.executeCommand('claudeThrone.revertApply', { autoSelectFirstFolder: true })
       this.postStatus()
       vscode.window.showInformationMessage('Reverted Claude Code settings to Anthropic defaults')
     } catch (err) {
@@ -1187,6 +1189,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               </div>
               <button class="btn-primary" id="storeAnthropicKeyBtn" type="button" style="margin-top: 8px; width: 100%;">Store Anthropic Key</button>
               <div class="security-note">🔒 Stored securely in your system keychain</div>
+              <div id="anthropicCacheContainer" class="form-group" style="display: none;"></div>
               <button class="btn-add-custom-provider" id="addCustomProviderBtn" type="button" style="display: none;">+ Add Custom Provider</button>
             </div>
             <div class="form-group">
