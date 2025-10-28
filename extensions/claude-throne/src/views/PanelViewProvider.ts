@@ -347,7 +347,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         payload: { models: cached.models, provider } 
       })
     } else {
-      this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      this.view?.webview.postMessage({ type: 'models', payload: { models: [], provider } })
     }
   }
 

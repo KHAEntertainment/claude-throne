@@ -1842,20 +1842,47 @@
   }
 
   function handleModelsLoaded(payload) {
-    if (payload.models && Array.isArray(payload.models)) {
-      if (payload.models.length === 0) {
-        return;
-      }
-      state.models = payload.models;
-      state.modelsCache[state.provider] = payload.models;
-      renderModelList();
-      
-      // Update save combo button visibility after models are loaded
-      updateSaveComboButton();
+    if (!payload || !Array.isArray(payload.models)) {
+      console.log('[handleModelsLoaded] Invalid payload received');
+      return;
     }
+    
+    if (payload.models.length === 0) {
+      console.log('[handleModelsLoaded] Empty models array received');
+      return;
+    }
+    
+    // Use the provider from the payload, not the current state
+    const provider = payload.provider || state.provider;
+    console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}`);
+    
+    // Always cache under the provider the backend says these belong to
+    state.modelsCache[provider] = payload.models;
+    
+    // Only render if this response is for the currently selected provider
+    if (provider !== state.provider) {
+      console.log(`[handleModelsLoaded] Stashed ${payload.models.length} models for ${provider}, current provider is ${state.provider} — not rendering`);
+      return;
+    }
+    
+    console.log(`[handleModelsLoaded] Rendering models for current provider: ${provider}`);
+    state.models = payload.models;
+    renderModelList();
+    
+    // Update save combo button visibility after models are loaded
+    updateSaveComboButton();
   }
 
   function handleModelsError(payload) {
+    // Only render errors for the currently selected provider
+    const errorProvider = payload.provider || state.provider;
+    if (errorProvider !== state.provider) {
+      console.log(`[handleModelsError] Ignoring error for ${errorProvider}, current provider is ${state.provider}`);
+      return;
+    }
+    
+    console.log(`[handleModelsError] Rendering error for provider: ${errorProvider}`);
+    
     const container = document.getElementById('modelListContainer');
     if (!container) return;
     
