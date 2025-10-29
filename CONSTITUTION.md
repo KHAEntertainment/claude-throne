@@ -11,7 +11,9 @@ interface ProviderMap {
   completion: string;  // Canonical completion model (primary storage key)
   value: string;       // Value-focused model
 }
-// Note: 'coding' is read-only alias for 'completion' - never use for storage
+// Comment 5: 'coding' is DEPRECATED - read-only fallback for backward compatibility
+// NEVER write 'coding' key to storage - always use 'completion'
+// Migration: On save, delete any legacy 'coding' keys from provider maps
 ```
 
 ### 2. Start/Stop Hydration Sequence
@@ -19,11 +21,13 @@ interface ProviderMap {
 - **Never Apply Stale Globals**: If globals don't match current provider, hydrate first
 - **Atomic Operations**: Apply operation must include both legacy globals and provider-specific selections
 
-### 3. Model Loading Rules
+### 3. Model Loading Rules (Comment 8: Token-based race protection)
 - **Cache Key**: Always cache models by `payload.provider`
-- **Render Condition**: Only render when `payload.provider === state.provider` AND request token matches current request
+- **Token Generation**: Every `requestModels` message must include incremented sequence token
+- **Token Validation**: Responses with mismatched tokens must be ignored
+- **Render Condition**: Only render when `payload.provider === state.provider` AND `responseToken === state.currentRequestToken`
 - **Late Response Protection**: Late responses must not re-render or overwrite state
-- **Token Validation**: Every model loading response must include sequence token for validation
+- **Per-Provider Caching** (Comment 7): Cache is keyed by provider; only clear stale provider's cache on switch
 
 ### 4. Event Listener Discipline
 - **No Duplicates**: Never bind duplicate event listeners
@@ -39,11 +43,11 @@ interface ProviderMap {
 
 ### Message Schema Location & Versioning
 
-**Schema Files**:
+**Schema Files** (Comment 15: Corrected paths):
 - `extensions/claude-throne/src/schemas/messages.ts` - All webview ↔ extension message schemas
 - `extensions/claude-throne/src/schemas/config.ts` - Configuration and provider map schemas
 
-**Current Schema Version**: 1.0.0 (established 2025-10-28)
+**Current Schema Version**: 1.0.0 (established 2025-10-28, updated 2025-10-29)
 
 **Schema Versioning Policy**:
 - **Patch** (1.0.X): Add optional fields, fix validation bugs, documentation updates

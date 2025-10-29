@@ -3,6 +3,8 @@ import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
 import { isAnthropicEndpoint, type CustomEndpointKind } from '../services/endpoints'
+// Comment 2: Import schema validation for runtime message validation
+import { safeValidateMessage, type ExtensionToWebviewMessage } from '../schemas/messages'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
@@ -61,12 +63,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await cfg.update('reasoningModel', reasoningModel, target)
       this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated reasoningModel: ${reasoningModel}`)
       
-      if (twoModelMode && completionModel) {
+      // Comment 4: Always update completion/value when non-empty, independent of twoModelMode
+      if (completionModel) {
         await cfg.update('completionModel', completionModel, target)
         this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated completionModel: ${completionModel}`)
       }
       
-      if (twoModelMode && valueModel) {
+      if (valueModel) {
         await cfg.update('valueModel', valueModel, target)
         this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated valueModel: ${valueModel}`)
       }
@@ -85,6 +88,39 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[hydrateGlobalKeys] WARNING: Proxy will start, but applyToClaudeCode may use stale values`)
       return false
     }
+  }
+
+  /**
+   * Comment 2: Safe message posting with schema validation
+   * Validates messages against ExtensionToWebviewMessageSchema before sending
+   * 
+   * @param message - Message to validate and post
+   * @returns true if posted successfully, false if validation failed
+   */
+  private post(message: unknown): boolean {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const featureFlags = cfg.get<any>('featureFlags', {})
+    const enableValidation = featureFlags.enableSchemaValidation !== false // Default to enabled
+    
+    if (!enableValidation) {
+      // Feature flag disabled - bypass validation
+      this.view?.webview.postMessage(message)
+      return true
+    }
+    
+    // Validate message against schema
+    const validated = safeValidateMessage(message, 'toWebview', (msg) => {
+      this.log.appendLine(`[Schema Validation] ${msg}`)
+    })
+    
+    if (validated === null) {
+      this.log.appendLine(`[Schema Validation] REJECTED invalid message: ${JSON.stringify(message)}`)
+      return false
+    }
+    
+    // Validation passed - send message
+    this.view?.webview.postMessage(validated)
+    return true
   }
 
   /**
@@ -212,7 +248,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             break
           case 'saveModels':
             // Use providerId from message, not runtimeProvider, to ensure correct provider is used
-            await this.handleSaveModels({providerId: msg.providerId, reasoning: msg.reasoning, coding: msg.coding, value: msg.value})
+            // Comment 5: Accept 'completion' instead of 'coding' (canonical key)
+            await this.handleSaveModels({providerId: msg.providerId, reasoning: msg.reasoning, completion: msg.completion, value: msg.value})
             break
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
@@ -291,7 +328,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     if (!completionModel) completionModel = String(cfg.get('completionModel') || '')
     if (!valueModel) valueModel = String(cfg.get('valueModel') || '')
     
-    this.view?.webview.postMessage({ 
+    this.post({ 
       type: 'status', 
       payload: { 
         ...s, 
@@ -343,13 +380,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[postKeys] runtimeProvider=${this.runtimeProvider}, configProvider=${this.configProvider}`)
       
       // Send keysLoaded message for consistency
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'keysLoaded', 
         payload: { keyStatus } 
       })
       
       // Also send legacy 'keys' message for backward compatibility
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'keys', 
         payload: keyStatus 
       })
@@ -357,7 +394,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       this.log.appendLine(`[postKeys] ERROR: ${err}`)
       // Send empty status on error
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'keysLoaded', 
         payload: { keyStatus: {} } 
       })
@@ -394,7 +431,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     
     this.log.appendLine(`[postConfig] Sending config to webview: twoModelMode=${twoModelMode}, debug=${debug}, cacheAge=${cacheAgeDays} days`);
     
-    this.view.webview.postMessage({
+    // Comment 19: Read feature flags to send to webview
+    const featureFlags = config.get<any>('featureFlags', {
+      enableSchemaValidation: true,
+      enableTokenValidation: true,
+      enableKeyNormalization: true,
+      enablePreApplyHydration: true
+    });
+    
+    this.post({
       type: 'config',
       payload: { 
         provider, 
@@ -410,7 +455,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         // Comment 2: Add legacy model keys to payload for webview fallback
         reasoningModel,
         completionModel,
-        valueModel
+        valueModel,
+        // Comment 19: Send feature flags to webview
+        featureFlags
       }
     });
   }
@@ -422,12 +469,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cached = this.modelsCache.get(provider)
     
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'models', 
         payload: { models: cached.models, provider } 
       })
     } else {
-      this.view?.webview.postMessage({ type: 'models', payload: { models: [], provider } })
+      this.post({ type: 'models', payload: { models: [], provider } })
     }
   }
 
@@ -441,7 +488,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     if (provider === 'custom') {
       const baseUrl = cfg.get<string>('customBaseUrl', '')
       if (!baseUrl || !baseUrl.trim()) {
-        this.view?.webview.postMessage({ 
+        this.post({ 
           type: 'models', 
           payload: { models: [], provider, token: requestToken } 
         })
@@ -454,7 +501,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       if ((endpointKind === 'anthropic' && isAnthropic) || (endpointKind === 'auto' && isAnthropic)) {
         // Bypass model loading for anthropic endpoints - use native model discovery
-        this.view?.webview.postMessage({ 
+        this.post({ 
           type: 'models', 
           payload: { 
             models: [{
@@ -475,7 +522,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cached = this.modelsCache.get(provider)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       this.log.appendLine(`📦 Using cached models for ${provider}`)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'models', 
         payload: {
           models: cached.models,
@@ -529,7 +576,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.modelsCache.set(provider, { models, timestamp: Date.now() })
       
       this.log.appendLine(`📤 Sending ${models.length} models to webview`)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'models', 
         payload: {
           models,
@@ -553,7 +600,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         errorMessage = 'Could not connect to the API endpoint. Please check your URL and enter model IDs manually.'
       }
       
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'modelsError', 
         payload: {
           provider,
@@ -578,7 +625,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
                typeof provider.id === 'string' && provider.id.trim()
       })
       
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'customProvidersLoaded', 
         payload: { providers: validProviders } 
       })
@@ -617,7 +664,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         };
       })
       
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'popularModels', 
         payload: {
           pairings: pairingsData.featured_pairings,
@@ -628,7 +675,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       })
     } catch (err) {
       console.error('Failed to load popular models:', err)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'popularModels', 
         payload: { pairings: [], savedCombos: [] }
       })
@@ -645,7 +692,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     
     // Clear the webview with an empty list immediately after switching to prevent stale renders
-    this.view?.webview.postMessage({ 
+    this.post({ 
       type: 'models', 
       payload: { models: [], provider } 
     })
@@ -725,7 +772,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
       
       vscode.window.showInformationMessage('Model combo saved successfully')
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'combosLoaded', 
         payload: { combos: updatedCombos } 
       })
@@ -794,7 +841,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       vscode.window.showInformationMessage('Custom provider saved successfully')
       
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'customProvidersLoaded', 
         payload: { providers: updatedProviders } 
       })
@@ -853,7 +900,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       vscode.window.showInformationMessage('Custom provider deleted successfully')
       
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'customProviderDeleted', 
         payload: { providers: updatedProviders, deletedId: id.trim() } 
       })
@@ -895,7 +942,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage('Model combo deleted successfully')
       
       // Send updated combo list back to webview
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'comboDeleted', 
         payload: { combos: updatedCombos } 
       })
@@ -921,8 +968,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         payload: { provider, success: true }
       }
       this.log.appendLine(`📤 Message content: ${JSON.stringify(message)}`)
-      this.view?.webview.postMessage(message)
-      this.log.appendLine('📤 Message sent via postMessage')
+      this.post(message)
+      this.log.appendLine('📤 Message sent via post()')
       
       // If this was the first key, try to load models
       if (key && key.trim()) {
@@ -933,7 +980,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       this.log.appendLine(`❌ Failed to store key: ${err}`)
       vscode.window.showErrorMessage(`Failed to store API key: ${err}`)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'keyStored', 
         payload: { provider, success: false, error: String(err) }
       })
@@ -973,7 +1020,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       // Send success message to webview
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'anthropicKeyStored', 
         payload: { success: true }
       })
@@ -982,7 +1029,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       this.log.appendLine(`❌ Failed to store Anthropic key: ${err}`)
       vscode.window.showErrorMessage(`Failed to store Anthropic API key: ${err}`)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'anthropicKeyStored', 
         payload: { success: false, error: String(err) }
       })
@@ -1115,7 +1162,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const errorMsg = `No reasoning model selected for provider "${this.runtimeProvider}". Please select a model before starting the proxy.`
         this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
         vscode.window.showWarningMessage(errorMsg)
-        this.view?.webview.postMessage({ 
+        this.post({ 
           type: 'proxyError', 
           payload: errorMsg
         })
@@ -1126,7 +1173,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const errorMsg = `No completion model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
         this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
         vscode.window.showWarningMessage(errorMsg)
-        this.view?.webview.postMessage({ 
+        this.post({ 
           type: 'proxyError', 
           payload: errorMsg
         })
@@ -1137,7 +1184,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const errorMsg = `No value model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
         this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
         vscode.window.showWarningMessage(errorMsg)
-        this.view?.webview.postMessage({ 
+        this.post({ 
           type: 'proxyError', 
           payload: errorMsg
         })
@@ -1158,7 +1205,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           const errorMsg = `Using stale global model "${reasoningModel}" for provider "${this.runtimeProvider}". Please re-select models for this provider.`
           this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
           vscode.window.showWarningMessage(errorMsg)
-          this.view?.webview.postMessage({ 
+          this.post({ 
             type: 'proxyError', 
             payload: errorMsg
           })
@@ -1245,7 +1292,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
       vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
-      this.view?.webview.postMessage({ 
+      this.post({ 
         type: 'proxyError', 
         payload: String(err)
       })
@@ -1273,7 +1320,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // this.modelsCache.clear()
       
       // Don't send empty models to webview - preserve current selections
-      // this.view?.webview.postMessage({ type: 'models', payload: { models: [] } })
+      // Comment 2: Would use this.post() but currently commented out
+      // this.post({ type: 'models', payload: { models: [] } })
       
       // Send config without clearing models - model selections should persist in modelSelectionsByProvider
       this.postConfig()
@@ -1321,7 +1369,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleSaveModels(data: any): Promise<void> {
     try {
-      const { providerId, reasoning, coding, value } = data
+      // Comment 5: Accept 'completion' as canonical key (remove legacy 'coding' support)
+      const { providerId, reasoning, completion, value } = data
       
       // Update runtime provider to match what we're saving to keep them in sync
       if (providerId && providerId !== this.currentProvider) {
@@ -1334,7 +1383,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const applyScope = cfg.get<string>('applyScope', 'workspace')
       const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
       
-      this.log.appendLine(`[handleSaveModels] Save round-trip - providerId: ${providerId}, target: ${vscode.ConfigurationTarget[target]}, models: { reasoning: ${reasoning}, coding: ${coding}, value: ${value} }`)
+      this.log.appendLine(`[handleSaveModels] Save round-trip - providerId: ${providerId}, target: ${vscode.ConfigurationTarget[target]}, models: { reasoning: ${reasoning}, completion: ${completion}, value: ${value} }`)
 
       this.log.appendLine(`[handleSaveModels] Using config target: ${vscode.ConfigurationTarget[target]} (applyScope: ${applyScope})`)
       
@@ -1348,8 +1397,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         }
         
         modelSelectionsByProvider[providerId].reasoning = reasoning
-        modelSelectionsByProvider[providerId].completion = coding
+        // Comment 5: Only write 'completion' key (canonical storage)
+        modelSelectionsByProvider[providerId].completion = completion
         modelSelectionsByProvider[providerId].value = value
+        
+        // Comment 5: Migration - remove legacy 'coding' key if it exists
+        if (modelSelectionsByProvider[providerId].coding !== undefined) {
+          delete modelSelectionsByProvider[providerId].coding
+          this.log.appendLine(`[handleSaveModels] Removed legacy 'coding' key from provider ${providerId}`)
+        }
         
         await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
         this.log.appendLine(`[handleSaveModels] Successfully saved modelSelectionsByProvider for provider: ${providerId} to ${vscode.ConfigurationTarget[target]}`)
@@ -1370,8 +1426,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       try {
-        await cfg.update('completionModel', coding, target)
-        this.log.appendLine(`[handleSaveModels] Successfully saved completionModel: ${coding} to ${vscode.ConfigurationTarget[target]}`)
+        await cfg.update('completionModel', completion, target)
+        this.log.appendLine(`[handleSaveModels] Successfully saved completionModel: ${completion} to ${vscode.ConfigurationTarget[target]}`)
       } catch (err: any) {
         this.log.appendLine(`[handleSaveModels] ERROR saving completionModel: ${err.message}`)
         vscode.window.showErrorMessage(`Failed to save completionModel: ${err.message}`)
@@ -1393,10 +1449,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         this.log.appendLine(`[handleSaveModels] Verification - modelSelectionsByProvider after save: ${JSON.stringify(verification)}`)
         if (verification[providerId]) {
           const saved = verification[providerId]
-          if (saved.reasoning === reasoning && saved.completion === coding && saved.value === value) {
+          // Comment 5: Verify using 'completion' key (legacy 'coding' should be removed)
+          if (saved.reasoning === reasoning && saved.completion === completion && saved.value === value) {
             this.log.appendLine(`[handleSaveModels] Verification passed - models correctly saved`)
+            // Verify legacy 'coding' key was removed
+            if (saved.coding !== undefined) {
+              this.log.appendLine(`[handleSaveModels] WARNING - Legacy 'coding' key still present after save`)
+            }
           } else {
-            this.log.appendLine(`[handleSaveModels] WARNING - Verification failed. Expected: reasoning=${reasoning}, coding=${coding}, value=${value}. Got: ${JSON.stringify(saved)}`)
+            this.log.appendLine(`[handleSaveModels] WARNING - Verification failed. Expected: reasoning=${reasoning}, completion=${completion}, value=${value}. Got: ${JSON.stringify(saved)}`)
           }
         } else {
           this.log.appendLine(`[handleSaveModels] WARNING - No saved data found for provider ${providerId} after save`)
@@ -1421,7 +1482,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // but they still need the modelsSaved message to trigger UI updates
       this.log.appendLine(`[handleSaveModels] Sending modelsSaved confirmation to webview for provider: ${providerId}`)
       
-      this.view?.webview.postMessage({
+      this.post({
         type: 'modelsSaved',
         payload: {
           providerId: providerId,

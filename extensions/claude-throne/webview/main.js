@@ -17,24 +17,32 @@
     modelsCache: {},
     customProviders: [],
     // Provider-specific model storage
-    // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
+    // Comment 5: Use 'completion' as canonical key (read-only fallback to legacy 'coding' for backward compat)
     modelsByProvider: {
-      openrouter: { reasoning: '', completion: '', coding: '', value: '' },
-      openai: { reasoning: '', completion: '', coding: '', value: '' },
-      together: { reasoning: '', completion: '', coding: '', value: '' },
-      deepseek: { reasoning: '', completion: '', coding: '', value: '' },
-      glm: { reasoning: '', completion: '', coding: '', value: '' },
-      custom: { reasoning: '', completion: '', coding: '', value: '' }
+      openrouter: { reasoning: '', completion: '', value: '' },
+      openai: { reasoning: '', completion: '', value: '' },
+      together: { reasoning: '', completion: '', value: '' },
+      deepseek: { reasoning: '', completion: '', value: '' },
+      glm: { reasoning: '', completion: '', value: '' },
+      custom: { reasoning: '', completion: '', value: '' }
     },
     proxyRunning: false,
     port: 3000,
     customCombos: [],
     workspaceCombos: [],
     inSaveOperation: false, // Track when we're in the middle of a save to prevent unnecessary reloads
+    inSaveProvider: null, // Comment 12: Track which provider is being saved to prevent mismatched reload prevention
     autoHydratedProviders: new Set(), // Track which providers have been auto-hydrated to prevent loops
     // Phase 2: Request token for race protection
     requestTokenCounter: 0, // Incrementing counter for sequence tokens
-    currentRequestToken: null // Token of the most recent model loading request
+    currentRequestToken: null, // Token of the most recent model loading request
+    // Comment 19: Feature flags from config
+    featureFlags: {
+      enableSchemaValidation: true, // Default enabled
+      enableTokenValidation: true,
+      enableKeyNormalization: true,
+      enablePreApplyHydration: true
+    }
   };
 
   // Phase 3: Helper function to get coding model with deprecation warning
@@ -69,6 +77,94 @@
   const debouncedRenderModelList = debounce((searchTerm) => {
     renderModelList(searchTerm);
   }, 300);
+
+  // Comment 1: Safe message validation for incoming extension messages
+  function safeValidateMessage(message, direction) {
+    // Comment 19: Check feature flag
+    if (!state.featureFlags.enableSchemaValidation) {
+      return message; // Validation disabled
+    }
+
+    if (!message || typeof message !== 'object') {
+      console.error('[Schema Validation] Invalid message structure:', message);
+      return null;
+    }
+
+    const { type, payload } = message;
+    
+    if (!type || typeof type !== 'string') {
+      console.error('[Schema Validation] Missing or invalid message type:', message);
+      return null;
+    }
+
+    // Validate payload based on message type
+    switch (type) {
+      case 'status':
+        if (!payload || typeof payload !== 'object') return null;
+        break;
+        
+      case 'models':
+        if (!payload || typeof payload !== 'object') return null;
+        // Comment 1: Require provider field for race protection
+        if (!payload.provider || typeof payload.provider !== 'string') {
+          console.error('[Schema Validation] models message missing provider field:', message);
+          return null;
+        }
+        if (!Array.isArray(payload.models)) {
+          console.error('[Schema Validation] models payload.models is not an array:', message);
+          return null;
+        }
+        break;
+        
+      case 'config':
+        if (!payload || typeof payload !== 'object') return null;
+        // Required fields for config
+        if (!payload.provider || typeof payload.provider !== 'string') {
+          console.error('[Schema Validation] config message missing provider field:', message);
+          return null;
+        }
+        break;
+        
+      case 'modelsSaved':
+        if (!payload || typeof payload !== 'object') return null;
+        // Comment 1: Require providerId for save confirmation matching
+        if (!payload.providerId || typeof payload.providerId !== 'string') {
+          console.error('[Schema Validation] modelsSaved message missing providerId field:', message);
+          return null;
+        }
+        break;
+        
+      case 'modelsError':
+        if (!payload) return null;
+        // Payload can be string or object
+        if (typeof payload === 'object' && !payload.provider) {
+          console.error('[Schema Validation] modelsError object payload missing provider field:', message);
+          return null;
+        }
+        break;
+        
+      // Other message types - basic validation only
+      case 'keys':
+      case 'keysLoaded':
+      case 'keyStored':
+      case 'anthropicKeyStored':
+      case 'combosLoaded':
+      case 'comboDeleted':
+      case 'customProvidersLoaded':
+      case 'customProviderDeleted':
+      case 'popularModels':
+      case 'proxyError':
+        // These require payload but we don't validate structure in safe mode
+        break;
+        
+      default:
+        console.warn('[Schema Validation] Unknown message type:', type);
+        // Allow unknown types in safe mode
+        break;
+    }
+
+    return message; // Validation passed
+  }
 
   // Provider metadata
     const providers = {
@@ -229,7 +325,16 @@
   }
 
   function handleMessage(event) {
-    const message = event.data;
+    const rawMessage = event.data;
+    
+    // Comment 1: Validate message before processing
+    const message = safeValidateMessage(rawMessage, 'toWebview');
+    
+    if (message === null) {
+      console.error('[handleMessage] REJECTED invalid message:', rawMessage);
+      return; // Don't process invalid messages
+    }
+    
     console.log('[handleMessage] Received message:', message.type, message);
 
     switch (message.type) {
@@ -307,9 +412,16 @@
   function handleModelsSaved(payload) {
     console.log('[handleModelsSaved] Model save confirmation received:', payload);
     
-    // Clear the save operation flag regardless of success/failure
-    state.inSaveOperation = false;
-    console.log('[handleModelsSaved] Cleared inSaveOperation flag');
+    // Comment 12: Only clear flag if this confirmation is for the provider that triggered the save
+    if (payload.providerId === state.inSaveProvider) {
+      state.inSaveOperation = false;
+      state.inSaveProvider = null;
+      console.log(`[handleModelsSaved] Cleared inSaveOperation flag for provider: ${payload.providerId}`);
+    } else {
+      console.log(`[handleModelsSaved] Ignoring save confirmation for different provider: ${payload.providerId} (expected: ${state.inSaveProvider})`);
+      // Don't clear the flag - we're still waiting for the correct provider's save
+      return;
+    }
     
     if (!payload.success) {
       console.error('[handleModelsSaved] Model save failed:', payload);
@@ -336,17 +448,25 @@
 
   // Provider handling
     function onProviderChange(e) {
-    // Save current models for the old provider
+    // Comment 16: Save current models for the old provider BEFORE changing state
     if (state.provider && state.modelsByProvider[state.provider]) {
-      state.modelsByProvider[state.provider].reasoning = state.reasoningModel;
-      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
-      state.modelsByProvider[state.provider].completion = state.codingModel;
-      // Also set .coding for backward compatibility
-      state.modelsByProvider[state.provider].coding = state.codingModel;
-      state.modelsByProvider[state.provider].value = state.valueModel;
+      const oldProvider = state.provider;
+      state.modelsByProvider[oldProvider].reasoning = state.reasoningModel;
+      // Comment 5: Only write 'completion' key (canonical storage)
+      state.modelsByProvider[oldProvider].completion = state.codingModel;
+      state.modelsByProvider[oldProvider].value = state.valueModel;
+      
+      // Send save message for old provider before switching
+      vscode.postMessage({
+        type: 'saveModels',
+        providerId: oldProvider,
+        reasoning: state.reasoningModel,
+        completion: state.codingModel,
+        value: state.valueModel
+      });
     }
     
-    // Capture old provider and delete its cache before changing
+    // Comment 7: Delete only the old provider's cache (already saved above)
     const oldProvider = state.provider;
     delete state.modelsCache[oldProvider];
     
@@ -359,8 +479,8 @@
     
     // Initialize models storage for custom provider if needed
     if (!state.modelsByProvider[newProvider]) {
-      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
-      state.modelsByProvider[newProvider] = { reasoning: '', completion: '', coding: '', value: '' };
+      // Comment 5: Only use 'completion' key for canonical storage
+      state.modelsByProvider[newProvider] = { reasoning: '', completion: '', value: '' };
     }
     
     // Restore models for the new provider
@@ -1174,16 +1294,18 @@
     // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
     console.log(`[setModelFromList] Save round-trip - state.provider: ${state.provider}, models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
     
-    // Set flag to prevent unnecessary model reloads during save round-trip
+    // Comment 12: Set flag with provider tracking to prevent unnecessary model reloads during save round-trip
     state.inSaveOperation = true;
-    console.log('[setModelFromList] Setting inSaveOperation=true to prevent reload during save');
+    state.inSaveProvider = state.provider;
+    console.log(`[setModelFromList] Setting inSaveOperation=true for provider: ${state.provider} to prevent reload during save`);
     
     // Comment 4: Include providerId in saveModels message to avoid ambiguity and races
+    // Comment 5: Send 'completion' instead of 'coding' (canonical storage)
     vscode.postMessage({
       type: 'saveModels',
       providerId: state.provider,
       reasoning: state.reasoningModel,
-      coding: state.codingModel,
+      completion: state.codingModel,
       value: state.valueModel
     });
     
@@ -1532,15 +1654,12 @@
     state.codingModel = coding;
     state.valueModel = value;
 
-    // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
-    // Save to provider-specific storage
+    // Comment 5: Save to provider-specific storage (canonical 'completion' key only)
     if (!state.modelsByProvider[state.provider]) {
-      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
-      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', value: '' };
     }
     state.modelsByProvider[state.provider].reasoning = reasoning;
     state.modelsByProvider[state.provider].completion = coding;
-    state.modelsByProvider[state.provider].coding = coding; // backward compatibility
     state.modelsByProvider[state.provider].value = value;
 
     // Save
@@ -1550,11 +1669,12 @@
     // Notify backend that two-model mode is enabled
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: true });
 
+    // Comment 5: Send 'completion' instead of 'coding' (canonical storage)
     vscode.postMessage({
       type: 'saveModels',
       providerId: state.provider,
       reasoning: reasoning,
-      coding: coding,
+      completion: coding,
       value: value
     });
   }
@@ -1734,6 +1854,15 @@
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
+    // Comment 19: Load feature flags from config
+    if (config.featureFlags) {
+      state.featureFlags = {
+        ...state.featureFlags,
+        ...config.featureFlags
+      };
+      console.log('[handleConfigLoaded] Feature flags loaded:', state.featureFlags);
+    }
+    
     // Comment 2: Calculate effective provider FIRST before comparison
     // This is critical for custom providers where config.provider='custom' but state.provider='custom-provider-id'
     let effectiveProvider = 'openrouter'; // default fallback
@@ -1846,11 +1975,12 @@
         !state.autoHydratedProviders.has(state.provider)) {
       state.autoHydratedProviders.add(state.provider);
       console.log(`[handleConfigLoaded] Auto-hydrating provider map for ${state.provider} (first time only)`);
+      // Comment 5: Send 'completion' instead of 'coding' (canonical storage)
       vscode.postMessage({
         type: 'saveModels',
         providerId: state.provider,
         reasoning: state.reasoningModel || '',
-        coding: state.codingModel || '',
+        completion: state.codingModel || '',
         value: state.valueModel || ''
       });
       console.log('[handleConfigLoaded] Hydrated provider map from legacy keys via saveModels');
@@ -1969,7 +2099,7 @@
   }
 
   function handleModelsError(payload) {
-    // Only render errors for the currently selected provider
+    // Comment 11: Only render errors for the currently selected provider
     const errorProvider = payload.provider || state.provider;
     if (errorProvider !== state.provider) {
       console.log(`[handleModelsError] Ignoring error for ${errorProvider}, current provider is ${state.provider}`);
@@ -1991,9 +2121,9 @@
       'custom': 'gpt-4, claude-3-opus, llama-3'
     };
     
-    // Show dedicated hint for Together AI when 401/403 is encountered
+    // Comment 11: Show dedicated hint using errorProvider, not state.provider
     let dedicatedHint = '';
-    if (state.provider === 'together' && payload.error && (payload.error.includes('401') || payload.error.includes('403'))) {
+    if (errorProvider === 'together' && payload.error && (payload.error.includes('401') || payload.error.includes('403'))) {
       dedicatedHint = `
         <div class="manual-entry-hint" style="background: var(--vscode-inputValidation-warningBackground); padding: 8px; border-radius: 4px; margin-bottom: 12px;">
           <p class="manual-entry-hint-title">🔑 Together AI Authentication Issue</p>
@@ -2004,7 +2134,8 @@
       `;
     }
     
-    const example = providerExamples[state.provider] || 'gpt-4, claude-3-opus';
+    // Comment 11: Use errorProvider for all UI hint selections
+    const example = providerExamples[errorProvider] || 'gpt-4, claude-3-opus';
     
     // Show error with manual entry option for all providers
     container.innerHTML = `

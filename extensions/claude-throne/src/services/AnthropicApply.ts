@@ -27,8 +27,20 @@ export interface ApplyOptions {
  * 3. Use applyToClaudeCode command to configure Claude Code to point at the proxy URL
  */
 export async function applyAnthropicUrl(options: ApplyOptions): Promise<void> {
-  const { url, provider, secrets } = options
+  // Comment 10: Gate deprecated function with feature flag
   const cfg = vscode.workspace.getConfiguration('claudeThrone')
+  const featureFlags = cfg.get<any>('featureFlags', {})
+  const enableAnthropicDirectApply = featureFlags.enableAnthropicDirectApply === true
+  
+  if (!enableAnthropicDirectApply) {
+    const errorMsg = 'applyAnthropicUrl is deprecated and disabled by default. ' +
+      'Use proxy-based apply instead. ' +
+      'To enable temporarily, set claudeThrone.featureFlags.enableAnthropicDirectApply = true'
+    console.warn(`[DEPRECATED] ${errorMsg}`)
+    throw new Error(errorMsg)
+  }
+  
+  const { url, provider, secrets } = options
   const scopeStr = cfg.get<string>('applyScope', 'workspace')
   const scope = options.scope || (scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace)
   
