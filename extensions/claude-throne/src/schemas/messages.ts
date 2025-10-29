@@ -119,7 +119,7 @@ export const ConfigLoadedMessageSchema = z.object({
     cacheAgeDays: z.number().optional(),
     cacheStale: z.boolean().optional(),
     cachedDefaults: z.any().optional(),
-    modelSelectionsByProvider: z.record(ProviderMapSchema),
+    modelSelectionsByProvider: z.record(z.string(), ProviderMapSchema),
     // Legacy global keys for fallback hydration
     reasoningModel: z.string().optional(),
     completionModel: z.string().optional(),
@@ -148,10 +148,13 @@ export type PopularModelsMessage = z.infer<typeof PopularModelsMessageSchema>
  * Keys loaded message
  */
 export const KeysLoadedMessageSchema = z.object({
-  type: z.literal('keysLoaded').or(z.literal('keys')),
-  payload: z.object({
-    keyStatus: z.record(z.boolean()).optional()
-  }).or(z.record(z.boolean()))  // Support both formats for backward compatibility
+  type: z.union([z.literal('keysLoaded'), z.literal('keys')]),
+  payload: z.union([
+    z.object({
+      keyStatus: z.record(z.string(), z.boolean()).optional()
+    }),
+    z.record(z.string(), z.boolean())
+  ])  // Support both formats for backward compatibility
 })
 
 export type KeysLoadedMessage = z.infer<typeof KeysLoadedMessageSchema>
@@ -160,7 +163,7 @@ export type KeysLoadedMessage = z.infer<typeof KeysLoadedMessageSchema>
  * Key stored confirmation message
  */
 export const KeyStoredMessageSchema = z.object({
-  type: z.literal('keyStored').or(z.literal('anthropicKeyStored')),
+  type: z.union([z.literal('keyStored'), z.literal('anthropicKeyStored')]),
   payload: z.object({
     provider: z.string().optional(),
     success: z.boolean(),
@@ -190,7 +193,7 @@ export type ModelsSavedMessage = z.infer<typeof ModelsSavedMessageSchema>
  * Combos loaded message
  */
 export const CombosLoadedMessageSchema = z.object({
-  type: z.literal('combosLoaded').or(z.literal('comboDeleted')),
+  type: z.union([z.literal('combosLoaded'), z.literal('comboDeleted')]),
   payload: z.object({
     combos: z.array(ModelComboSchema)
   })
@@ -202,7 +205,7 @@ export type CombosLoadedMessage = z.infer<typeof CombosLoadedMessageSchema>
  * Custom providers loaded message
  */
 export const CustomProvidersLoadedMessageSchema = z.object({
-  type: z.literal('customProvidersLoaded').or(z.literal('customProviderDeleted')),
+  type: z.union([z.literal('customProvidersLoaded'), z.literal('customProviderDeleted')]),
   payload: z.object({
     providers: z.array(CustomProviderSchema),
     deletedId: z.string().optional()
@@ -215,7 +218,7 @@ export type CustomProvidersLoadedMessage = z.infer<typeof CustomProvidersLoadedM
  * Error message
  */
 export const ErrorMessageSchema = z.object({
-  type: z.literal('proxyError').or(z.literal('modelsError')),
+  type: z.union([z.literal('proxyError'), z.literal('modelsError')]),
   payload: z.union([
     z.string(),
     z.object({
@@ -318,7 +321,7 @@ export type ToggleTwoModelModeMessage = z.infer<typeof ToggleTwoModelModeMessage
  * Save/Delete combo messages
  */
 export const ComboManagementMessageSchema = z.object({
-  type: z.literal('saveCombo').or(z.literal('deleteCombo')),
+  type: z.union([z.literal('saveCombo'), z.literal('deleteCombo')]),
   name: z.string().optional(),
   reasoningModel: z.string().optional(),
   codingModel: z.string().optional(),
@@ -332,7 +335,7 @@ export type ComboManagementMessage = z.infer<typeof ComboManagementMessageSchema
  * Save/Delete custom provider messages
  */
 export const CustomProviderManagementMessageSchema = z.object({
-  type: z.literal('saveCustomProvider').or(z.literal('deleteCustomProvider')),
+  type: z.union([z.literal('saveCustomProvider'), z.literal('deleteCustomProvider')]),
   name: z.string().optional(),
   baseUrl: z.string().optional(),
   id: z.string()
@@ -437,7 +440,8 @@ export function safeValidateMessage(
     }
   } catch (error) {
     if (logger && error instanceof z.ZodError) {
-      logger(`[Schema Validation Error] Invalid ${direction} message: ${JSON.stringify(error.errors)}`)
+      const errorDetails = 'issues' in error ? error.issues : []
+      logger(`[Schema Validation Error] Invalid ${direction} message: ${JSON.stringify(errorDetails)}`)
       logger(`[Schema Validation Error] Rejected message: ${JSON.stringify(message)}`)
     }
     return null
