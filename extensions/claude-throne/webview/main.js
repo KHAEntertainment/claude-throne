@@ -31,7 +31,10 @@
     customCombos: [],
     workspaceCombos: [],
     inSaveOperation: false, // Track when we're in the middle of a save to prevent unnecessary reloads
-    autoHydratedProviders: new Set() // Track which providers have been auto-hydrated to prevent loops
+    autoHydratedProviders: new Set(), // Track which providers have been auto-hydrated to prevent loops
+    // Phase 2: Request token for race protection
+    requestTokenCounter: 0, // Incrementing counter for sequence tokens
+    currentRequestToken: null // Token of the most recent model loading request
   };
 
   // Provider metadata
@@ -1273,8 +1276,19 @@
     }
 
     try {
-      // Request models from backend
-      vscode.postMessage({ type: 'requestModels', provider: state.provider });
+      // Phase 2: Generate sequence token for race protection
+      state.requestTokenCounter++;
+      const requestToken = `token-${state.requestTokenCounter}`;
+      state.currentRequestToken = requestToken;
+      
+      console.log(`[loadModels] Requesting models for provider: ${state.provider}, token: ${requestToken}`);
+      
+      // Request models from backend with token
+      vscode.postMessage({ 
+        type: 'requestModels', 
+        provider: state.provider,
+        token: requestToken // Include token for response matching
+      });
     } catch (error) {
       console.error('Failed to load models:', error);
       if (container) {
@@ -1880,20 +1894,29 @@
       return;
     }
     
+    // Phase 2: Validate provider and token to prevent race conditions
     // Use the provider from the payload, not the current state
     const provider = payload.provider || state.provider;
-    console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}`);
+    const responseToken = payload.token;
+    
+    console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}, token: ${responseToken}, currentRequestToken: ${state.currentRequestToken}`);
+    
+    // Phase 2: Token validation - ignore late responses with mismatched tokens
+    if (responseToken && state.currentRequestToken && responseToken !== state.currentRequestToken) {
+      console.log(`[handleModelsLoaded] IGNORING late response - token mismatch (expected: ${state.currentRequestToken}, got: ${responseToken})`);
+      return;
+    }
     
     // Always cache under the provider the backend says these belong to
     state.modelsCache[provider] = payload.models;
     
-    // Only render if this response is for the currently selected provider
+    // Phase 2: Provider validation - only render if this response is for the currently selected provider
     if (provider !== state.provider) {
-      console.log(`[handleModelsLoaded] Stashed ${payload.models.length} models for ${provider}, current provider is ${state.provider} — not rendering`);
+      console.log(`[handleModelsLoaded] IGNORING cross-provider response - stashed ${payload.models.length} models for ${provider}, current provider is ${state.provider}`);
       return;
     }
     
-    console.log(`[handleModelsLoaded] Rendering models for current provider: ${provider}`);
+    console.log(`[handleModelsLoaded] ✓ Validation passed - rendering ${payload.models.length} models for current provider: ${provider}`);
     state.models = payload.models;
     renderModelList();
     

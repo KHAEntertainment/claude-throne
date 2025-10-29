@@ -92,13 +92,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             this.postConfig()
             break
           case 'requestModels':
-            await this.handleListModels(false)
+            // Phase 2: Pass through token for race protection
+            await this.handleListModels(false, msg.token)
             break
           case 'listPublicModels':
-            await this.handleListModels(false)
+            await this.handleListModels(false, msg.token)
             break
           case 'listFreeModels':
-            await this.handleListModels(true)
+            await this.handleListModels(true, msg.token)
             break
           case 'requestPopularModels':
             await this.postPopularModels()
@@ -352,10 +353,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleListModels(freeOnly: boolean) {
+  private async handleListModels(freeOnly: boolean, requestToken?: string) {
     // Use runtimeProvider for UI operations - this represents the actual provider being used
     const provider = this.runtimeProvider || 'openrouter'
-    this.log.appendLine(`📋 Loading models for provider: ${provider}`)
+    this.log.appendLine(`📋 Loading models for provider: ${provider}${requestToken ? `, token: ${requestToken}` : ''}`)
     
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     
@@ -364,7 +365,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (!baseUrl || !baseUrl.trim()) {
         this.view?.webview.postMessage({ 
           type: 'models', 
-          payload: { models: [], provider } 
+          payload: { models: [], provider, token: requestToken } 
         })
         return
       }
@@ -384,7 +385,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               description: 'Anthropic native endpoint - models managed by Claude',
               provider: provider
             }],
-            provider
+            provider,
+            token: requestToken
           }
         })
         return;
@@ -400,7 +402,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         payload: {
           models: cached.models,
           provider,
-          freeOnly
+          freeOnly,
+          token: requestToken
         }
       })
       return
@@ -453,7 +456,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         payload: {
           models,
           provider,
-          freeOnly
+          freeOnly,
+          token: requestToken
         }
       })
     } catch (err: any) {

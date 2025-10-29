@@ -313,7 +313,8 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "undici": "^6.18.2"
+    "undici": "^6.18.2",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
