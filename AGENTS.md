@@ -26,6 +26,35 @@ We use Beads (`bd`) for all work and task tracking. Before starting work:
 bd init --prefix coding-agent
 ```
 
+## Planning Discipline (Constitution Enforced)
+
+### Context Search First
+Before any change to guarded areas (`area:model-selection`, `area:provider`, `area:proxy`, `area:webview`, `area:config`):
+1. Run context search for relevant decisions and patterns
+2. Read CONSTITUTION.md invariants for the specific area
+3. Cite relevant invariants in your plan
+
+### Schema Validation
+- Validate message/config contracts against schemas in `extensions/claude-throne/src/schemas/`
+- Check payload completeness for webview ↔ extension communication
+- Verify provider map structure: `{ reasoning, completion, value }`
+
+### Test Requirements
+- Propose test deltas for any invariant changes
+- Include unit tests for provider isolation, token validation, key normalization
+- Add integration tests for Start/Stop hydration and settings.json reflection
+- Ensure contract tests for message schemas
+
+### Area Labels and PR Planning
+- Apply appropriate area labels: `area:model-selection | area:provider | area:proxy | area:webview | area:config`
+- Reference Constitution.md invariants in PR description
+- Document which invariants are touched by the change
+
+### Memory and Persistence
+- Record key decisions (schema changes, invariant modifications) to core memory
+- Link decisions to PR/Bead ID for traceability
+- Note any backward compatibility requirements
+
 ## Build, Test, and Development Commands
 - Run locally: `npm start` or `node index.js`
 - With API key: `OPENROUTER_API_KEY=... PORT=3000 npm start`
@@ -39,6 +68,43 @@ bd init --prefix coding-agent
     -d '{"messages":[{"role":"user","content":"Say hi"}],"stream":false}'
   ```
 - Enable debug logs: `DEBUG=1 npm start`
+
+## Execution Checklist (Agent and Human)
+
+### Pre-Code Validation
+- [ ] Read Constitution.md invariants for target area
+- [ ] Run context search for relevant decisions
+- [ ] Validate schemas for affected message/config contracts
+- [ ] Identify test requirements and coverage gaps
+
+### Implementation Checks
+- [ ] Provider map uses canonical keys: `{ reasoning, completion, value }`
+- [ ] Storage operations use 'completion' key (never 'coding')
+- [ ] Model loading includes sequence token validation
+- [ ] Event listeners are not duplicated (check cleanup)
+- [ ] Filter input is throttled/debounced
+
+### Testing Requirements
+- [ ] Unit tests pass: `npm test`
+- [ ] VS Code extension tests pass
+- [ ] Provider switch isolation verified
+- [ ] Start/Stop hydration works correctly
+- [ ] Settings.json reflects active provider
+- [ ] No duplicate event listeners (log/devtool audit)
+
+### Manual Smoke Test
+- [ ] Switch providers (OpenRouter ↔ GLM ↔ custom)
+- [ ] Confirm model list differs per provider
+- [ ] Select models, Start/Stop proxy
+- [ ] Verify settings.json shows active provider models
+- [ ] Test filter input rapid typing (no flicker)
+
+### Pre-PR Validation
+- [ ] Add/update tests for guarded file changes
+- [ ] Update schemas if contracts changed
+- [ ] Apply appropriate area labels
+- [ ] Document invariant impacts in PR description
+- [ ] Link to core memory decisions
 
 ## Coding Style & Naming Conventions
 - Language: Node.js ESM; prefer `import`/`export`, `const`/`let`, async/await.
@@ -60,9 +126,39 @@ bd init --prefix coding-agent
 - Branch names: `feat/<scope>`, `fix/<scope>`, `chore/<scope>`.
 - PRs: include summary, rationale, logs/screenshots if relevant, steps to reproduce/verify, env var changes, and linked issues. Keep PRs small and focused.
 
+### PR Template for Guarded Areas
+```markdown
+**Changed areas:**
+- [ ] webview/main.js
+- [ ] PanelViewProvider.ts  
+- [ ] AnthropicApply.ts
+
+**Invariants touched:**
+- [ ] Provider map structure
+- [ ] Start/Stop hydration sequence
+- [ ] Model loading rules
+- [ ] Event listener discipline
+- [ ] Configuration persistence
+
+**Schema updated:**
+- [ ] yes (link: ____)
+- [ ] no
+
+**Tests added/updated:**
+- [ ] unit (provider isolation, token validation, key normalization)
+- [ ] integration (Start/Stop hydration, settings reflection)
+- [ ] contract (message/config schemas)
+
+**Manual smoke results:**
+[Attach logs/screenshots]
+
+**Area labels applied:**
+area:model-selection | area:provider | area:proxy | area:webview | area:config
+```
+
 ## Security & Configuration Tips
-- Never commit secrets. Use env vars; prefer local `.env` but don’t commit it.
-- Default backend is `openrouter.ai`; if `ANTHROPIC_PROXY_BASE_URL` is set, `OPENROUTER_API_KEY` isn’t required.
+- Never commit secrets. Use env vars; prefer local `.env` but don't commit it.
+- Default backend is `openrouter.ai`; if `ANTHROPIC_PROXY_BASE_URL` is set, `OPENROUTER_API_KEY` isn't required.
 - Avoid logging request bodies with secrets; keep `DEBUG` off in production.
 
 ## Agent-Specific Notes
@@ -72,14 +168,15 @@ bd init --prefix coding-agent
 
 ## Planning & Docs
 - Read `MemorySystem.md` first; it defines agent rules, priorities, and guardrails for this repo.
+- Read `CONSTITUTION.md` before any changes to guarded areas
 - Before non-trivial work, read `docs/Claude-Throne-PRD.md` and `Claude-Throne-Prompt.md`.
 - Maintain a live plan with the `update_plan` tool (one in-progress step at a time).
 
 ## External MCP Knowledge Tools
-- Context7 (RAG docs search): Use whenever working with a library, framework, SDK, or API you’re not explicitly familiar with.
+- Context7 (RAG docs search): Use whenever working with a library, framework, SDK, or API you're not explicitly familiar with.
   - Resolve first, then fetch: `context7__resolve-library-id` → `context7__get-library-docs`.
   - Prefer exact matches, high trust score, and high snippet coverage; set a focused `topic` when helpful (e.g., `hooks`, `routing`, `streaming`).
-  - If multiple plausible matches exist, request clarification or proceed with the best match and note assumptions in the plan.
+  - If multiple plausible matches exist, request clarification or proceed with the best match and note assumptions in your plan.
 - Git‑MCP (live GitHub docs/code): Use to pull up‑to‑date documentation or code from public GitHub repositories.
   - Prefer documentation first; only pull code when necessary to answer implementation questions.
   - For repos with dedicated doc helpers (e.g., `davila7/docs`), use `git-mcp__fetch_docs_documentation` and `git-mcp__search_docs_documentation`.

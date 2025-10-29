@@ -213,3 +213,191 @@ When making changes:
 5. Use the packaging script for version management
 
 This architecture provides a robust, secure, and user-friendly solution for universal AI model routing with extensibility for future enhancements and provider support.
+
+## Development Workflow (Constitution-Guided)
+
+### Human Mode Quick Checklist (No Traycer)
+
+Before making any changes:
+1. **Read Constitution.md invariants** for the area you'll touch
+2. **Identify guarded files** - if touching `webview/main.js`, `PanelViewProvider.ts`, or `AnthropicApply.ts`, extra care required
+3. **Check area labels** - determine if your change affects `area:model-selection`, `area:provider`, `area:proxy`, `area:webview`, or `area:config`
+
+After coding changes:
+1. **Run tests**: `npm test` must pass
+2. **Run VS Code extension tests** if extension code changed
+3. **Manual smoke test** (required for guarded areas):
+   - Switch providers (OpenRouter ↔ GLM ↔ custom), confirm model list differs per provider
+   - Select models, Start/Stop; check settings.json shows active provider models on first start
+   - Filter input: type rapidly; confirm no flicker; ensure only one listener bound
+4. **Validate invariants**: verify all Constitution.md invariants still hold
+
+Before creating PR:
+1. **Add/update tests** if you changed any guarded file
+2. **Update schemas** if message/config contracts changed
+3. **Apply area labels** to your PR (`area:model-selection | area:provider | area:proxy | area:webview | area:config`)
+4. **Document invariant impacts** in PR description
+5. **Include smoke test results** (logs/screenshots)
+
+### Common Pitfalls (From Recent Incidents)
+
+❌ **Never use 'coding' as a storage key**
+- Always use 'completion' as the canonical storage key
+- 'coding' is read-only alias for display purposes only
+
+❌ **Never render models from stale payloads**
+- Always check `payload.provider === state.provider` before rendering
+- Use sequence tokens to validate request/response matching
+- Ignore late responses that don't match current state
+
+❌ **Never apply without hydrating globals first**
+- Before any apply operation, hydrate `reasoningModel`, `completionModel`, `valueModel` from active provider
+- Use fallback hydration when legacy globals are missing
+- Ensure atomic operations: both legacy globals and provider selections saved together
+
+❌ **Never bind duplicate event listeners**
+- Always remove existing listeners before adding new ones
+- Check cleanup in component unmount and provider changes
+- Use throttling/debouncing for filter inputs to prevent excessive re-renders
+
+### Test Scaffold Examples
+
+#### Provider-Aware handleModelsLoaded Test
+```javascript
+// tests/provider-model-loading.test.js
+test('handleModelsLoaded respects provider and sequence token', async () => {
+  const { handleModelsLoaded } = await import('../webview/main.js');
+  const setState = vi.fn();
+  
+  // Initial state with provider A
+  let state = { provider: 'openrouter', requestToken: 'token1' };
+  
+  // Response from correct provider with matching token
+  const payload = {
+    provider: 'openrouter',
+    models: [/* model data */],
+    token: 'token1'
+  };
+  
+  handleModelsLoaded(payload, setState, state);
+  expect(setState).toHaveBeenCalledWith(expect.objectContaining({
+    models: expect.any(Array),
+    provider: 'openrouter'
+  }));
+  
+  // Late response from different provider should be ignored
+  const latePayload = {
+    provider: 'glm',
+    models: [/* different model data */],
+    token: 'token1'
+  };
+  
+  setState.mockClear();
+  handleModelsLoaded(latePayload, setState, state);
+  expect(setState).not.toHaveBeenCalled();
+});
+```
+
+#### Start/Stop Hydration Test
+```javascript
+// tests/start-stop-hydration.test.js
+test('startProxy hydrates globals from active provider before apply', async () => {
+  const mockSettings = {
+    get: vi.fn(),
+    update: vi.fn()
+  };
+  
+  const mockGlobalState = {
+    get: vi.fn().mockReturnValue({
+      modelSelectionsByProvider: {
+        openrouter: {
+          reasoning: 'claude-3.5-sonnet',
+          completion: 'claude-3.5-haiku',
+          value: 'claude-3-opus'
+        }
+      }
+    }),
+    update: vi.fn()
+  };
+  
+  // Simulate provider switch without legacy globals
+  const activeProvider = 'openrouter';
+  
+  const result = await startProxy(activeProvider, mockSettings, mockGlobalState);
+  
+  // Verify hydration happened before apply
+  expect(mockSettings.update).toHaveBeenCalledWith(
+    'claude-throne.anthropic',
+    expect.objectContaining({
+      reasoningModel: 'claude-3.5-sonnet',    // Hydrated from provider
+      completionModel: 'claude-3.5-haiku',   // Hydrated from provider
+      valueModel: 'claude-3-opus'           // Hydrated from provider
+    })
+  );
+});
+```
+
+### Debug Mode and Troubleshooting
+
+Enable comprehensive debug logging:
+```bash
+# Extension debug
+"claudeThrone.proxy.debug": true
+
+# Proxy server debug  
+DEBUG=1 npm start
+
+# Combined debug (extension + proxy)
+DEBUG=1 code --enable-proposed-api=vscode.vscode-test-resolver
+```
+
+Common debug locations:
+- Extension Developer Console (Help → Toggle Developer Tools)
+- Proxy server logs (stdout when DEBUG=1)
+- VS Code workspace settings (.vscode/settings.json)
+- Claude Code settings (.claude/settings.json)
+
+### PR Template for Guarded Areas
+
+Use this template when submitting PRs that touch Constitution-guarded areas:
+
+```markdown
+## Changes
+- [ ] webview/main.js
+- [ ] PanelViewProvider.ts  
+- [ ] AnthropicApply.ts
+
+## Constitution Compliance
+**Invariants touched:**
+- [ ] Provider map structure (`{ reasoning, completion, value }`)
+- [ ] Start/Stop hydration sequence  
+- [ ] Model loading rules (token validation, provider matching)
+- [ ] Event listener discipline
+- [ ] Configuration persistence
+
+**Schema updated:**
+- [ ] yes (link: schemas/messages.ts or schemas/config.ts)
+- [ ] no
+
+**Tests added/updated:**
+- [ ] unit (provider isolation, token validation, key normalization)
+- [ ] integration (Start/Stop hydration, settings.json reflection)
+- [ ] contract (message/config schemas)
+
+**Area labels applied:**
+`area:model-selection | area:provider | area:proxy | area:webview | area:config`
+
+## Manual Smoke Test Results
+[Attach logs or screenshots showing:]
+- Provider switching behavior
+- Model selection persistence
+- Settings.json content after Start/Stop
+- Filter input performance (no flicker)
+
+## Test Coverage
+All tests pass: `npm test`
+Extension tests pass: [test command]
+Manual verification: [steps and results]
+```
+
+This workflow ensures Constitution compliance while maintaining development velocity through clear guardrails and validation steps.

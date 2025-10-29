@@ -523,7 +523,7 @@ Flags stored in VS Code settings: `claudeThrone.featureFlags.*`
 - [x] **Phase 1: Message Schema & Contract Foundation** (Completed: 2025-10-28)
 - [x] **Phase 2: Provider-Aware Model Loading & Race Protection** (Completed: 2025-10-28)
 - [x] **Phase 3: Key Normalization & Storage Standardization** (Completed: 2025-10-28)
-- [ ] Phase 4: Deterministic Start/Stop with Pre-Apply Hydration
+- [x] **Phase 4: Deterministic Start/Stop with Pre-Apply Hydration** (Completed: 2025-10-28)
 - [ ] Phase 5: Event Listener Discipline & UI Optimization
 - [ ] Phase 6: Test Suite & CI Infrastructure
 
@@ -668,6 +668,69 @@ Flags stored in VS Code settings: `claudeThrone.featureFlags.*`
 - Read from modelSelectionsByProvider first, then fallback to global keys
 - Hydrate global keys before calling applyToClaudeCode
 - Add extensive logging for hydration sequence
+
+### Phase 4 Completion Notes (2025-10-28)
+
+**What was implemented**:
+- Created `hydrateGlobalKeysFromProvider()` dedicated helper method in PanelViewProvider
+- Refactored handleStartProxy to use helper instead of inline hydration
+- Added detailed BEFORE/AFTER logging showing exact value changes
+- Added success/failure return status for error handling
+- Created 11 unit tests covering all hydration scenarios
+
+**Hydration Sequence** (enforced by code):
+1. Read models from `modelSelectionsByProvider[runtimeProvider]` (provider-specific)
+2. Fallback to global keys if provider config missing
+3. **HYDRATE**: Update global keys from provider-specific values
+4. Start proxy
+5. Apply to Claude Code (reads hydrated globals)
+
+**Key Features**:
+- **Atomic Updates**: All keys updated together or none
+- **Extensive Logging**: Shows before → after for each key
+- **Error Resilience**: Proxy starts even if hydration fails (with warning)
+- **Verification**: Reads back config after hydration to confirm
+
+**Example Log Output**:
+```
+[hydrateGlobalKeys] BEFORE hydration for provider 'glm':
+[hydrateGlobalKeys]   - target: Workspace (workspace)
+[hydrateGlobalKeys]   - reasoning: gpt-4 → glm-4-plus
+[hydrateGlobalKeys]   - completion: gpt-3.5-turbo → glm-4-air
+[hydrateGlobalKeys]   - value: gpt-4 → glm-4-flash
+[hydrateGlobalKeys] ✅ Updated reasoningModel: glm-4-plus
+[hydrateGlobalKeys] ✅ Updated completionModel: glm-4-air
+[hydrateGlobalKeys] ✅ Updated valueModel: glm-4-flash
+[hydrateGlobalKeys] AFTER hydration - verification:
+[hydrateGlobalKeys]   - reasoning: glm-4-plus
+[hydrateGlobalKeys]   - completion: glm-4-air
+[hydrateGlobalKeys]   - value: glm-4-flash
+[hydrateGlobalKeys] ✅ Global keys successfully hydrated for provider 'glm'
+```
+
+**Test Coverage** (11/11 passing):
+- Hydrate all keys in two-model mode
+- Only hydrate reasoning in single-model mode
+- Provider-specific config preferred over global keys
+- Fallback to global keys when provider config missing
+- Stale provider detection (GPT models on GLM provider)
+- Hydration happens before proxy start (sequence verification)
+- Apply uses hydrated values not stale globals
+- Atomic hydration (all keys updated together)
+- Rapid provider switching handled correctly
+
+**Code Changes**:
+- `PanelViewProvider.ts`: Added `hydrateGlobalKeysFromProvider()` method (~60 lines)
+- `PanelViewProvider.ts`: Refactored `handleStartProxy` to use helper
+- `tests/phase4-hydration.test.js`: 11 comprehensive tests (280 lines)
+
+**Impact**:
+✅ **Fixes the root cause**: Proxy now always starts with correct provider's models
+✅ **No more stale configs**: Switching from OpenRouter to GLM → GLM models used
+✅ **Full visibility**: Logs show exactly what values changed and why
+✅ **Backward compatible**: Fallback to globals still works if needed
+
+**This resolves the primary issue from the regression notes**: Users reported that switching providers would use stale models from the previous provider. With Phase 4, the hydration step ensures the active provider's models are always written to the global keys that Claude Code reads.
 
 ### Pre-Implementation Analysis
 

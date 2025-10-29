@@ -27,6 +27,67 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Phase 4: Hydrate global keys from provider-specific configuration
+   * This ensures applyToClaudeCode reads the correct models for the active provider
+   * 
+   * @param providerId - Active provider ID
+   * @param reasoningModel - Reasoning model to hydrate
+   * @param completionModel - Completion model to hydrate
+   * @param valueModel - Value model to hydrate
+   * @param twoModelMode - Whether two-model mode is enabled
+   * @returns Success status
+   */
+  private async hydrateGlobalKeysFromProvider(
+    providerId: string,
+    reasoningModel: string,
+    completionModel: string,
+    valueModel: string,
+    twoModelMode: boolean
+  ): Promise<boolean> {
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const applyScope = cfg.get<string>('applyScope', 'workspace')
+    const target = applyScope === 'global' 
+      ? vscode.ConfigurationTarget.Global 
+      : vscode.ConfigurationTarget.Workspace
+
+    this.log.appendLine(`[hydrateGlobalKeys] BEFORE hydration for provider '${providerId}':`)
+    this.log.appendLine(`[hydrateGlobalKeys]   - target: ${vscode.ConfigurationTarget[target]} (${applyScope})`)
+    this.log.appendLine(`[hydrateGlobalKeys]   - reasoning: ${cfg.get('reasoningModel') || 'NOT SET'} → ${reasoningModel}`)
+    this.log.appendLine(`[hydrateGlobalKeys]   - completion: ${cfg.get('completionModel') || 'NOT SET'} → ${completionModel || 'N/A'}`)
+    this.log.appendLine(`[hydrateGlobalKeys]   - value: ${cfg.get('valueModel') || 'NOT SET'} → ${valueModel || 'N/A'}`)
+
+    try {
+      // Phase 4: Atomic hydration - update all keys or none
+      await cfg.update('reasoningModel', reasoningModel, target)
+      this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated reasoningModel: ${reasoningModel}`)
+      
+      if (twoModelMode && completionModel) {
+        await cfg.update('completionModel', completionModel, target)
+        this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated completionModel: ${completionModel}`)
+      }
+      
+      if (twoModelMode && valueModel) {
+        await cfg.update('valueModel', valueModel, target)
+        this.log.appendLine(`[hydrateGlobalKeys] ✅ Updated valueModel: ${valueModel}`)
+      }
+      
+      this.log.appendLine(`[hydrateGlobalKeys] AFTER hydration - verification:`)
+      this.log.appendLine(`[hydrateGlobalKeys]   - reasoning: ${cfg.get('reasoningModel')}`)
+      if (twoModelMode) {
+        this.log.appendLine(`[hydrateGlobalKeys]   - completion: ${cfg.get('completionModel')}`)
+        this.log.appendLine(`[hydrateGlobalKeys]   - value: ${cfg.get('valueModel')}`)
+      }
+      
+      this.log.appendLine(`[hydrateGlobalKeys] ✅ Global keys successfully hydrated for provider '${providerId}'`)
+      return true
+    } catch (err) {
+      this.log.appendLine(`[hydrateGlobalKeys] ❌ ERROR: Failed to hydrate global keys: ${err}`)
+      this.log.appendLine(`[hydrateGlobalKeys] WARNING: Proxy will start, but applyToClaudeCode may use stale values`)
+      return false
+    }
+  }
+
+  /**
    * Helper getter for accessing current provider for runtime operations.
    * Returns this.currentProvider (runtime state) for UI/actions,
    * and config.get('provider') (persistent state) only for persistence operations.
@@ -1131,33 +1192,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       this.log.appendLine(`[handleStartProxy] Timestamp: ${new Date().toISOString()}`)
       
-      // Hydrate global keys with current provider's models before starting
+      // Phase 4: Hydrate global keys BEFORE proxy start
       // This ensures applyToClaudeCode reads the correct models when it runs
-      this.log.appendLine(`[handleStartProxy] Hydrating global keys for ${this.runtimeProvider} before apply`)
+      this.log.appendLine(`[handleStartProxy] Phase 4: Hydrating global keys before proxy start...`)
+      const hydrationSuccess = await this.hydrateGlobalKeysFromProvider(
+        this.runtimeProvider,
+        reasoningModel,
+        completionModel,
+        valueModel,
+        twoModelMode
+      )
       
-      const applyScope = cfg.get<string>('applyScope', 'workspace')
-      const target = applyScope === 'global' 
-        ? vscode.ConfigurationTarget.Global 
-        : vscode.ConfigurationTarget.Workspace
-      
-      try {
-        await cfg.update('reasoningModel', reasoningModel, target)
-        this.log.appendLine(`[handleStartProxy] Updated global reasoningModel: ${reasoningModel}`)
-        
-        if (twoModelMode && completionModel) {
-          await cfg.update('completionModel', completionModel, target)
-          this.log.appendLine(`[handleStartProxy] Updated global completionModel: ${completionModel}`)
-        }
-        
-        if (twoModelMode && valueModel) {
-          await cfg.update('valueModel', valueModel, target)
-          this.log.appendLine(`[handleStartProxy] Updated global valueModel: ${valueModel}`)
-        }
-        
-        this.log.appendLine(`[handleStartProxy] ✅ Global keys hydrated for provider ${this.runtimeProvider}`)
-      } catch (err) {
-        this.log.appendLine(`[handleStartProxy] ⚠️ WARNING: Failed to hydrate global keys: ${err}`)
-        // Continue anyway - proxy can still start, but apply might use stale values
+      if (!hydrationSuccess) {
+        this.log.appendLine(`[handleStartProxy] WARNING: Hydration failed, but continuing with proxy start`)
       }
       
       // Determine the provider to pass to proxy.start
