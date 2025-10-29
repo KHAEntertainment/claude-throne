@@ -10,6 +10,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
 
   /**
+   * Phase 3: Helper to get completion model with deprecation warning
+   * Reads from 'completion' key first, falls back to legacy 'coding' key
+   * Emits deprecation warning when falling back to 'coding'
+   */
+  private getCodingModelFromProvider(providerModels: any, providerId: string): string {
+    const completion = providerModels?.completion
+    const coding = providerModels?.coding
+    
+    // Phase 3: Emit deprecation warning if using legacy 'coding' key
+    if (!completion && coding) {
+      this.log.appendLine(`[DEPRECATION] Provider '${providerId}' uses legacy 'coding' key. Migrating to 'completion' on next save.`)
+    }
+    
+    return completion || coding || ''
+  }
+
+  /**
    * Helper getter for accessing current provider for runtime operations.
    * Returns this.currentProvider (runtime state) for UI/actions,
    * and config.get('provider') (persistent state) only for persistence operations.
@@ -960,16 +977,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       if (modelSelectionsByProvider[this.runtimeProvider]) {
         const providerModels = modelSelectionsByProvider[this.runtimeProvider]
         reasoningModel = providerModels.reasoning || ''
-        // Fallback to .coding for backward compatibility with old saved models
-        completionModel = providerModels.completion || providerModels.coding || ''
+        // Phase 3: Use helper with deprecation warning
+        completionModel = this.getCodingModelFromProvider(providerModels, this.runtimeProvider)
         valueModel = providerModels.value || ''
-        
-        // Log which key format is being used
-        if (providerModels.completion) {
-          this.log.appendLine(`[handleStartProxy] Using completion key for coding model`)
-        } else if (providerModels.coding) {
-          this.log.appendLine(`[handleStartProxy] Falling back to coding key (old format) for coding model`)
-        }
         
         this.log.appendLine(`[handleStartProxy] Found provider-specific models: reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`)
       } else {

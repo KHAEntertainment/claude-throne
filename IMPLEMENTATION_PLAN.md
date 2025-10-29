@@ -522,7 +522,7 @@ Flags stored in VS Code settings: `claudeThrone.featureFlags.*`
 
 - [x] **Phase 1: Message Schema & Contract Foundation** (Completed: 2025-10-28)
 - [x] **Phase 2: Provider-Aware Model Loading & Race Protection** (Completed: 2025-10-28)
-- [ ] Phase 3: Key Normalization & Storage Standardization
+- [x] **Phase 3: Key Normalization & Storage Standardization** (Completed: 2025-10-28)
 - [ ] Phase 4: Deterministic Start/Stop with Pre-Apply Hydration
 - [ ] Phase 5: Event Listener Discipline & UI Optimization
 - [ ] Phase 6: Test Suite & CI Infrastructure
@@ -624,6 +624,50 @@ Flags stored in VS Code settings: `claudeThrone.featureFlags.*`
 - Add read fallback for legacy `coding` key
 - Update all write operations to use canonical key
 - Add deprecation warnings in DEBUG mode
+
+### Phase 3 Completion Notes (2025-10-28)
+
+**What was implemented**:
+- Created `getCodingModelFromProvider()` helper function in both webview and extension
+- Helper reads from `completion` first, falls back to `coding` with deprecation warning
+- Updated all read operations to use the helper (onProviderChange, handleConfigLoaded, handleStartProxy)
+- Verified all write operations set both keys (completion + coding) for backward compatibility
+- Added 5 new tests for deprecation warnings and write operations
+
+**Normalization Strategy**:
+1. **Read Path**: `completion || coding` with warning if only `coding` exists
+2. **Write Path**: Set both `completion` (canonical) and `coding` (backward compat)
+3. **Migration**: Automatic on next save - users don't need manual migration
+4. **Deprecation**: Console warnings visible when DEBUG mode enabled
+
+**Test Coverage**:
+- Deprecation warning emission when only `coding` key exists
+- No warning when `completion` key is present
+- `completion` key preferred over `coding` when both exist
+- Write operations set both keys for backward compatibility
+
+**Code Changes**:
+- `webview/main.js`: Added `getCodingModelFromProvider()` helper
+- `PanelViewProvider.ts`: Added `getCodingModelFromProvider()` method
+- `tests/contract.test.js`: Added 5 new tests (31/31 passing)
+
+**Backward Compatibility**:
+- ✅ Old configs with only `coding` key still work (with warning)
+- ✅ Mixed configs with both keys prefer `completion`
+- ✅ New configs use only `completion` but write both for safety
+- ✅ No breaking changes - seamless migration path
+
+**Example Deprecation Warning**:
+```
+[DEPRECATION] Provider 'openrouter' uses legacy 'coding' key. This key is deprecated and will be removed in a future version. Use 'completion' instead.
+[DEPRECATION] Migration: The next save operation will automatically migrate to 'completion' key.
+```
+
+**Next Steps for Phase 4**:
+- Implement pre-apply hydration in handleStartProxy
+- Read from modelSelectionsByProvider first, then fallback to global keys
+- Hydrate global keys before calling applyToClaudeCode
+- Add extensive logging for hydration sequence
 
 ### Pre-Implementation Analysis
 

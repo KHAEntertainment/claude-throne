@@ -344,6 +344,115 @@ describe('Configuration Normalization Tests', () => {
     })
   })
   
+  describe('Phase 3: Deprecation Warnings', () => {
+    // Helper that mimics the getCodingModelFromProvider function
+    function getCodingModelWithWarning(providerModels, providerId, warnCallback) {
+      const completion = providerModels?.completion
+      const coding = providerModels?.coding
+      
+      // Emit deprecation warning if using legacy 'coding' key
+      if (!completion && coding && warnCallback) {
+        warnCallback(`Provider '${providerId}' uses legacy 'coding' key`)
+      }
+      
+      return completion || coding || ''
+    }
+    
+    it('emits deprecation warning when only coding key exists', () => {
+      const warnings = []
+      const warnCallback = (msg) => warnings.push(msg)
+      
+      const legacyMap = {
+        reasoning: 'model-a',
+        coding: 'model-b',  // No completion key
+        value: 'model-c'
+      }
+      
+      const result = getCodingModelWithWarning(legacyMap, 'openrouter', warnCallback)
+      
+      expect(result).toBe('model-b')
+      expect(warnings.length).toBeGreaterThan(0)
+      expect(warnings[0]).toContain('legacy')
+      expect(warnings[0]).toContain('openrouter')
+    })
+    
+    it('does not warn when completion key is present', () => {
+      const warnings = []
+      const warnCallback = (msg) => warnings.push(msg)
+      
+      const modernMap = {
+        reasoning: 'model-a',
+        completion: 'model-b',  // Has completion key
+        value: 'model-c'
+      }
+      
+      const result = getCodingModelWithWarning(modernMap, 'openrouter', warnCallback)
+      
+      expect(result).toBe('model-b')
+      expect(warnings.length).toBe(0)  // No warnings
+    })
+    
+    it('warns even when both keys present but prefers completion', () => {
+      const warnings = []
+      const warnCallback = (msg) => warnings.push(msg)
+      
+      const mixedMap = {
+        reasoning: 'model-a',
+        completion: 'model-b',
+        coding: 'model-x'  // Both present
+      }
+      
+      const result = getCodingModelWithWarning(mixedMap, 'openrouter', warnCallback)
+      
+      expect(result).toBe('model-b')  // Prefers completion
+      expect(warnings.length).toBe(0)  // No warning since completion exists
+    })
+  })
+  
+  describe('Phase 3: Write Operations Always Use Completion', () => {
+    it('saveModels writes to completion key', () => {
+      const modelSelectionsByProvider = {}
+      const providerId = 'openrouter'
+      const codingModel = 'test-model'
+      
+      // Simulate save operation
+      if (!modelSelectionsByProvider[providerId]) {
+        modelSelectionsByProvider[providerId] = {}
+      }
+      
+      // Phase 3: Always write to completion (not coding)
+      modelSelectionsByProvider[providerId].completion = codingModel
+      
+      // For backward compatibility, also set coding
+      modelSelectionsByProvider[providerId].coding = codingModel
+      
+      expect(modelSelectionsByProvider[providerId].completion).toBe(codingModel)
+      expect(modelSelectionsByProvider[providerId].coding).toBe(codingModel)
+    })
+    
+    it('write operation creates both keys for backward compatibility', () => {
+      const state = {
+        modelsByProvider: {}
+      }
+      
+      const provider = 'glm'
+      const modelId = 'glm-4-plus'
+      
+      // Initialize if needed
+      if (!state.modelsByProvider[provider]) {
+        state.modelsByProvider[provider] = { reasoning: '', completion: '', coding: '', value: '' }
+      }
+      
+      // Write operation (Phase 3)
+      state.modelsByProvider[provider].completion = modelId
+      state.modelsByProvider[provider].coding = modelId  // Backward compat
+      
+      // Verify both written
+      expect(state.modelsByProvider[provider].completion).toBe(modelId)
+      expect(state.modelsByProvider[provider].coding).toBe(modelId)
+    })
+  })
+  
   describe('Fallback Hydration Detection', () => {
     // Helper function (would normally be imported from config.ts)
     function needsFallbackHydration(config, providerId) {

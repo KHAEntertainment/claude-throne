@@ -37,6 +37,21 @@
     currentRequestToken: null // Token of the most recent model loading request
   };
 
+  // Phase 3: Helper function to get coding model with deprecation warning
+  function getCodingModelFromProvider(providerModels, providerName) {
+    const completion = providerModels.completion;
+    const coding = providerModels.coding;
+    
+    // Phase 3: Emit deprecation warning if using legacy 'coding' key
+    if (!completion && coding) {
+      console.warn(`[DEPRECATION] Provider '${providerName}' uses legacy 'coding' key. This key is deprecated and will be removed in a future version. Use 'completion' instead.`);
+      console.warn(`[DEPRECATION] Migration: The next save operation will automatically migrate to 'completion' key.`);
+    }
+    
+    // Return completion first, fallback to coding
+    return completion || coding || '';
+  }
+
   // Provider metadata
     const providers = {
         openrouter: {
@@ -333,8 +348,8 @@
     // Restore models for the new provider
     if (state.modelsByProvider[newProvider]) {
       state.reasoningModel = state.modelsByProvider[newProvider].reasoning || '';
-      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
-      state.codingModel = state.modelsByProvider[newProvider].completion || state.modelsByProvider[newProvider].coding || '';
+      // Phase 3: Use helper function with deprecation warning
+      state.codingModel = getCodingModelFromProvider(state.modelsByProvider[newProvider], newProvider);
       state.valueModel = state.modelsByProvider[newProvider].value || '';
     } else {
       state.reasoningModel = '';
@@ -1760,8 +1775,8 @@
     if (state.modelsByProvider[state.provider]) {
       const providerModels = state.modelsByProvider[state.provider];
       state.reasoningModel = providerModels.reasoning || '';
-      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
-      state.codingModel = providerModels.completion || providerModels.coding || '';
+      // Phase 3: Use helper function with deprecation warning
+      state.codingModel = getCodingModelFromProvider(providerModels, state.provider);
       state.valueModel = providerModels.value || '';
       
       // Validation: check if all models are empty for this provider
