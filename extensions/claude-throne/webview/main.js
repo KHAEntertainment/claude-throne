@@ -52,6 +52,24 @@
     return completion || coding || '';
   }
 
+  // Phase 5: Debounce helper to prevent excessive re-renders
+  function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
+
+  // Phase 5: Debounced render to prevent filter input flicker
+  const debouncedRenderModelList = debounce((searchTerm) => {
+    renderModelList(searchTerm);
+  }, 300);
+
   // Provider metadata
     const providers = {
         openrouter: {
@@ -1317,8 +1335,9 @@
     }
   }
 
+  // Phase 5: Use debounced render to prevent flicker during rapid typing
   function onModelSearch(e) {
-    renderModelList(e.target.value.toLowerCase());
+    debouncedRenderModelList(e.target.value.toLowerCase());
   }
 
   function renderModelList(searchTerm = '') {
@@ -1342,6 +1361,23 @@
     if (filtered.length === 0) {
       container.innerHTML = '<div class="empty-state">No models match your search</div>';
       return;
+    }
+
+    // Phase 5: Mark container for event delegation setup
+    if (!container.dataset.delegationSetup) {
+      // Phase 5: Event delegation - ONE listener for all model buttons
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.model-btn');
+        if (btn) {
+          const modelId = btn.dataset.model;
+          const type = btn.dataset.type;
+          if (modelId && type) {
+            setModelFromList(modelId, type);
+          }
+        }
+      });
+      container.dataset.delegationSetup = 'true';
+      console.log('[Phase 5] Event delegation setup for model buttons');
     }
 
     // Render model items
@@ -1387,15 +1423,8 @@
         </div>
       `;
     }).join('');
-
-    // Add click handlers to buttons
-    container.querySelectorAll('.model-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const modelId = e.currentTarget.dataset.model;
-        const type = e.currentTarget.dataset.type;
-        setModelFromList(modelId, type);
-      });
-    });
+    
+    // Phase 5: No individual button listeners needed - using event delegation above
   }
 
   // Popular Combos - Now handles both featured and saved combos
