@@ -222,9 +222,10 @@ export const ErrorMessageSchema = z.object({
   payload: z.union([
     z.string(),
     z.object({
-      provider: z.string(),
-      error: z.string(),
-      errorType: z.string(),
+      provider: z.string(),  // REQUIRED: Provider where error occurred
+      error: z.string(),     // Error message
+      errorType: z.string(), // Error category (timeout, connection, generic)
+      token: z.string().optional(),  // OPTIONAL: Sequence token for request matching
       canManuallyEnter: z.boolean().optional()
     })
   ])

@@ -8,7 +8,7 @@
 
   // State
   let state = {
-        provider: 'openrouter',
+    provider: 'openrouter',
     twoModelMode: false,
     reasoningModel: '',
     codingModel: '',
@@ -37,13 +37,60 @@
     requestTokenCounter: 0, // Incrementing counter for sequence tokens
     currentRequestToken: null, // Token of the most recent model loading request
     // Comment 19: Feature flags from config
-    featureFlags: {
-      enableSchemaValidation: true, // Default enabled
-      enableTokenValidation: true,
-      enableKeyNormalization: true,
-      enablePreApplyHydration: true
+  featureFlags: {
+    enableSchemaValidation: true, // Default enabled
+    enableTokenValidation: true,
+    enableKeyNormalization: true,
+    enablePreApplyHydration: true
+  },
+  // Comment 2: Error telemetry buffer
+  errorBuffer: [], // In-memory buffer of recent errors
+  maxErrorBufferSize: 10, // Keep last 10 errors
+  // Comment 3: Performance optimization for filtering
+  lastFilteredIds: null // Track last filtered model IDs to avoid unnecessary DOM work
+};
+
+  // Comment 2: Add error to telemetry buffer
+  function addErrorToBuffer(errorData) {
+    const errorEntry = {
+      timestamp: Date.now(),
+      ...errorData
+    };
+    
+    state.errorBuffer.push(errorEntry);
+    
+    // Keep buffer within size limit
+    if (state.errorBuffer.length > state.maxErrorBufferSize) {
+      state.errorBuffer.shift(); // Remove oldest entry
     }
-  };
+    
+    // Also log to console if debug mode is on (for easy troubleshooting)
+    const debugCheckbox = document.getElementById('debugCheckbox');
+    if (debugCheckbox && debugCheckbox.checked) {
+      console.group(`[Error Telemetry] ${errorData.type} for ${errorData.provider}`);
+      console.log('Error:', errorData.error);
+      console.log('Type:', errorData.errorType);
+      if (errorData.token) {
+        console.log('Token:', errorData.token);
+      }
+      console.log('Time:', new Date(errorEntry.timestamp).toISOString());
+      console.groupEnd();
+    }
+  }
+
+  // Comment 2: Display error buffer in debug mode
+  function displayErrorBuffer() {
+    const debugCheckbox = document.getElementById('debugCheckbox');
+    if (!debugCheckbox || !debugCheckbox.checked) {
+      return; // Debug mode off, don't display
+    }
+    
+    console.log('[Error Telemetry Buffer] Current state:', {
+      bufferSize: state.errorBuffer.length,
+      maxSize: state.maxErrorBufferSize,
+      errors: state.errorBuffer
+    });
+  }
 
   // Phase 3: Helper function to get coding model with deprecation warning
   function getCodingModelFromProvider(providerModels, providerName) {
@@ -447,32 +494,38 @@
   }
 
   // Provider handling
-    function onProviderChange(e) {
-    // Comment 16: Save current models for the old provider BEFORE changing state
-    if (state.provider && state.modelsByProvider[state.provider]) {
-      const oldProvider = state.provider;
-      state.modelsByProvider[oldProvider].reasoning = state.reasoningModel;
+  function onProviderChange(e) {
+    // Comment 1: Capture previous provider first
+    const previousProvider = state.provider;
+    
+    // Comment 1: Save current models for the old provider BEFORE changing state
+    if (previousProvider && state.modelsByProvider[previousProvider]) {
+      state.modelsByProvider[previousProvider].reasoning = state.reasoningModel;
       // Comment 5: Only write 'completion' key (canonical storage)
-      state.modelsByProvider[oldProvider].completion = state.codingModel;
-      state.modelsByProvider[oldProvider].value = state.valueModel;
+      state.modelsByProvider[previousProvider].completion = state.codingModel;
+      state.modelsByProvider[previousProvider].value = state.valueModel;
       
-      // Send save message for old provider before switching
+      // Comment 1: Post saveModels with old providerId BEFORE provider update
       vscode.postMessage({
         type: 'saveModels',
-        providerId: oldProvider,
+        providerId: previousProvider,
         reasoning: state.reasoningModel,
         completion: state.codingModel,
         value: state.valueModel
       });
     }
     
-    // Comment 7: Delete only the old provider's cache (already saved above)
-    const oldProvider = state.provider;
-    delete state.modelsCache[oldProvider];
-    
     const newProvider = e.target.value;
+    
+    // Comment 1: Delete only the old provider's cache
+    delete state.modelsCache[previousProvider];
+    
+    // Now update provider state
     state.provider = newProvider;
     state.models = [];
+    
+    // Comment 3: Reset filtered IDs when switching providers
+    state.lastFilteredIds = null;
     
     // Reset models and clear the visual list before loading
     renderModelList();
@@ -1468,6 +1521,8 @@
 
     if (state.models.length === 0) {
       container.innerHTML = '<div class="empty-state">No model(s) selected for this provider.</div>';
+      // Comment 3: Clear last filtered IDs when no models
+      state.lastFilteredIds = null;
       return;
     }
 
@@ -1482,8 +1537,26 @@
 
     if (filtered.length === 0) {
       container.innerHTML = '<div class="empty-state">No models match your search</div>';
+      // Comment 3: Update filtered IDs even for empty results
+      state.lastFilteredIds = [];
       return;
     }
+
+    // Comment 3: Performance optimization - compute filtered IDs and check if changed
+    const filteredIds = filtered.map(m => m.id).sort();
+    
+    // Compare with previous filtered IDs to avoid unnecessary DOM work
+    if (state.lastFilteredIds && 
+        state.lastFilteredIds.length === filteredIds.length &&
+        state.lastFilteredIds.every((id, index) => id === filteredIds[index])) {
+      // Filtered results unchanged - skip DOM update
+      console.log('[Comment 3] Skipping render - filtered IDs unchanged');
+      return;
+    }
+    
+    // Update tracked filtered IDs
+    state.lastFilteredIds = filteredIds;
+    console.log(`[Comment 3] Rendering ${filtered.length} models (filtered from ${state.models.length})`);
 
     // Phase 5: Mark container for event delegation setup
     if (!container.dataset.delegationSetup) {
@@ -1881,6 +1954,8 @@
       console.log('[handleConfigLoaded] Provider changed from', state.provider, 'to', effectiveProvider, '- clearing cache');
       state.models = [];
       state.modelsCache = {};
+      // Comment 3: Reset filtered IDs when clearing models
+      state.lastFilteredIds = null;
     } else {
       console.log('[handleConfigLoaded] Provider unchanged - preserving cache');
     }
@@ -1970,7 +2045,9 @@
     
     // Auto-hydrate provider map after fallback (preferred, webview)
     // Only auto-hydrate once per provider to prevent loops
-    if (!config.modelSelectionsByProvider?.[state.provider]?.reasoning && 
+    // Comment 4: Gate pre-apply hydration with feature flag
+    if (state.featureFlags.enablePreApplyHydration &&
+        !config.modelSelectionsByProvider?.[state.provider]?.reasoning && 
         (state.reasoningModel || state.codingModel || state.valueModel) &&
         !state.autoHydratedProviders.has(state.provider)) {
       state.autoHydratedProviders.add(state.provider);
@@ -1984,7 +2061,7 @@
         value: state.valueModel || ''
       });
       console.log('[handleConfigLoaded] Hydrated provider map from legacy keys via saveModels');
-    } else if (state.autoHydratedProviders.has(state.provider)) {
+    } else if (state.featureFlags.enablePreApplyHydration && state.autoHydratedProviders.has(state.provider)) {
       console.log(`[handleConfigLoaded] Skipping auto-hydration - provider ${state.provider} already hydrated`);
     }
     
@@ -2076,7 +2153,8 @@
     console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}, token: ${responseToken}, currentRequestToken: ${state.currentRequestToken}`);
     
     // Phase 2: Token validation - ignore late responses with mismatched tokens
-    if (responseToken && state.currentRequestToken && responseToken !== state.currentRequestToken) {
+    // Comment 4: Gate token validation with feature flag
+    if (state.featureFlags.enableTokenValidation && responseToken && state.currentRequestToken && responseToken !== state.currentRequestToken) {
       console.log(`[handleModelsLoaded] IGNORING late response - token mismatch (expected: ${state.currentRequestToken}, got: ${responseToken})`);
       return;
     }
@@ -2099,6 +2177,15 @@
   }
 
   function handleModelsError(payload) {
+    // Comment 2: Add error to telemetry buffer first
+    addErrorToBuffer({
+      type: 'modelsError',
+      provider: payload.provider || 'unknown',
+      error: typeof payload === 'string' ? payload : payload.error || 'Unknown error',
+      errorType: typeof payload === 'object' ? payload.errorType || 'unknown' : 'unknown',
+      token: payload.token || null
+    });
+    
     // Comment 11: Only render errors for the currently selected provider
     const errorProvider = payload.provider || state.provider;
     if (errorProvider !== state.provider) {
@@ -2229,6 +2316,15 @@
 
   function showError(message) {
     console.error('Error:', message);
+    
+    // Comment 2: Add to error buffer for telemetry
+    addErrorToBuffer({
+      type: 'proxyError',
+      provider: state.provider,
+      error: typeof message === 'string' ? message : JSON.stringify(message),
+      errorType: 'proxy'
+    });
+    
     // Could add a toast notification here
   }
 })();

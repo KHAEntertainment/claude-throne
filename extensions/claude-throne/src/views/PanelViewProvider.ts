@@ -100,7 +100,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private post(message: unknown): boolean {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const featureFlags = cfg.get<any>('featureFlags', {})
-    const enableValidation = featureFlags.enableSchemaValidation !== false // Default to enabled
+    const enableValidation = (featureFlags.enableSchemaValidation !== false && featureFlags.enableSchemaValidation !== undefined) ? true : false // Default to enabled
     
     if (!enableValidation) {
       // Feature flag disabled - bypass validation
@@ -606,7 +606,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           provider,
           error: errorMessage,
           errorType,
-          canManuallyEnter: true // Enable manual entry for all providers on errors
+          canManuallyEnter: true, // Enable manual entry for all providers on errors
+          token: requestToken // Include sequence token for error tracking
         }
       })
     }
@@ -1164,7 +1165,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         vscode.window.showWarningMessage(errorMsg)
         this.post({ 
           type: 'proxyError', 
-          payload: errorMsg
+          payload: {
+            provider: this.runtimeProvider || 'openrouter',
+            error: errorMsg,
+            errorType: 'config'
+          }
         })
         return
       }
@@ -1175,7 +1180,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         vscode.window.showWarningMessage(errorMsg)
         this.post({ 
           type: 'proxyError', 
-          payload: errorMsg
+          payload: {
+            provider: this.runtimeProvider || 'openrouter',
+            error: errorMsg,
+            errorType: 'config'
+          }
         })
         return
       }
@@ -1186,7 +1195,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         vscode.window.showWarningMessage(errorMsg)
         this.post({ 
           type: 'proxyError', 
-          payload: errorMsg
+          payload: {
+            provider: this.runtimeProvider || 'openrouter',
+            error: errorMsg,
+            errorType: 'config'
+          }
         })
         return
       }
@@ -1207,7 +1220,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           vscode.window.showWarningMessage(errorMsg)
           this.post({ 
             type: 'proxyError', 
-            payload: errorMsg
+            payload: {
+              provider: this.runtimeProvider || 'openrouter',
+              error: errorMsg,
+              errorType: 'stale-models'
+            }
           })
           return
         }
@@ -1292,9 +1309,25 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[handleStartProxy] Error: ${err}`)
       console.error('Failed to start proxy:', err)
       vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
+      
+      // Map error to specific errorType
+      let errorType = 'startup'
+      const errorStr = String(err)
+      if (errorStr.includes('EADDRINUSE') || errorStr.includes('port')) {
+        errorType = 'port-in-use'
+      } else if (errorStr.includes('permission') || errorStr.includes('EACCES')) {
+        errorType = 'permission'
+      } else if (errorStr.includes('timeout') || errorStr.includes('timed out')) {
+        errorType = 'timeout'
+      }
+      
       this.post({ 
         type: 'proxyError', 
-        payload: String(err)
+        payload: {
+          provider: this.runtimeProvider || 'openrouter',
+          error: errorStr,
+          errorType
+        }
       })
     }
   }
