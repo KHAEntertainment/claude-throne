@@ -215,20 +215,25 @@ export const CustomProvidersLoadedMessageSchema = z.object({
 export type CustomProvidersLoadedMessage = z.infer<typeof CustomProvidersLoadedMessageSchema>
 
 /**
+ * Error message payload schema (structured format)
+ * Comment 1: Unified error payload structure with provider, error, errorType, and optional token
+ */
+export const ErrorMessagePayloadSchema = z.object({
+  provider: z.string(),  // REQUIRED: Provider where error occurred
+  error: z.string(),     // Error message
+  errorType: z.string(), // Error category (timeout, rate_limited, upstream_error, connection, config, generic)
+  token: z.string().optional(),  // OPTIONAL: Sequence token for request matching
+  traceId: z.string().optional(),  // OPTIONAL: Trace ID for DEBUG mode tracking
+  canManuallyEnter: z.boolean().optional()  // OPTIONAL: Whether manual entry is available
+})
+
+/**
  * Error message
+ * Comment 1: Always use structured payload format (never plain strings)
  */
 export const ErrorMessageSchema = z.object({
   type: z.union([z.literal('proxyError'), z.literal('modelsError')]),
-  payload: z.union([
-    z.string(),
-    z.object({
-      provider: z.string(),  // REQUIRED: Provider where error occurred
-      error: z.string(),     // Error message
-      errorType: z.string(), // Error category (timeout, connection, generic)
-      token: z.string().optional(),  // OPTIONAL: Sequence token for request matching
-      canManuallyEnter: z.boolean().optional()
-    })
-  ])
+  payload: ErrorMessagePayloadSchema  // Always structured, never plain string
 })
 
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>

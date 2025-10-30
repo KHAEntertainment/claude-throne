@@ -91,7 +91,7 @@ describe('Message Contract Tests', () => {
       type: z.literal('saveModels'),
       providerId: z.string(),
       reasoning: z.string(),
-      coding: z.string(),
+      completion: z.string(),  // Canonical key (legacy 'coding' deprecated)
       value: z.string()
     })
     
@@ -100,7 +100,7 @@ describe('Message Contract Tests', () => {
         type: 'saveModels',
         providerId: 'openrouter',
         reasoning: 'model-a',
-        coding: 'model-b',
+        completion: 'model-b',
         value: 'model-c'
       }
       
@@ -112,7 +112,7 @@ describe('Message Contract Tests', () => {
         type: 'saveModels',
         // missing providerId
         reasoning: 'model-a',
-        coding: 'model-b',
+        completion: 'model-b',
         value: 'model-c'
       }
       
@@ -124,7 +124,7 @@ describe('Message Contract Tests', () => {
         type: 'saveModels',
         providerId: '',  // empty string
         reasoning: 'model-a',
-        coding: 'model-b',
+        completion: 'model-b',
         value: 'model-c'
       }
       
@@ -132,6 +132,18 @@ describe('Message Contract Tests', () => {
       // This test documents the expected behavior
       const result = SaveModelsSchema.safeParse(invalidMessage)
       expect(result.success).toBe(true)  // Currently passes, should fail with minLength
+    })
+    
+    it('rejects saveModels with legacy coding key', () => {
+      const invalidMessage = {
+        type: 'saveModels',
+        providerId: 'openrouter',
+        reasoning: 'model-a',
+        coding: 'model-b',  // Legacy key - should be rejected
+        value: 'model-c'
+      }
+      
+      expect(() => SaveModelsSchema.parse(invalidMessage)).toThrow()
     })
   })
   

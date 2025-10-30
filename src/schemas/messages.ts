@@ -212,19 +212,24 @@ export const CustomProvidersLoadedMessageSchema = z.object({
 export type CustomProvidersLoadedMessage = z.infer<typeof CustomProvidersLoadedMessageSchema>
 
 /**
+ * Error message payload schema (structured format)
+ */
+export const ErrorMessagePayloadSchema = z.object({
+  provider: z.string(),  // REQUIRED: Provider where error occurred
+  error: z.string(),     // Error message
+  errorType: z.string(), // Error category (timeout, rate_limited, upstream_error, connection, config, generic)
+  token: z.string().optional(),  // OPTIONAL: Sequence token for request matching
+  traceId: z.string().optional(),  // OPTIONAL: Trace ID for DEBUG mode tracking
+  canManuallyEnter: z.boolean().optional()  // OPTIONAL: Whether manual entry is available
+})
+
+/**
  * Error message
+ * Always use structured payload format (never plain strings)
  */
 export const ErrorMessageSchema = z.object({
   type: z.literal('proxyError').or(z.literal('modelsError')),
-  payload: z.union([
-    z.string(),
-    z.object({
-      provider: z.string(),
-      error: z.string(),
-      errorType: z.string(),
-      canManuallyEnter: z.boolean().optional()
-    })
-  ])
+  payload: ErrorMessagePayloadSchema  // Always structured, never plain string
 })
 
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>
@@ -262,12 +267,13 @@ export type RequestModelsMessage = z.infer<typeof RequestModelsMessageSchema>
 
 /**
  * Save models message (must include providerId)
+ * Only accepts 'completion' key (canonical storage) - legacy 'coding' deprecated
  */
 export const SaveModelsMessageSchema = z.object({
   type: z.literal('saveModels'),
   providerId: z.string(),  // REQUIRED: Avoid ambiguity and races
   reasoning: z.string(),
-  coding: z.string(),  // Will be normalized to 'completion' on storage
+  completion: z.string(),  // Canonical key for coding/completion model
   value: z.string()
 })
 

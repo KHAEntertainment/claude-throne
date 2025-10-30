@@ -10,22 +10,64 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
   private currentProvider: string = 'openrouter' // Runtime source of truth for current provider selection
   private modelsCache: Map<string, { models: any[], timestamp: number }> = new Map()
+  // Comment 4: Sequence token tracking for race protection
+  private sequenceTokenCounter: number = 0
+  private currentSequenceToken: number | null = null
+  // Comment 6: Trace ID for provider flows (DEBUG mode only)
+  private currentTraceId: string | null = null
+
+  /**
+   * Comment 3: Normalize provider map to canonical keys { reasoning, completion, value }
+   * Remaps any incoming provider model objects to the canonical format
+   * Adds runtime assertion in development to fail fast if unexpected keys are present
+   */
+  private normalizeProviderMap(providerModels: any, providerId: string): {
+    reasoning: string
+    completion: string
+    value: string
+  } {
+    if (!providerModels || typeof providerModels !== 'object') {
+      return { reasoning: '', completion: '', value: '' }
+    }
+    
+    // Comment 3: Runtime assertion in development to fail fast if unexpected keys are present
+    const canonicalKeys = ['reasoning', 'completion', 'value']
+    const legacyKeys = ['coding'] // Legacy key that we still accept but normalize
+    const allowedKeys = [...canonicalKeys, ...legacyKeys]
+    const unexpectedKeys = Object.keys(providerModels).filter(
+      key => !allowedKeys.includes(key) && providerModels[key] !== undefined && providerModels[key] !== null
+    )
+    
+    if (unexpectedKeys.length > 0 && process.env.NODE_ENV !== 'production') {
+      const warning = `[Provider Map Validation] Provider '${providerId}' has unexpected keys: ${unexpectedKeys.join(', ')}. Expected only: ${canonicalKeys.join(', ')}`
+      this.log.appendLine(warning)
+      console.warn(warning)
+    }
+    
+    // Normalize to canonical keys
+    const normalized = {
+      reasoning: String(providerModels.reasoning || ''),
+      completion: String(providerModels.completion || providerModels.coding || ''), // Fallback to legacy 'coding'
+      value: String(providerModels.value || '')
+    }
+    
+    // Emit deprecation warning if using legacy 'coding' key
+    if (!providerModels.completion && providerModels.coding) {
+      this.log.appendLine(`[DEPRECATION] Provider '${providerId}' uses legacy 'coding' key. Migrating to 'completion' on next save.`)
+    }
+    
+    return normalized
+  }
 
   /**
    * Phase 3: Helper to get completion model with deprecation warning
    * Reads from 'completion' key first, falls back to legacy 'coding' key
    * Emits deprecation warning when falling back to 'coding'
+   * @deprecated Use normalizeProviderMap instead for full normalization
    */
   private getCodingModelFromProvider(providerModels: any, providerId: string): string {
-    const completion = providerModels?.completion
-    const coding = providerModels?.coding
-    
-    // Phase 3: Emit deprecation warning if using legacy 'coding' key
-    if (!completion && coding) {
-      this.log.appendLine(`[DEPRECATION] Provider '${providerId}' uses legacy 'coding' key. Migrating to 'completion' on next save.`)
-    }
-    
-    return completion || coding || ''
+    const normalized = this.normalizeProviderMap(providerModels, providerId)
+    return normalized.completion
   }
 
   /**
@@ -182,6 +224,26 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       this.log.appendLine(`📨 Received message from webview: ${msg.type}`)
+      
+      // Comment 8: Validate incoming messages against schemas
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const featureFlags = cfg.get<any>('featureFlags', {})
+      const enableValidation = (featureFlags.enableSchemaValidation !== false && featureFlags.enableSchemaValidation !== undefined) ? true : false
+      
+      if (enableValidation) {
+        const validated = safeValidateMessage(msg, 'toExtension', (validationMsg) => {
+          this.log.appendLine(`[Schema Validation] ${validationMsg}`)
+        })
+        
+        if (validated === null) {
+          this.log.appendLine(`[Schema Validation] REJECTED invalid message from webview: ${JSON.stringify(msg)}`)
+          return // Don't process invalid messages
+        }
+        
+        // Use validated message
+        msg = validated as any
+      }
+      
       try {
         switch (msg.type) {
           case 'webviewReady':
@@ -318,9 +380,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     let valueModel = ''
     
     if (modelSelectionsByProvider[this.runtimeProvider]) {
-      reasoningModel = String(modelSelectionsByProvider[this.runtimeProvider].reasoning || '')
-      completionModel = String(modelSelectionsByProvider[this.runtimeProvider].completion || '')
-      valueModel = String(modelSelectionsByProvider[this.runtimeProvider].value || '')
+      // Comment 3: Normalize provider map before reading
+      const normalized = this.normalizeProviderMap(modelSelectionsByProvider[this.runtimeProvider], this.runtimeProvider)
+      reasoningModel = normalized.reasoning
+      completionModel = normalized.completion
+      valueModel = normalized.value
     }
     
     // Fallback to global keys if provider-specific not found
@@ -468,29 +532,48 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const CACHE_TTL_MS = 5 * 60 * 1000
     const cached = this.modelsCache.get(provider)
     
+    // Comment 2: Generate sequence token for postModels to ensure validation uniform
+    this.sequenceTokenCounter++
+    const sequenceToken = `seq-${this.sequenceTokenCounter}`
+    this.currentSequenceToken = this.sequenceTokenCounter
+    
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       this.post({ 
         type: 'models', 
-        payload: { models: cached.models, provider } 
+        payload: { models: cached.models, provider, token: sequenceToken } 
       })
     } else {
-      this.post({ type: 'models', payload: { models: [], provider } })
+      this.post({ type: 'models', payload: { models: [], provider, token: sequenceToken } })
     }
   }
 
   private async handleListModels(freeOnly: boolean, requestToken?: string) {
     // Use runtimeProvider for UI operations - this represents the actual provider being used
     const provider = this.runtimeProvider || 'openrouter'
-    this.log.appendLine(`📋 Loading models for provider: ${provider}${requestToken ? `, token: ${requestToken}` : ''}`)
+    
+    // Comment 4: Generate sequence token if not provided, increment counter
+    let sequenceToken: string
+    if (requestToken) {
+      sequenceToken = requestToken
+    } else {
+      this.sequenceTokenCounter++
+      sequenceToken = `seq-${this.sequenceTokenCounter}`
+    }
+    this.currentSequenceToken = this.sequenceTokenCounter
+    
+    // Comment 6: Include trace ID in logs (DEBUG mode only)
+    const traceInfo = this.currentTraceId ? ` [Trace ${this.currentTraceId}]` : ''
+    this.log.appendLine(`📋 Loading models for provider: ${provider}, sequence token: ${sequenceToken}${traceInfo}`)
     
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     
     if (provider === 'custom') {
       const baseUrl = cfg.get<string>('customBaseUrl', '')
       if (!baseUrl || !baseUrl.trim()) {
+        // Comment 2: Use sequenceToken instead of requestToken for consistent validation
         this.post({ 
           type: 'models', 
-          payload: { models: [], provider, token: requestToken } 
+          payload: { models: [], provider, token: sequenceToken } 
         })
         return
       }
@@ -501,6 +584,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       if ((endpointKind === 'anthropic' && isAnthropic) || (endpointKind === 'auto' && isAnthropic)) {
         // Bypass model loading for anthropic endpoints - use native model discovery
+        // Comment 2: Use sequenceToken instead of requestToken for consistent validation
         this.post({ 
           type: 'models', 
           payload: { 
@@ -511,7 +595,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               provider: provider
             }],
             provider,
-            token: requestToken
+            token: sequenceToken
           }
         })
         return;
@@ -522,13 +606,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cached = this.modelsCache.get(provider)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       this.log.appendLine(`📦 Using cached models for ${provider}`)
+      // Comment 2: Use sequenceToken instead of requestToken for consistent validation
       this.post({ 
         type: 'models', 
         payload: {
           models: cached.models,
           provider,
           freeOnly,
-          token: requestToken
+          token: sequenceToken
         }
       })
       return
@@ -573,32 +658,61 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         provider
       }))
       
+      // Comment 4: Check if this response is still valid (sequence token hasn't advanced)
+      const responseSequenceNum = sequenceToken.startsWith('seq-') 
+        ? parseInt(sequenceToken.replace('seq-', ''), 10) 
+        : null
+      
+      if (responseSequenceNum !== null && this.currentSequenceToken !== null && responseSequenceNum < this.currentSequenceToken) {
+        this.log.appendLine(`[handleListModels] DISCARDING late response - sequence token ${sequenceToken} is older than current ${this.currentSequenceToken}`)
+        return // Discard late response
+      }
+      
       this.modelsCache.set(provider, { models, timestamp: Date.now() })
       
-      this.log.appendLine(`📤 Sending ${models.length} models to webview`)
+      this.log.appendLine(`📤 Sending ${models.length} models to webview with sequence token: ${sequenceToken}`)
       this.post({ 
         type: 'models', 
         payload: {
           models,
           provider,
           freeOnly,
-          token: requestToken
+          token: sequenceToken // Comment 4: Include sequence token for validation
         }
       })
     } catch (err: any) {
       this.log.appendLine(`❌ Failed to load models: ${err}`)
       
-      // Send specific error for timeout or connection issues
-      let errorMessage = `Failed to load models: ${err}`
-      let errorType = 'generic'
+      // Comment 2: Classify errors by type and set appropriate errorType
+      // Comment 3: Check for errorType from Models.ts first (timeout classification)
+      let errorMessage = `Failed to load models: ${err.message || err}`
+      let errorType = err.errorType || 'generic'
       
-      if (err.message?.includes('timed out')) {
-        errorType = 'timeout'
-        errorMessage = 'Model list request timed out. You can enter model IDs manually.'
-      } else if (err.message?.includes('ECONNREFUSED') || err.message?.includes('ENOTFOUND')) {
-        errorType = 'connection'
-        errorMessage = 'Could not connect to the API endpoint. Please check your URL and enter model IDs manually.'
+      const errorStr = String(err.message || err).toLowerCase()
+      
+      // Comment 3: If errorType already set (e.g., from Models.ts timeout), use it; otherwise classify
+      if (errorType === 'generic') {
+        if (errorStr.includes('timed out') || errorStr.includes('timeout') || err.name === 'AbortError') {
+          errorType = 'timeout'
+          errorMessage = 'Model list request timed out. You can enter model IDs manually.'
+        } else if (errorStr.includes('429') || errorStr.includes('rate limit')) {
+          errorType = 'rate_limited'
+          errorMessage = 'Rate limited by API. Please try again in a moment or enter model IDs manually.'
+        } else if (errorStr.includes('50') || errorStr.includes('server error')) {
+          errorType = 'upstream_error'
+          errorMessage = 'API server error. Please try again or enter model IDs manually.'
+        } else if (errorStr.includes('econnrefused') || errorStr.includes('enotfound') || errorStr.includes('econnreset')) {
+          errorType = 'connection'
+          errorMessage = 'Could not connect to the API endpoint. Please check your URL and enter model IDs manually.'
+        }
+      } else if (errorType === 'timeout') {
+        // Comment 3: Use error message from Models.ts if it's a timeout
+        errorMessage = err.message || 'Model list request timed out. You can enter model IDs manually.'
       }
+      
+      // Comment 6: Include trace ID in error payload (DEBUG mode only)
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const debug = cfg.get<boolean>('proxy.debug', false)
       
       this.post({ 
         type: 'modelsError', 
@@ -607,7 +721,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           error: errorMessage,
           errorType,
           canManuallyEnter: true, // Enable manual entry for all providers on errors
-          token: requestToken // Include sequence token for error tracking
+          token: sequenceToken, // Include sequence token for error tracking
+          ...(debug && this.currentTraceId ? { traceId: this.currentTraceId } : {}) // Comment 6: Add trace ID in DEBUG mode
         }
       })
     }
@@ -684,18 +799,37 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleUpdateProvider(provider: string) {
-    // Capture the old provider first, then clear its cache before changing
+    // Comment 5: Capture the old provider first, then clear its cache before changing
     const oldProvider = this.currentProvider
     this.modelsCache.delete(oldProvider)
+    this.log.appendLine(`[handleUpdateProvider] Cleared cache for previous provider: ${oldProvider}`)
+    
+    // Comment 5: Reset sequence token counter on provider switch to ensure clean state
+    this.sequenceTokenCounter = 0
+    this.currentSequenceToken = null
+    
+    // Comment 6: Generate trace ID for provider flow (DEBUG mode only)
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const debug = cfg.get<boolean>('proxy.debug', false)
+    if (debug) {
+      this.currentTraceId = `trace-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`
+      this.log.appendLine(`[Trace ${this.currentTraceId}] Provider switch: ${oldProvider} → ${provider}`)
+    } else {
+      this.currentTraceId = null
+    }
     
     // Store current provider for model loading
     this.currentProvider = provider
-    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    
+    // Comment 2: Generate sequence token for immediate empty list after provider switch
+    this.sequenceTokenCounter++
+    const sequenceToken = `seq-${this.sequenceTokenCounter}`
+    this.currentSequenceToken = this.sequenceTokenCounter
     
     // Clear the webview with an empty list immediately after switching to prevent stale renders
     this.post({ 
       type: 'models', 
-      payload: { models: [], provider } 
+      payload: { models: [], provider, token: sequenceToken } 
     })
     
     try {
@@ -1084,11 +1218,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[handleStartProxy] Full modelSelectionsByProvider: ${JSON.stringify(modelSelectionsByProvider)}`)
       
       if (modelSelectionsByProvider[this.runtimeProvider]) {
-        const providerModels = modelSelectionsByProvider[this.runtimeProvider]
-        reasoningModel = providerModels.reasoning || ''
-        // Phase 3: Use helper with deprecation warning
-        completionModel = this.getCodingModelFromProvider(providerModels, this.runtimeProvider)
-        valueModel = providerModels.value || ''
+        // Comment 3: Normalize provider map before reading
+        const normalized = this.normalizeProviderMap(modelSelectionsByProvider[this.runtimeProvider], this.runtimeProvider)
+        reasoningModel = normalized.reasoning
+        completionModel = normalized.completion
+        valueModel = normalized.value
         
         this.log.appendLine(`[handleStartProxy] Found provider-specific models: reasoning=${reasoningModel}, completion=${completionModel}, value=${valueModel}`)
       } else {
@@ -1310,23 +1444,34 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       console.error('Failed to start proxy:', err)
       vscode.window.showErrorMessage(`Failed to start proxy: ${err}`)
       
-      // Map error to specific errorType
+      // Comment 2: Map error to specific errorType (timeout, rate_limited, upstream_error, etc.)
       let errorType = 'startup'
-      const errorStr = String(err)
-      if (errorStr.includes('EADDRINUSE') || errorStr.includes('port')) {
+      const errorStr = String(err).toLowerCase()
+      if (errorStr.includes('eaddrinuse') || errorStr.includes('port')) {
         errorType = 'port-in-use'
-      } else if (errorStr.includes('permission') || errorStr.includes('EACCES')) {
+      } else if (errorStr.includes('permission') || errorStr.includes('eacces')) {
         errorType = 'permission'
-      } else if (errorStr.includes('timeout') || errorStr.includes('timed out')) {
+      } else if (errorStr.includes('timeout') || errorStr.includes('timed out') || errorStr.includes('abort')) {
         errorType = 'timeout'
+      } else if (errorStr.includes('429') || errorStr.includes('rate limit')) {
+        errorType = 'rate_limited'
+      } else if (errorStr.includes('50') || errorStr.includes('server error')) {
+        errorType = 'upstream_error'
+      } else if (errorStr.includes('econnrefused') || errorStr.includes('enotfound')) {
+        errorType = 'connection'
       }
+      
+      // Comment 6: Include trace ID in error payload (DEBUG mode only)
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const debug = cfg.get<boolean>('proxy.debug', false)
       
       this.post({ 
         type: 'proxyError', 
         payload: {
           provider: this.runtimeProvider || 'openrouter',
-          error: errorStr,
-          errorType
+          error: String(err),
+          errorType,
+          ...(debug && this.currentTraceId ? { traceId: this.currentTraceId } : {}) // Comment 6: Add trace ID in DEBUG mode
         }
       })
     }
@@ -1429,12 +1574,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           modelSelectionsByProvider[providerId] = {}
         }
         
-        modelSelectionsByProvider[providerId].reasoning = reasoning
-        // Comment 5: Only write 'completion' key (canonical storage)
-        modelSelectionsByProvider[providerId].completion = completion
-        modelSelectionsByProvider[providerId].value = value
+        // Comment 3: Normalize before persisting - ensure canonical keys only
+        const toSave = { reasoning, completion, value }
+        const normalized = this.normalizeProviderMap(toSave, providerId)
         
-        // Comment 5: Migration - remove legacy 'coding' key if it exists
+        modelSelectionsByProvider[providerId].reasoning = normalized.reasoning
+        modelSelectionsByProvider[providerId].completion = normalized.completion
+        modelSelectionsByProvider[providerId].value = normalized.value
+        
+        // Comment 3: Migration - remove legacy 'coding' key if it exists
         if (modelSelectionsByProvider[providerId].coding !== undefined) {
           delete modelSelectionsByProvider[providerId].coding
           this.log.appendLine(`[handleSaveModels] Removed legacy 'coding' key from provider ${providerId}`)
@@ -1555,21 +1703,27 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         modelSelectionsByProvider[this.runtimeProvider] = {}
       }
       
+      // Comment 3: Normalize existing map before updating
+      const existingNormalized = this.normalizeProviderMap(modelSelectionsByProvider[this.runtimeProvider], this.runtimeProvider)
+      
       if (modelType === 'reasoning') {
         // Update both provider-specific and global configs
-        modelSelectionsByProvider[this.runtimeProvider].reasoning = modelId
+        existingNormalized.reasoning = modelId
+        modelSelectionsByProvider[this.runtimeProvider] = existingNormalized
         await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
         await cfg.update('reasoningModel', modelId, target)
         this.log.appendLine(`[handleSetModelFromList] Saved reasoning model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
       } else if (modelType === 'coding') {
-        // Update both provider-specific and global configs
-        modelSelectionsByProvider[this.runtimeProvider].completion = modelId
+        // Comment 3: Map 'coding' to 'completion' canonical key
+        existingNormalized.completion = modelId
+        modelSelectionsByProvider[this.runtimeProvider] = existingNormalized
         await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
         await cfg.update('completionModel', modelId, target)
         this.log.appendLine(`[handleSetModelFromList] Saved coding model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
       } else if (modelType === 'value') {
         // Update both provider-specific and global configs
-        modelSelectionsByProvider[this.runtimeProvider].value = modelId
+        existingNormalized.value = modelId
+        modelSelectionsByProvider[this.runtimeProvider] = existingNormalized
         await cfg.update('modelSelectionsByProvider', modelSelectionsByProvider, target)
         await cfg.update('valueModel', modelId, target)
         this.log.appendLine(`[handleSetModelFromList] Saved value model: ${modelId} to ${vscode.ConfigurationTarget[target]}`)
