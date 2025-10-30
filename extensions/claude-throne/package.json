@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.43",
+  "version": "1.5.45",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -301,6 +301,16 @@
           "type": "object",
           "default": {},
           "markdownDescription": "Manual endpoint type overrides per URL (internal use)."
+        },
+        "claudeThrone.claudeCode.apiTimeoutMs": {
+          "type": "number",
+          "default": 3000000,
+          "markdownDescription": "## Claude Code Environment Variables\n\nAPI timeout in milliseconds for Claude Code requests. Default: 3000000 (50 minutes)."
+        },
+        "claudeThrone.claudeCode.disableNonessentialTraffic": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Disable non-essential traffic in Claude Code. When enabled, sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in `.claude/settings.json`."
         }
       }
     }
