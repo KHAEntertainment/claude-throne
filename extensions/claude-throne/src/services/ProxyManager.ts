@@ -2,6 +2,7 @@ import * as vscode from 'vscode'
 import * as cp from 'node:child_process'
 import * as path from 'node:path'
 import { SecretsService } from './Secrets'
+import { redactSecrets } from '../../../../utils/redaction.js'
 
 export interface ProxyStartOptions {
   provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom' | string
@@ -212,37 +213,6 @@ export class ProxyManager {
     
     const pid = this.proc.pid
     this.log.appendLine(`[ProxyManager] Proxy process spawned with PID: ${pid}`)
-
-    // Comment 10: Redaction helper - matches patterns from shared utils/redaction.js
-    // Note: This is TypeScript, so keeping inline implementation that matches shared utility patterns
-    const redactSecrets = (text: string): string => {
-      if (!text || typeof text !== 'string') return text
-      
-      // Patterns that might indicate secrets (matches utils/redaction.js)
-      const secretPatterns = [
-        /(api[_-]?key|apikey)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
-        /(authorization|bearer)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
-        /(x-api-key)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
-        /(token|secret|password)\s*[:=]\s*["']?([a-zA-Z0-9_-]{16,})["']?/gi,
-        // JSON body patterns
-        /"api[_-]?key"\s*:\s*"([^"]{20,})"/gi,
-        /"authorization"\s*:\s*"([^"]{20,})"/gi,
-        /"token"\s*:\s*"([^"]{16,})"/gi,
-      ]
-      
-      let redacted = text
-      for (const pattern of secretPatterns) {
-        redacted = redacted.replace(pattern, (match, key, value) => {
-          const secretValue = value || (match.match(/["']([^"']{16,})["']/) || [])[1]
-          if (secretValue && secretValue.length > 16) {
-            return match.replace(secretValue, '[REDACTED]')
-          }
-          return match
-        })
-      }
-      
-      return redacted
-    }
     
     const shouldRedact = opts.debug || vscode.workspace.getConfiguration('claudeThrone').get<boolean>('proxy.debug', false)
     

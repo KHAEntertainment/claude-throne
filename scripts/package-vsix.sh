@@ -68,6 +68,7 @@ VSIX_FILE="${NEW_VSIX[0]}"
 VSIX_BASENAME=$(basename "$VSIX_FILE")
 EXPECTED_PATH="$EXT_DIR/$VSIX_BASENAME"
 
+# Verify VSIX is in the extension directory (defensive check for build tool changes)
 if [[ "$VSIX_FILE" != "$EXPECTED_PATH" ]]; then
   echo "Moving VSIX to correct location: $VSIX_FILE -> $EXPECTED_PATH"
   mv "$VSIX_FILE" "$EXPECTED_PATH"

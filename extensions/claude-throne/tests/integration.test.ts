@@ -1,10 +1,6 @@
-import * as vscode from 'vscode'
-import { PanelViewProvider } from '../src/views/PanelViewProvider'
-import { SecretsService } from '../src/services/Secrets'
-import { ProxyManager } from '../src/services/ProxyManager'
 import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from 'vitest'
 
-// Mock VS Code API before importing the extension
+// Mock VS Code API before importing the extension - use virtual: true for Vitest
 vi.mock('vscode', () => ({
   // Basic VS Code types
   TreeItem: class {},
@@ -72,7 +68,12 @@ vi.mock('vscode', () => ({
     delete = vi.fn()
     onDidChange = vi.fn()
   }
-}))
+}), { virtual: true })
+
+import * as vscode from 'vscode'
+import { PanelViewProvider } from '../src/views/PanelViewProvider'
+import { SecretsService } from '../src/services/Secrets'
+import { ProxyManager } from '../src/services/ProxyManager'
 
 // Helper functions to create mocks
 function createMockOutputChannel() {
@@ -235,24 +236,22 @@ describe('Extension Integration Tests', () => {
       // Mock applyToClaudeCode command
       vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined)
 
-      // Set a provider with models in the configuration
-      const originalHandleStartProxy = provider['handleStartProxy'].bind(provider)
-      
-      // Override to test hydration
-      vi.spyOn(provider as any, 'handleStartProxy').mockImplementation(async () => {
-        const hydrationSuccess = await (provider as any).hydrateGlobalKeysFromProvider(
-          'openrouter',
-          'claude-3.5-sonnet',
-          'claude-3.5-haiku',
-          'claude-3-opus',
-          true
-        )
-        expect(hydrationSuccess).toBe(true)
-      })
+      // Spy on hydrateGlobalKeysFromProvider to control return value and verify it's called
+      const hydrateSpy = vi.spyOn(provider as any, 'hydrateGlobalKeysFromProvider').mockResolvedValue(true)
 
+      // Call the real handleStartProxy method
       await provider['handleStartProxy']()
 
-      // Verify hydration was called by checking the mock
+      // Verify hydration was called with correct parameters
+      expect(hydrateSpy).toHaveBeenCalledWith(
+        'openrouter',
+        'claude-3.5-sonnet',
+        'claude-3.5-haiku',
+        'claude-3-opus',
+        true
+      )
+
+      // Verify applyToClaudeCode command was invoked
       expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledWith('claudeThrone.applyToClaudeCode')
     })
 

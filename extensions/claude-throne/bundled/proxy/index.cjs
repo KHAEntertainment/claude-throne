@@ -34066,6 +34066,44 @@ data: ${JSON.stringify(data)}
     reply.raw.flush();
   }
 };
+async function handleStreamingUpstreamError(reply, upstreamResponse) {
+  reply.raw.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive"
+  });
+  let errorBody = "";
+  try {
+    const reader2 = upstreamResponse.body?.getReader();
+    if (reader2) {
+      const decoder2 = new import_util.TextDecoder("utf-8");
+      let done2 = false;
+      let bodyLength = 0;
+      while (!done2 && bodyLength < 1e3) {
+        const { value, done: doneReading } = await reader2.read();
+        done2 = doneReading;
+        if (value) {
+          const chunk = decoder2.decode(value, { stream: true });
+          errorBody += chunk;
+          bodyLength += chunk.length;
+          if (bodyLength >= 1e3) break;
+        }
+      }
+    }
+  } catch (err) {
+    errorBody = upstreamResponse.statusText || "Unknown error";
+  }
+  const truncatedBody = errorBody.length > 1e3 ? errorBody.substring(0, 1e3) + "..." : errorBody;
+  sendSSE(reply, "error", {
+    type: "error",
+    error: {
+      type: "upstream_error",
+      message: `Upstream returned ${upstreamResponse.status}: ${truncatedBody}`,
+      status: upstreamResponse.status
+    }
+  });
+  reply.raw.end();
+}
 function mapStopReason(finishReason) {
   switch (finishReason) {
     case "tool_calls":
@@ -34433,42 +34471,7 @@ fastify.post("/v1/messages", async (request, reply) => {
       }
       if (payload.stream === true) {
         if (!upstreamResponse.ok) {
-          reply.raw.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive"
-          });
-          let errorBody = "";
-          try {
-            const reader2 = upstreamResponse.body?.getReader();
-            if (reader2) {
-              const decoder2 = new import_util.TextDecoder("utf-8");
-              let done2 = false;
-              let bodyLength = 0;
-              while (!done2 && bodyLength < 1e3) {
-                const { value, done: doneReading } = await reader2.read();
-                done2 = doneReading;
-                if (value) {
-                  const chunk = decoder2.decode(value, { stream: true });
-                  errorBody += chunk;
-                  bodyLength += chunk.length;
-                  if (bodyLength >= 1e3) break;
-                }
-              }
-            }
-          } catch (err) {
-            errorBody = upstreamResponse.statusText || "Unknown error";
-          }
-          const truncatedBody = errorBody.length > 1e3 ? errorBody.substring(0, 1e3) + "..." : errorBody;
-          sendSSE(reply, "error", {
-            type: "error",
-            error: {
-              type: "upstream_error",
-              message: `Upstream returned ${upstreamResponse.status}: ${truncatedBody}`,
-              status: upstreamResponse.status
-            }
-          });
-          reply.raw.end();
+          await handleStreamingUpstreamError(reply, upstreamResponse);
           return;
         }
         reply.raw.writeHead(200, {
@@ -34663,42 +34666,7 @@ ${toolInstructions}`;
     console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
     if (!openaiResponse.ok) {
       if (openaiPayload.stream) {
-        reply.raw.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive"
-        });
-        let errorBody = "";
-        try {
-          const reader2 = openaiResponse.body?.getReader();
-          if (reader2) {
-            const decoder2 = new import_util.TextDecoder("utf-8");
-            let done2 = false;
-            let bodyLength = 0;
-            while (!done2 && bodyLength < 1e3) {
-              const { value, done: doneReading } = await reader2.read();
-              done2 = doneReading;
-              if (value) {
-                const chunk = decoder2.decode(value, { stream: true });
-                errorBody += chunk;
-                bodyLength += chunk.length;
-                if (bodyLength >= 1e3) break;
-              }
-            }
-          }
-        } catch (err) {
-          errorBody = openaiResponse.statusText || "Unknown error";
-        }
-        const truncatedBody = errorBody.length > 1e3 ? errorBody.substring(0, 1e3) + "..." : errorBody;
-        sendSSE(reply, "error", {
-          type: "error",
-          error: {
-            type: "upstream_error",
-            message: `Upstream returned ${openaiResponse.status}: ${truncatedBody}`,
-            status: openaiResponse.status
-          }
-        });
-        reply.raw.end();
+        await handleStreamingUpstreamError(reply, openaiResponse);
         return;
       }
       const errorDetails = await openaiResponse.text();

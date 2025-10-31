@@ -34,4 +34,3 @@ export function redactSecrets(text) {
   
   return redacted
 }
-

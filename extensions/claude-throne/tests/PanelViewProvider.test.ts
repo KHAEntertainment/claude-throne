@@ -1,3 +1,4 @@
+import { describe, it, beforeEach, expect, vi } from 'vitest'
 import * as vscode from 'vscode'
 import { PanelViewProvider } from '../src/views/PanelViewProvider'
 import { SecretsService } from '../src/services/Secrets'
@@ -116,7 +117,7 @@ describe('PanelViewProvider Configuration Tests', () => {
           }
           return null
         },
-        update: jest.fn(),
+        update: vi.fn(),
         get: (key: string, defaultValue?: any) => {
           if (key === 'applyScope') return 'workspace'
           return defaultValue
@@ -125,20 +126,20 @@ describe('PanelViewProvider Configuration Tests', () => {
 
       // Mock vscode.workspace.getConfiguration to return our mock
       const originalGetConfiguration = vscode.workspace.getConfiguration
-      ;(vscode.workspace as any).getConfiguration = jest.fn().mockReturnValue(mockCfg)
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
 
       try {
         panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
         
         // Mock the postConfig method to avoid webview communication
-        panelViewProvider.postConfig = jest.fn()
+        panelViewProvider.postConfig = vi.fn()
 
         // Call handleSaveModels with test data
         await panelViewProvider.handleSaveModels({
-          provider: 'openrouter',
-          reasoningModel: 'test-reasoning',
-          completionModel: 'test-completion', 
-          valueModel: 'test-value'
+          providerId: 'openrouter',
+          reasoning: 'test-reasoning',
+          completion: 'test-completion', 
+          value: 'test-value'
         })
 
         // Verify modelSelectionsByProvider was updated
@@ -154,7 +155,7 @@ describe('PanelViewProvider Configuration Tests', () => {
           vscode.ConfigurationTarget.Workspace
         )
 
-        // Verify individual model keys were also updated
+        // Verify individual model keys were also updated (legacy keys for backward compatibility)
         expect(mockCfg.update).toHaveBeenCalledWith('reasoningModel', 'test-reasoning', vscode.ConfigurationTarget.Workspace)
         expect(mockCfg.update).toHaveBeenCalledWith('completionModel', 'test-completion', vscode.ConfigurationTarget.Workspace)
         expect(mockCfg.update).toHaveBeenCalledWith('valueModel', 'test-value', vscode.ConfigurationTarget.Workspace)
@@ -174,7 +175,7 @@ describe('PanelViewProvider Configuration Tests', () => {
           }
           return { defaultValue: 'default' }
         },
-        update: jest.fn(),
+        update: vi.fn(),
         get: (key: string, defaultValue?: any) => {
           if (key === 'applyScope') return 'workspace'
           return defaultValue
@@ -183,20 +184,20 @@ describe('PanelViewProvider Configuration Tests', () => {
 
       // Mock vscode.workspace.getConfiguration to return our mock
       const originalGetConfiguration = vscode.workspace.getConfiguration
-      ;(vscode.workspace as any).getConfiguration = jest.fn().mockReturnValue(mockCfg)
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
 
       try {
         panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
         
         // Mock the postConfig method to avoid webview communication
-        panelViewProvider.postConfig = jest.fn()
+        panelViewProvider.postConfig = vi.fn()
 
         // Call handleSaveModels with test data
         await panelViewProvider.handleSaveModels({
-          provider: 'openrouter',
-          reasoningModel: 'test-reasoning',
-          completionModel: 'test-completion',
-          valueModel: 'test-value'
+          providerId: 'openrouter',
+          reasoning: 'test-reasoning',
+          completion: 'test-completion',
+          value: 'test-value'
         })
 
         // Verify modelSelectionsByProvider was NOT updated (key not registered)
@@ -205,7 +206,7 @@ describe('PanelViewProvider Configuration Tests', () => {
         )
         expect(modelSelectionsCall).toBeUndefined()
 
-        // Verify individual model keys were still updated as fallback
+        // Verify individual model keys were still updated as fallback (legacy keys for backward compatibility)
         expect(mockCfg.update).toHaveBeenCalledWith('reasoningModel', 'test-reasoning', vscode.ConfigurationTarget.Workspace)
         expect(mockCfg.update).toHaveBeenCalledWith('completionModel', 'test-completion', vscode.ConfigurationTarget.Workspace)
         expect(mockCfg.update).toHaveBeenCalledWith('valueModel', 'test-value', vscode.ConfigurationTarget.Workspace)
@@ -224,7 +225,7 @@ describe('PanelViewProvider Configuration Tests', () => {
           }
           return null
         },
-        update: jest.fn(),
+        update: vi.fn(),
         get: (key: string, defaultValue?: any) => {
           if (key === 'applyScope') return 'global'
           return defaultValue
@@ -232,17 +233,17 @@ describe('PanelViewProvider Configuration Tests', () => {
       }
 
       const originalGetConfiguration = vscode.workspace.getConfiguration
-      ;(vscode.workspace as any).getConfiguration = jest.fn().mockReturnValue(mockCfg)
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
 
       try {
         panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
-        panelViewProvider.postConfig = jest.fn()
+        panelViewProvider.postConfig = vi.fn()
 
         await panelViewProvider.handleSaveModels({
-          provider: 'openrouter',
-          reasoningModel: 'test-reasoning',
-          completionModel: 'test-completion',
-          valueModel: 'test-value'
+          providerId: 'openrouter',
+          reasoning: 'test-reasoning',
+          completion: 'test-completion',
+          value: 'test-value'
         })
 
         // Verify updates used Global target instead of Workspace
@@ -270,7 +271,7 @@ describe('PanelViewProvider Configuration Tests', () => {
           }
           return null
         },
-        update: jest.fn(),
+        update: vi.fn(),
         get: (key: string, defaultValue?: any) => {
           if (key === 'applyScope') return 'global'
           return defaultValue
@@ -278,11 +279,11 @@ describe('PanelViewProvider Configuration Tests', () => {
       }
 
       const originalGetConfiguration = vscode.workspace.getConfiguration
-      ;(vscode.workspace as any).getConfiguration = jest.fn().mockReturnValue(mockCfg)
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
 
       try {
         panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
-        panelViewProvider.postConfig = jest.fn()
+        panelViewProvider.postConfig = vi.fn()
 
         await panelViewProvider.handleSetModelFromList({
           model: 'test-model',
