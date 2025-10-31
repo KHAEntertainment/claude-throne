@@ -7,13 +7,17 @@ cd "$(dirname "$0")/.."
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 echo "Current branch: $BRANCH"
 
+# Extract version from package.json
+VERSION=$(node -p "require('./extensions/claude-throne/package.json').version")
+echo "Detected version: $VERSION"
+
 # Commit version bump if not already committed
 if git diff --quiet extensions/claude-throne/package.json; then
     echo "Version bump already committed"
 else
     echo "Committing version bump..."
     git add extensions/claude-throne/package.json
-    git commit -m "chore: bump version to 1.5.45"
+    git commit -m "chore: bump version to $VERSION"
 fi
 
 # Force push branch
@@ -25,7 +29,7 @@ echo "Creating pull request..."
 gh pr create \
     --base main \
     --head "$BRANCH" \
-    --title "feat: Schema alignment, sequence token consistency, and model-fetch timeout cap (v1.5.45)" \
+    --title "feat: Schema alignment, sequence token consistency, and model-fetch timeout cap (v$VERSION)" \
     --body "## Summary
 
 This PR implements three critical improvements to ensure schema consistency, proper race condition handling, and improved timeout behavior for model fetching.
@@ -61,12 +65,27 @@ This PR implements three critical improvements to ensure schema consistency, pro
 
 ## Version
 
-Bumped to **v1.5.45** for release."
+Bumped to **v$VERSION** for release."
+
+# Build VSIX package
+echo "Building VSIX package..."
+cd extensions/claude-throne
+npm run package
+cd ../..
+
+# Verify VSIX exists
+VSIX_PATH="extensions/claude-throne/claude-throne-$VERSION.vsix"
+if [ ! -f "$VSIX_PATH" ]; then
+    echo "❌ Error: VSIX file not found at $VSIX_PATH"
+    echo "Build may have failed. Please check the output above."
+    exit 1
+fi
+echo "✅ VSIX file found at $VSIX_PATH"
 
 # Create release
 echo "Creating GitHub release..."
-gh release create v1.5.45 \
-    --title "v1.5.45 - Schema Alignment & Timeout Improvements" \
+gh release create "v$VERSION" \
+    --title "v$VERSION - Schema Alignment & Timeout Improvements" \
     --notes "## Changes
 
 - **Schema Alignment**: Root-level schemas now match extension schemas (structured error payloads, completion key requirement)
@@ -79,7 +98,7 @@ gh release create v1.5.45 \
 - \`extensions/claude-throne/src/services/Models.ts\` - Timeout budget implementation
 - \`extensions/claude-throne/src/views/PanelViewProvider.ts\` - Sequence token consistency
 - \`tests/contract.test.js\` - Updated test expectations" \
-    extensions/claude-throne/claude-throne-1.5.45.vsix
+    "$VSIX_PATH"
 
 echo "✅ PR and release created successfully!"
 

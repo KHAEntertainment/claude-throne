@@ -77,9 +77,9 @@ export function getModelsEndpointForBase(baseUrl: string): string {
         basePath = path.substring(0, path.indexOf('/anthropic'))
       }
       
-      // Special case for api.z.ai to preserve existing behavior
+      // Special case for api.z.ai - drop basePath to avoid doubling /api prefix
       if (host === 'api.z.ai') {
-        modelsPath = `${basePath}/api/paas/v4/models`
+        modelsPath = '/api/paas/v4/models'
       } else {
         // For all other Anthropic-style hosts, use preserved base path + /v1/models
         modelsPath = `${basePath}/v1/models`

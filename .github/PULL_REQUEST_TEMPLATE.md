@@ -89,6 +89,9 @@
 <!-- Paste relevant settings.json excerpt showing:
 - anthropic.customHeaders
 - reasoningModel, completionModel, valueModel
+
+⚠️ Redact personal paths. Use <...> placeholders for sensitive values:
+"claudeThrone.pythonInterpreterPath": "<path-to-venv>/bin/python3"
 -->
 ```
 

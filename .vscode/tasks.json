@@ -13,8 +13,8 @@
         "pattern": "$tsc",
         "background": {
           "activeOnStart": true,
-          "beginsPattern": ".*",
-          "endsPattern": ".*"
+          "beginsPattern": "^\\s*.*",
+          "endsPattern": "^\\s*(Found \\d+ error|Found \\d+ errors|No errors|Watching for file changes)"
         }
       },
       "presentation": {

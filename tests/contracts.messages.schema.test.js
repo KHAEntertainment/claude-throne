@@ -133,7 +133,7 @@ describe('Schema Contract Tests: /v1/messages', () => {
 
   describe('Response Schema Validation', () => {
     it('validates non-streaming response structure', async () => {
-      const upstream = await startUpstreamMock({ mode: 'json' })
+      const upstream = await startUpstreamMock({ mode: 'json', endpoint: 'anthropic' })
       const proxyPort = 3300
       const child = await spawnProxyProcess({
         port: proxyPort,
@@ -203,7 +203,7 @@ describe('Schema Contract Tests: /v1/messages', () => {
 
   describe('End-to-End Contract Validation', () => {
     it('round-trip: valid request produces valid response', async () => {
-      const upstream = await startUpstreamMock({ mode: 'json' })
+      const upstream = await startUpstreamMock({ mode: 'json', endpoint: 'anthropic' })
       const proxyPort = 3302
       const child = await spawnProxyProcess({
         port: proxyPort,

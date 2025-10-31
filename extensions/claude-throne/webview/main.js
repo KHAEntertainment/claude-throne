@@ -276,7 +276,7 @@
         }
         break;
         
-      default:
+      default: {
         // Comment 8: Log schema mismatches in DEBUG mode
         const debugCheckbox = document.getElementById('debugCheckbox');
         if (debugCheckbox && debugCheckbox.checked) {
@@ -284,6 +284,7 @@
         }
         // Allow unknown types in safe mode for backward compatibility
         break;
+      }
     }
 
     return message; // Validation passed
@@ -1009,6 +1010,7 @@
     // Store intended provider ID for auto-selection after save
     const intendedProviderId = id;
 
+    // Save the provider first
     vscode.postMessage({
       type: 'saveCustomProvider',
       name: name.trim(),
@@ -1016,7 +1018,16 @@
       id
     });
     
-    // Clear form fields after submission
+    // Store the API key for the provider after saving
+    if (key) {
+      vscode.postMessage({
+        type: 'storeKey',
+        provider: intendedProviderId,
+        key: key.trim()
+      });
+    }
+    
+    // Clear form fields after both messages have been posted
     const nameInput = document.getElementById('customProviderNameInput');
     const urlInput = document.getElementById('customUrl');
     const keyInput = document.getElementById('apiKeyInput');
@@ -2120,12 +2131,15 @@
           
           vscode.postMessage({ type: 'refreshAnthropicDefaults' });
           
-          // Listen for config update to restore button
-          const originalHandleConfig = window.handleConfigLoaded;
-          window.handleConfigLoaded = function(newConfig) {
-            originalHandleConfig.call(this, newConfig);
-            window.handleConfigLoaded = originalHandleConfig; // Restore original handler
+          // Listen for config response to restore button state
+          const configListener = (event) => {
+            if (event.data && event.data.type === 'config') {
+              refreshBtn.textContent = 'Refresh Cache';
+              refreshBtn.disabled = false;
+              window.removeEventListener('message', configListener);
+            }
           };
+          window.addEventListener('message', configListener);
         });
       }
     } else {

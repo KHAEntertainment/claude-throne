@@ -31,16 +31,20 @@ export class SecretsService {
     await this.deleteRaw(this.providerKey(provider))
   }
 
+  private anthropicKeyName(): string {
+    return 'claudeThrone:anthropic:apiKey'
+  }
+
   async getAnthropicKey(): Promise<string | undefined> {
-    return this.getRaw('claudeThrone:anthropic:apiKey')
+    return this.getRaw(this.anthropicKeyName())
   }
 
   async setAnthropicKey(value: string): Promise<void> {
-    await this.setRaw('claudeThrone:anthropic:apiKey', value)
+    await this.setRaw(this.anthropicKeyName(), value)
   }
 
   async deleteAnthropicKey(): Promise<void> {
-    await this.deleteRaw('claudeThrone:anthropic:apiKey')
+    await this.deleteRaw(this.anthropicKeyName())
   }
 }
 

@@ -577,11 +577,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     let sequenceToken: string
     if (requestToken) {
       sequenceToken = requestToken
+      // Extract sequence number from requestToken to keep currentSequenceToken in sync
+      const requestSequenceNum = requestToken.startsWith('seq-') 
+        ? parseInt(requestToken.replace('seq-', ''), 10) 
+        : null
+      this.currentSequenceToken = requestSequenceNum !== null ? requestSequenceNum : this.sequenceTokenCounter
     } else {
       this.sequenceTokenCounter++
       sequenceToken = `seq-${this.sequenceTokenCounter}`
+      this.currentSequenceToken = this.sequenceTokenCounter
     }
-    this.currentSequenceToken = this.sequenceTokenCounter
     
     // Comment 6: Include trace ID in logs (DEBUG mode only)
     const traceInfo = this.currentTraceId ? ` [Trace ${this.currentTraceId}]` : ''
@@ -1165,17 +1170,21 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleStoreKey(provider: string, key: string) {
     // Comment 1: Normalize provider ID to ensure correct secret lookup
-    // Built-ins: openrouter, openai, together, deepseek, glm
-    // Custom: use their configured id
-    const normalizedProvider = provider.toLowerCase().trim()
+    // Built-ins: openrouter, openai, together, deepseek, glm - lowercase these
+    // Custom providers: preserve their exact casing as stored
+    const trimmedProvider = provider.trim()
+    const lowercased = trimmedProvider.toLowerCase()
     const validBuiltIns = ['openrouter', 'openai', 'together', 'deepseek', 'glm']
     
+    // For built-ins, use lowercase; for custom providers, preserve casing
+    const normalizedProvider = validBuiltIns.includes(lowercased) ? lowercased : trimmedProvider
+    
     // Verify provider ID matches expected format
-    if (!validBuiltIns.includes(normalizedProvider) && normalizedProvider !== 'custom') {
-      // Check if it's a custom provider ID
+    if (!validBuiltIns.includes(lowercased) && lowercased !== 'custom') {
+      // Check if it's a custom provider ID (preserve casing in lookup)
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const customProviders = cfg.get<any[]>('customProviders', [])
-      const customProvider = customProviders.find(p => p.id === normalizedProvider)
+      const customProvider = customProviders.find(p => p.id === trimmedProvider)
       
       if (!customProvider) {
         const errorMsg = `Invalid provider ID: ${provider}. Expected one of: ${validBuiltIns.join(', ')}, custom, or a saved custom provider ID.`
@@ -1191,7 +1200,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     
     this.log.appendLine(`🔑 Storing key for provider: ${normalizedProvider} (length: ${key?.length})`)
     try {
-      // Comment 1: Use normalized provider ID for storage
+      // Comment 1: Use normalized provider ID for storage (lowercase for built-ins, exact casing for custom)
       await this.secrets.setProviderKey(normalizedProvider, key)
       this.log.appendLine(`✅ Key stored successfully in system keychain for provider: ${normalizedProvider}`)
       

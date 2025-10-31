@@ -71,6 +71,8 @@ Before any change to guarded areas (`area:model-selection`, `area:provider`, `ar
 
 ## Execution Checklist (Agent and Human)
 
+> **Note**: If a checklist item is not applicable to your change, document why in the PR description (e.g., "N/A: Documentation-only change").
+
 ### Pre-Code Validation
 - [ ] Read Constitution.md invariants for target area
 - [ ] Run context search for relevant decisions

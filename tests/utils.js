@@ -1,4 +1,21 @@
 import http from 'http'
+import net from 'net'
+
+/**
+ * Finds an available port by creating a temporary server and getting its assigned port
+ * @returns {Promise<number>} An available port number
+ */
+export async function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      const port = addr.port
+      server.close(() => resolve(port))
+    })
+    server.on('error', reject)
+  })
+}
 
 export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, assertAuth, endpoint = 'openai', statusCode = 200, sseTerminator } = {}) {
   // mode: 'json' or 'sse'
@@ -40,13 +57,19 @@ export function startUpstreamMock({ mode = 'json', jsonResponse, sseChunks, asse
           assertAuth(req.headers)
         }
         if (mode === 'json') {
-          const payload = jsonResponse || {
+          const payload = jsonResponse || (endpoint === 'anthropic' ? {
+            id: 'msg-test',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hello!' }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          } : {
             id: 'chatcmpl-test',
             choices: [
               { message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' },
             ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
-          }
+          })
           const data = JSON.stringify(payload)
           res.writeHead(statusCode, { 'content-type': 'application/json' })
           res.end(data)

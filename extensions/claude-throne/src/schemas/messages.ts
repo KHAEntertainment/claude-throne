@@ -1,4 +1,3 @@
-import { z } from 'zod'
 
 /**
  * Message Schema Definitions for Webview ↔ Extension Communication
@@ -123,7 +122,9 @@ export const ConfigLoadedMessageSchema = z.object({
     // Legacy global keys for fallback hydration
     reasoningModel: z.string().optional(),
     completionModel: z.string().optional(),
-    valueModel: z.string().optional()
+    valueModel: z.string().optional(),
+    // Feature flags for webview behavior
+    featureFlags: z.any().optional()
   })
 })
 

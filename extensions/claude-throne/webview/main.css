@@ -216,13 +216,13 @@ body {
 /* Custom Provider Delete Button */
 #deleteCustomProviderBtn {
   border-left: 1px solid var(--vscode-input-border);
-  background-color: var(--vscode-errorForeground);
+  background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
 
 #deleteCustomProviderBtn:hover {
-  background-color: var(--vscode-errorForeground);
-  opacity: 0.8;
+  background-color: var(--vscode-button-background);
+  filter: brightness(0.85);
 }
 
 #deleteCustomProviderBtn span {
