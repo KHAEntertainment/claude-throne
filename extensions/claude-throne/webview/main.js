@@ -1006,16 +1006,9 @@
     
     console.log('[addCustomProviderFromMain] Adding provider:', { name, url, id });
     
-    vscode.postMessage({
-      type: 'saveCustomProvider',
-      name: name.trim(),
-      baseUrl: url.trim(),
-      id
-    });
-    
     // Store intended provider ID for auto-selection after save
     const intendedProviderId = id;
-    
+
     vscode.postMessage({
       type: 'saveCustomProvider',
       name: name.trim(),
