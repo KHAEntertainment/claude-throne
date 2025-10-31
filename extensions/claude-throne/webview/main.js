@@ -309,12 +309,9 @@
       // Other message types - basic validation only
       case 'keys':
       case 'keysLoaded':
-      case 'keyStored':
-      case 'anthropicKeyStored':
-      case 'combosLoaded':
-      case 'comboDeleted':
-      case 'customProvidersLoaded':
-      case 'customProviderDeleted':
+      case 'keyStored':  // Unified message, check payload.provider to distinguish
+      case 'combosLoaded':  // Uses payload.deletedId to signal deletion
+      case 'customProvidersLoaded':  // Uses payload.deletedId to signal deletion
       case 'popularModels':
         // These require payload but we don't validate structure in safe mode
         if (!payload) {
@@ -590,8 +587,13 @@
       case 'keyStored':
         handleKeyStored(message.payload);
         break;
-      case 'anthropicKeyStored':
-        handleAnthropicKeyStored(message.payload);
+      case 'keyStored':
+        // Check payload.provider to distinguish Anthropic vs others
+        if (message.payload?.provider === 'anthropic') {
+          handleAnthropicKeyStored(message.payload);
+        } else {
+          handleKeyStored(message.payload);
+        }
         break;
       case 'proxyError': {
         // Comment 1: Handle structured error payload
@@ -605,18 +607,21 @@
         handleModelsError(message.payload);
         break;
       case 'combosLoaded':
-        handleCombosLoaded(message.payload);
-        updateComboSaveButton();
-        break;
-      case 'comboDeleted':
-        handleComboDeleted(message.payload);
+        // Check payload.deletedId to see if this is a deletion response
+        if (message.payload?.deletedId) {
+          handleComboDeleted(message.payload);
+        } else {
+          handleCombosLoaded(message.payload);
+        }
         updateComboSaveButton();
         break;
       case 'customProvidersLoaded':
-        handleCustomProvidersLoaded(message.payload);
-        break;
-      case 'customProviderDeleted':
-        handleCustomProviderDeleted(message.payload);
+        // Check payload.deletedId to see if this is a deletion response
+        if (message.payload?.deletedId) {
+          handleCustomProviderDeleted(message.payload);
+        } else {
+          handleCustomProvidersLoaded(message.payload);
+        }
         break;
       case 'endpointKindUpdated':
         // Comment 3: Handle endpoint kind update confirmation and update badge

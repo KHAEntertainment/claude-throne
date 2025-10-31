@@ -231,25 +231,26 @@ export const ModelsSavedMessageSchema = z.object({
 export type ModelsSavedMessage = z.infer<typeof ModelsSavedMessageSchema>
 
 /**
- * Combos loaded message
+ * Combos loaded message (single type, uses deletedId to signal deletion)
  */
 export const CombosLoadedMessageSchema = z.object({
   type: z.literal('combosLoaded'),
   payload: z.object({
-    combos: z.array(ModelComboSchema)
+    combos: z.array(ModelComboSchema),
+    deletedId: z.string().optional()  // Present when a combo was deleted
   })
 })
 
 export type CombosLoadedMessage = z.infer<typeof CombosLoadedMessageSchema>
 
 /**
- * Custom providers loaded message
+ * Custom providers loaded message (single type, uses deletedId to signal deletion)
  */
 export const CustomProvidersLoadedMessageSchema = z.object({
   type: z.literal('customProvidersLoaded'),
   payload: z.object({
     providers: z.array(CustomProviderSchema),
-    deletedId: z.string().optional()
+    deletedId: z.string().optional()  // Present when a provider was deleted
   })
 })
 

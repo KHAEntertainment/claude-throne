@@ -1076,7 +1076,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage('Custom provider deleted successfully')
       
       this.post({ 
-        type: 'customProviderDeleted', 
+        type: 'customProvidersLoaded', 
         payload: { providers: updatedProviders, deletedId: id.trim() } 
       })
       
@@ -1159,8 +1159,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       // Send updated combo list back to webview
       this.post({ 
-        type: 'comboDeleted', 
-        payload: { combos: updatedCombos } 
+        type: 'combosLoaded', 
+        payload: { combos: updatedCombos, deletedId: String(index) } 
       })
     } catch (err) {
       this.log.appendLine(`❌ Failed to delete combo: ${err}`)
@@ -1259,8 +1259,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       // Send success message to webview
       this.post({ 
-        type: 'anthropicKeyStored', 
-        payload: { success: true }
+        type: 'keyStored', 
+        payload: { provider: 'anthropic', success: true }
       })
       
       this.log.appendLine('✅ Anthropic API key stored successfully')
@@ -1268,8 +1268,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`❌ Failed to store Anthropic key: ${err}`)
       vscode.window.showErrorMessage(`Failed to store Anthropic API key: ${err}`)
       this.post({ 
-        type: 'anthropicKeyStored', 
-        payload: { success: false, error: String(err) }
+        type: 'keyStored', 
+        payload: { provider: 'anthropic', success: false, error: String(err) }
       })
     }
   }

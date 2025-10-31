@@ -141,10 +141,17 @@ export async function negotiateEndpointKind(baseUrl, key) {
     })
     clearTimeout(timeoutId)
     
-    // Comment 1: On ambiguous responses (400/404/401/403), retry with OpenAI-style Authorization header
-    // 400/404 suggest route mismatch, 401/403 are ambiguous (could be either endpoint type)
+    // Comment 1: Only treat 200 OK as definitive OpenAI-compatible
+    // Other responses (400/404/401/403) are inconclusive - inspect response body
+    if (resp.ok) {
+      // 200 OK with Anthropic headers confirms Anthropic-native
+      const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+      endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+      return { kind, lastProbedAt: now }
+    }
+    
+    // Non-OK responses are inconclusive - try OpenAI probe with response body inspection
     if (resp.status === 400 || resp.status === 404 || resp.status === 401 || resp.status === 403) {
-      // Try OpenAI-compatible endpoint to disambiguate
       try {
         const openaiController = new AbortController()
         const openaiTimeoutId = setTimeout(() => openaiController.abort(), 1500)
@@ -157,26 +164,63 @@ export async function negotiateEndpointKind(baseUrl, key) {
         })
         clearTimeout(openaiTimeoutId)
         
-        // If OpenAI endpoint responds (ok or 401/403), it's OpenAI-compatible
-        if (openaiResp.ok || openaiResp.status === 401 || openaiResp.status === 403) {
+        // Only treat 200 OK as definitive OpenAI-compatible
+        if (openaiResp.ok) {
           const kind = ENDPOINT_KIND.OPENAI_COMPATIBLE
           endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
           return { kind, lastProbedAt: now }
         }
-        // OpenAI probe failed (non-ok and not 401/403) - classify as Anthropic-native
-        // This means the endpoint doesn't recognize OpenAI-style requests
+        
+        // 401/403 are inconclusive - inspect response body for provider signatures
+        if (openaiResp.status === 401 || openaiResp.status === 403) {
+          try {
+            const body = await openaiResp.text()
+            // OpenAI error shape: { "error": { "message": ..., "type": ..., "code": ... } }
+            // Anthropic error shape: { "error": { "type": "error", "message": ... } } or { "type": "error", "error": { ... } }
+            if (body.includes('"data"') || body.includes('"type":"invalid_request_error"') || body.includes('"code":')) {
+              // OpenAI signature detected
+              const kind = ENDPOINT_KIND.OPENAI_COMPATIBLE
+              endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+              return { kind, lastProbedAt: now }
+            }
+            if (body.includes('"type":"error"') || body.includes('anthropic')) {
+              // Anthropic signature detected
+              const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+              endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+              return { kind, lastProbedAt: now }
+            }
+          } catch (bodyErr) {
+            console.warn(`[negotiateEndpointKind] Could not parse response body:`, bodyErr.message)
+          }
+        }
+        
+        // Inconclusive - fall back to existing heuristics or cached value
+        const cached = endpointKindCache.get(normalizedUrl)
+        if (cached && cached.kind) {
+          console.warn(`[negotiateEndpointKind] Probe inconclusive, using cached value: ${cached.kind}`)
+          return { kind: cached.kind, lastProbedAt: now }
+        }
+        
+        // Default fallback: assume Anthropic-native (safer for the proxy's primary use case)
+        console.warn(`[negotiateEndpointKind] Probe inconclusive, defaulting to Anthropic-native`)
         const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
         endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
         return { kind, lastProbedAt: now }
       } catch (openaiErr) {
-        // OpenAI probe failed (network/timeout) - classify as Anthropic-native
+        // OpenAI probe failed (network/timeout) - mark as inconclusive and use fallback
         console.warn(`[negotiateEndpointKind] OpenAI probe failed:`, openaiErr.message)
+        const cached = endpointKindCache.get(normalizedUrl)
+        if (cached && cached.kind) {
+          console.warn(`[negotiateEndpointKind] Using cached value after probe failure: ${cached.kind}`)
+          return { kind: cached.kind, lastProbedAt: now }
+        }
+        // Default fallback
         const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
         endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
         return { kind, lastProbedAt: now }
       }
     } else if (resp.ok) {
-      // 200 OK with Anthropic headers confirms Anthropic-native
+      // This block shouldn't be reached since we handle resp.ok above, but keep for safety
       const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
       endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
       return { kind, lastProbedAt: now }
