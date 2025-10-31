@@ -109,3 +109,4 @@ Notes:
 * Detects Anthropic-native providers and injects the `x-api-key` header
 * Forwards requests to the provider's actual endpoint
 * Transparently handles authentication so Claude Code doesn't need the API key
+* **Client authentication:** Claude Code may send its own `Authorization` header for session management. The proxy accepts any client auth header and ignores it for upstream requests. The proxy uses env-var-resolved API keys (`GLM_API_KEY`, `DEEPSEEK_API_KEY`, etc.) for upstream authentication, allowing Claude Code to work with any provider without knowing the provider's API key.

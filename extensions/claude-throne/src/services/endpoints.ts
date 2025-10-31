@@ -1,3 +1,9 @@
+/**
+ * Determines whether a URL corresponds to a known Anthropic-related endpoint.
+ *
+ * @param url - The URL to test; falsy values are treated as non-matching.
+ * @returns `true` if the URL matches any known Anthropic-related patterns, `false` otherwise.
+ */
 export function isAnthropicEndpoint(url: string): boolean {
   if (!url) return false
   
@@ -35,5 +41,60 @@ export function isAnthropicEndpoint(url: string): boolean {
     return hasAnthropicPath
   } catch {
     return false
+  }
+}
+
+export type CustomEndpointKind = 'auto' | 'anthropic' | 'openai'
+
+/**
+ * Produce the models endpoint URL corresponding to a provided base URL.
+ *
+ * Transforms Anthropic-style base URLs into their corresponding models endpoint; for other URLs appends `/models`. An empty `baseUrl` is returned unchanged.
+ *
+ * @param baseUrl - The base URL to convert; returned unchanged if falsy
+ * @returns The models endpoint URL for `baseUrl` (Anthropic-style bases are converted to their models path, others have `/models` appended)
+ */
+export function getModelsEndpointForBase(baseUrl: string): string {
+  if (!baseUrl) return baseUrl
+
+  try {
+    const url = new URL(baseUrl.replace(/\/$/, ''))
+    const host = url.hostname.toLowerCase()
+    const path = url.pathname.toLowerCase()
+
+    // Guard against double-normalization: return as-is if it already ends with /models
+    if (path.endsWith('/models')) {
+      return baseUrl.replace(/\/$/, '')
+    }
+
+    // If it's an Anthropic-style endpoint, transform to use the correct models endpoint
+    if (isAnthropicEndpoint(baseUrl)) {
+      // Remove /anthropic or /api/anthropic suffix and preserve base path
+      let basePath = ''
+      let modelsPath = '/v1/models'
+      
+      // Extract base path before /anthropic for all Anthropic-style endpoints
+      if (path.includes('/anthropic')) {
+        basePath = path.substring(0, path.indexOf('/anthropic'))
+      }
+      
+      // Special case for api.z.ai - drop basePath to avoid doubling /api prefix
+      if (host === 'api.z.ai') {
+        modelsPath = '/api/paas/v4/models'
+      } else {
+        // For all other Anthropic-style hosts, use preserved base path + /v1/models
+        modelsPath = `${basePath}/v1/models`
+      }
+      
+      // Normalize double slashes and trailing slashes
+      const finalPath = modelsPath.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
+      return `${url.protocol}//${url.host}${finalPath}`
+    }
+
+    // For non-Anthropic endpoints, just append /models
+    return `${baseUrl.replace(/\/$/, '')}/models`
+  } catch {
+    // If URL parsing fails, just append /models
+    return `${baseUrl.replace(/\/$/, '')}/models`
   }
 }

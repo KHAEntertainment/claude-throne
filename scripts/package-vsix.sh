@@ -51,11 +51,8 @@ fi
 echo "Installing dependencies..."
 npm install --prefix "$EXT_DIR" >/dev/null
 
-echo "Bundling proxy..."
-npm run --prefix "$EXT_DIR" bundle:proxy
-
-echo "Compiling TypeScript..."
-npm run --prefix "$EXT_DIR" compile
+echo "Running prepublish script (bundles proxy and compiles TypeScript)..."
+npm run --prefix "$EXT_DIR" vscode:prepublish
 
 echo "Packaging VSIX..."
 npm run --prefix "$EXT_DIR" package
@@ -66,5 +63,18 @@ if [[ ${#NEW_VSIX[@]} -eq 0 ]]; then
   exit 1
 fi
 
-echo "Success: ${NEW_VSIX[0]}"
+# Ensure VSIX is in the extensions/claude-throne directory specifically
+VSIX_FILE="${NEW_VSIX[0]}"
+VSIX_BASENAME=$(basename "$VSIX_FILE")
+EXPECTED_PATH="$EXT_DIR/$VSIX_BASENAME"
+
+# Verify VSIX is in the extension directory (defensive check for build tool changes)
+if [[ "$VSIX_FILE" != "$EXPECTED_PATH" ]]; then
+  echo "Moving VSIX to correct location: $VSIX_FILE -> $EXPECTED_PATH"
+  mv "$VSIX_FILE" "$EXPECTED_PATH"
+  VSIX_FILE="$EXPECTED_PATH"
+fi
+
+echo "Success: $VSIX_FILE"
+echo "VSIX created at: extensions/claude-throne/$VSIX_BASENAME"
 

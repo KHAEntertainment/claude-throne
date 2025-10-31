@@ -12,5 +12,11 @@
     "*": [
       "inclusionai/ling-1t"
     ]
+  },
+  "toolCallUnsupported": {
+    "openrouter": [
+      "google/gemini-2.0-pro-exp-02-05:free",
+      "google/gemini-2.0-flash-exp-02-05:free"
+    ]
   }
 }

@@ -9,11 +9,14 @@ import {
   resolveApiKey,
   providerSpecificHeaders,
   inferEndpointKind,
+  inferEndpointKindSync,
+  negotiateEndpointKind,
   ENDPOINT_KIND,
 } from './key-resolver.js'
 import { normalizeContent, removeUriFormat } from './transform.js'
 import { injectXMLToolInstructions } from './xml-tool-formatter.js'
 import { parseAssistantMessage } from './xml-tool-parser.js'
+import { redactSecrets } from './utils/redaction.js'
 
 let packageVersion = '0.0.0'
 let packageDir = null
@@ -55,7 +58,34 @@ if (existsSync(capabilitiesPath)) {
 const baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || 'https://openrouter.ai/api'
 const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 const provider = detectProvider(baseUrl)
-const endpointKind = inferEndpointKind(provider, baseUrl)
+
+// Load endpoint-kind overrides from env (from extension settings)
+let endpointKindOverrides = {}
+if (process.env.CUSTOM_ENDPOINT_OVERRIDES) {
+  try {
+    endpointKindOverrides = JSON.parse(process.env.CUSTOM_ENDPOINT_OVERRIDES)
+  } catch (err) {
+    console.warn('[Startup] Failed to parse CUSTOM_ENDPOINT_OVERRIDES:', err?.message || err)
+  }
+}
+
+// Comment 1: Use sync version at startup, track detection source separately
+// For custom providers without override, start as UNKNOWN until negotiation completes
+let endpointKind = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
+let detectionSource = 'heuristic' // Default source
+let lastProbedAt = null // Comment 1: Track when probe last ran
+let negotiationPromise = null // Comment 1: Track ongoing negotiation
+
+if (endpointKindOverrides[normalizedBaseUrl]) {
+  detectionSource = 'override'
+} else if (provider === 'deepseek' || provider === 'glm' || provider === 'anthropic') {
+  detectionSource = 'heuristic'
+} else if (provider === 'custom') {
+  // Comment 1: For custom providers without override, set to UNKNOWN initially
+  endpointKind = ENDPOINT_KIND.UNKNOWN
+  detectionSource = 'probe' // Will be updated when negotiation completes
+}
+
 const { key, source: keySource } = resolveApiKey(provider)
 const model = 'google/gemini-2.0-pro-exp-02-05:free'
 const models = {
@@ -96,7 +126,15 @@ function matchesPattern(modelName, pattern) {
 }
 
 /**
- * Check if a model requires XML tool calling instead of native OpenAI format
+ * Determine whether a model should receive XML-formatted tool instructions instead of native tool calls.
+ *
+ * The decision is true when `FORCE_XML_TOOLS` is set to "1", when the model matches an entry in
+ * `modelCapabilities.xmlTools` for the given provider or the wildcard `*`, or when the model name
+ * matches a known fallback pattern.
+ *
+ * @param {string} modelName - The model's name.
+ * @param {string} providerId - The provider identifier used to look up provider-specific capability rules.
+ * @returns {boolean} `true` if the model requires XML tool instructions, `false` otherwise.
  */
 function modelNeedsXMLTools(modelName, providerId) {
   if (process.env.FORCE_XML_TOOLS === '1') {
@@ -117,6 +155,32 @@ function modelNeedsXMLTools(modelName, providerId) {
 
   const lowerModel = modelName.toLowerCase()
   return FALLBACK_XML_MODELS.some((pattern) => lowerModel.includes(pattern.toLowerCase()))
+}
+
+/**
+ * Determine whether a model is allowed to invoke external tools for a given provider.
+ * @param {string} modelName - Provider-specific model identifier (e.g., "gpt-4o-mini").
+ * @param {string} providerId - Provider key used in capability maps (e.g., "openai", "anthropic").
+ * @returns {boolean} `true` if the model supports tool calling for the provider, `false` otherwise. Defaults to `true` when `modelName` or `providerId` is not provided.
+ */
+function modelSupportsToolCalling(modelName, providerId) {
+  if (!modelName || !providerId) return true // Default to supporting tools
+  
+  const config = modelCapabilities?.toolCallUnsupported || null
+  if (config) {
+    const patterns = [
+      ...(config[providerId] || []),
+      ...(config['*'] || []),
+    ]
+    for (const pattern of patterns) {
+      if (matchesPattern(modelName, pattern)) {
+        console.log(`[Tool Capability] Model ${modelName} does not support tool calling (matched pattern: ${pattern})`)
+        return false
+      }
+    }
+  }
+  
+  return true
 }
 
 /**
@@ -199,9 +263,29 @@ const fastify = Fastify({
     }
   }
 })
+
+/**
+ * Logs debug information to the console with secrets redacted when DEBUG is set.
+ * @param {...any} args - Values to log; objects are JSON-stringified for redaction when possible.
+ */
 function debug(...args) {
   if (!process.env.DEBUG) return
-  console.log(...args)
+  // Redact secrets from debug output
+  const redactedArgs = args.map(arg => {
+    if (typeof arg === 'string') {
+      return redactSecrets(arg)
+    }
+    if (typeof arg === 'object' && arg !== null) {
+      try {
+        const str = JSON.stringify(arg)
+        return JSON.parse(redactSecrets(str))
+      } catch {
+        return arg
+      }
+    }
+    return arg
+  })
+  console.log(...redactedArgs)
 }
 
 // Helper to roughly count tokens; tolerates undefined/null.
@@ -280,30 +364,88 @@ fastify.get('/v1/models', async (request, reply) => {
   }
 })
 
-fastify.get('/healthz', async (request, reply) => {
-  return {
-    status: 'ok',
+/**
+ * Builds and returns the service health payload containing readiness, model selections, and endpoint detection metadata.
+ *
+ * If the proxy is not ready (no API key), the handler sets the HTTP response status to 503 and includes diagnostic fields about the missing key and attempted key sources.
+ *
+ * @returns {object} Health payload with the following keys:
+ *  - status: 'ok' or 'unhealthy'
+ *  - version: package version
+ *  - provider: detected provider identifier
+ *  - baseUrl: configured upstream base URL (if any)
+ *  - endpointKind: inferred or overridden endpoint kind
+ *  - detectionSource: how endpointKind was determined (override|probe|heuristic)
+ *  - lastProbedAt: timestamp of the last endpoint probe or null
+ *  - models: { reasoning, completion } current model values or 'not set'
+ *  - modelSelection: { order, currentReasoning, currentCompletion } selection metadata
+ *  - timestamp: current epoch ms
+ *  - uptime: process uptime in seconds
+ *
+ * When an API key is missing, the payload additionally includes:
+ *  - missingKey: true
+ *  - keySourcesTried: hints of env locations tried for a key
+ *  - forcedProvider: value of FORCE_PROVIDER (if set)
+ */
+async function healthCheckHandler(request, reply) {
+  const isReady = !!key // Proxy is ready when API key is available
+  const status = isReady ? 'ok' : 'unhealthy'
+  
+  if (!isReady) {
+    reply.code(503)
+  }
+  
+  // Model selection order: explicit model > thinking flag (reasoning) > default (completion)
+  const modelSelectionOrder = [
+    '1. Explicit model parameter in request (highest priority)',
+    '2. REASONING_MODEL env var (if thinking=true)',
+    '3. COMPLETION_MODEL env var (default)',
+    '4. Hardcoded default: google/gemini-2.0-pro-exp-02-05:free (fallback)'
+  ]
+  
+  // Comment 6: Include missing-key diagnostics when key is missing
+  // Comment 1 & 5: Include detectionSource, endpointKind, lastProbedAt, and base URL in health response
+  const healthResponse = {
+    status,
     version: packageVersion,
     provider,
     baseUrl,
-    models,
+    endpointKind,
+    detectionSource, // Comment 1 & 5: How endpoint kind was determined (override|probe|heuristic)
+    lastProbedAt, // Comment 5: Timestamp of last probe (null if never probed)
+    models: {
+      reasoning: models.reasoning || 'not set',
+      completion: models.completion || 'not set'
+    },
+    modelSelection: {
+      order: modelSelectionOrder,
+      currentReasoning: models.reasoning || 'not set',
+      currentCompletion: models.completion || 'not set'
+    },
+    timestamp: Date.now(),
+    uptime: process.uptime()
   }
-})
+  
+  if (!isReady) {
+    healthResponse.missingKey = true
+    healthResponse.keySourcesTried = KEY_ENV_HINT
+    healthResponse.endpointKind = endpointKind
+    if (baseUrl) healthResponse.baseUrl = baseUrl
+    if (process.env.FORCE_PROVIDER) healthResponse.forcedProvider = process.env.FORCE_PROVIDER
+  }
+  
+  return healthResponse
+}
 
-fastify.get('/health', async (request, reply) => {
-    return {
-        status: 'healthy',
-        provider,
-        baseUrl,
-        hasApiKey: true, // Key is available from provider detection
-        models: {
-            reasoning: models.reasoning || 'not set',
-            completion: models.completion || 'not set'
-        },
-        timestamp: Date.now(),
-        uptime: process.uptime()
-    }
-});
+// Unified health check handler - both routes use same handler
+fastify.get('/health', healthCheckHandler)
+fastify.get('/healthz', async (request, reply) => {
+  // Note deprecation in logs when DEBUG is enabled
+  if (process.env.DEBUG) {
+    console.warn('[Deprecation] /healthz endpoint is deprecated, use /health instead')
+  }
+  return healthCheckHandler(request, reply)
+})
 
 fastify.post('/v1/messages/count_tokens', async (request, reply) => {
   try {
@@ -446,11 +588,31 @@ fastify.post('/v1/debug/echo', async (request, reply) => {
       key: key ? '***REDACTED***' : null
     })
 
+    // Model selection order documentation
+    const modelSelectionOrder = [
+      '1. Explicit model parameter in request (highest priority)',
+      '2. REASONING_MODEL env var (if thinking=true)',
+      '3. COMPLETION_MODEL env var (default)',
+      '4. Hardcoded default: google/gemini-2.0-pro-exp-02-05:free (fallback)'
+    ]
+    
+    // Determine selection reason
+    let selectionReason = 'explicit request'
+    if (!payload.model) {
+      if (payload.thinking) {
+        selectionReason = 'REASONING_MODEL env var (thinking=true)'
+      } else {
+        selectionReason = 'COMPLETION_MODEL env var (default)'
+      }
+    }
+    
     return {
       debug: true,
       modelSelection: {
         requestedModel: payload.model || null,
         selectedModel,
+        selectionReason,
+        order: modelSelectionOrder,
         reasoningModel: models.reasoning,
         completionModel: models.completion,
         wasOverridden: !payload.model,
@@ -477,12 +639,64 @@ fastify.post('/v1/messages', async (request, reply) => {
     const requestStartMs = Date.now()
     let firstChunkLogged = false
     let ttfbMs = null
+    
+    // Comment 1: Gate requests until endpoint kind is determined for custom providers
+    if (provider === 'custom' && endpointKind === ENDPOINT_KIND.UNKNOWN) {
+      // Start negotiation if not already in progress
+      if (!negotiationPromise && key) {
+        negotiationPromise = negotiateEndpointKind(baseUrl, key)
+          .then(result => {
+            endpointKind = result.kind
+            detectionSource = 'probe'
+            lastProbedAt = result.lastProbedAt
+            if (process.env.DEBUG) {
+              console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`)
+            }
+            negotiationPromise = null
+            return result
+          })
+          .catch(err => {
+            console.warn(`[Negotiation] Failed:`, err.message)
+            // Fallback to heuristic - use sync inference
+            const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
+            endpointKind = heuristicResult
+            detectionSource = 'heuristic'
+            negotiationPromise = null
+            return { kind: endpointKind }
+          })
+      }
+      
+      // Wait for negotiation to complete
+      if (negotiationPromise) {
+        await negotiationPromise
+      }
+      
+      // If still unknown after negotiation attempt, block request
+      if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
+        reply.code(503)
+        return {
+          error: {
+            message: 'Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.',
+            type: 'negotiation_pending',
+            hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
+          }
+        }
+      }
+    }
+    
     const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE
 
     if (!key) {
       reply.code(400)
+      const hint = isAnthropicNative
+        ? `Store the provider API key in the extension (Thronekeeper: Store ${provider === 'deepseek' ? 'Deepseek' : provider === 'glm' ? 'GLM' : provider} API Key) or set the correct env var (${provider === 'deepseek' ? 'DEEPSEEK_API_KEY' : provider === 'glm' ? 'ZAI_API_KEY or GLM_API_KEY' : 'API_KEY'}), and confirm the provider switch in settings.`
+        : `Use Authorization: Bearer <token> header or configure ${provider === 'openrouter' ? 'OpenRouter' : provider} API key in the extension settings.`
       return {
-        error: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`,
+        error: {
+          message: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`,
+          type: 'missing_api_key',
+          hint
+        }
       }
     }
 
@@ -537,6 +751,56 @@ fastify.post('/v1/messages', async (request, reply) => {
       }
 
       if (payload.stream === true) {
+        // Check for non-2xx status before starting SSE stream
+        if (!upstreamResponse.ok) {
+          // Surface upstream non-2xx as SSE error event
+          reply.raw.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive'
+          })
+          
+          let errorBody = ''
+          try {
+            // Read truncated error body (limit to 1000 chars to avoid large responses)
+            const reader = upstreamResponse.body?.getReader()
+            if (reader) {
+              const decoder = new TextDecoder('utf-8')
+              let done = false
+              let bodyLength = 0
+              while (!done && bodyLength < 1000) {
+                const { value, done: doneReading } = await reader.read()
+                done = doneReading
+                if (value) {
+                  const chunk = decoder.decode(value, { stream: true })
+                  errorBody += chunk
+                  bodyLength += chunk.length
+                  if (bodyLength >= 1000) break
+                }
+              }
+            }
+          } catch (err) {
+            errorBody = upstreamResponse.statusText || 'Unknown error'
+          }
+          
+          // Truncate error body if too long
+          const truncatedBody = errorBody.length > 1000 
+            ? errorBody.substring(0, 1000) + '...'
+            : errorBody
+          
+          // Emit single error event and end stream
+          sendSSE(reply, 'error', {
+            type: 'error',
+            error: {
+              type: 'upstream_error',
+              message: `Upstream returned ${upstreamResponse.status}: ${truncatedBody}`,
+              status: upstreamResponse.status
+            }
+          })
+          reply.raw.end()
+          return
+        }
+        
         reply.raw.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -574,13 +838,13 @@ fastify.post('/v1/messages', async (request, reply) => {
           console.error('[Error] Anthropic stream relay failed:', streamErr)
           if (!reply.raw.writableEnded) {
             try {
-              reply.raw.write(`event: error\ndata: ${JSON.stringify({
+              sendSSE(reply, 'error', {
                 type: 'error',
                 error: {
                   type: 'internal_error',
                   message: streamErr.message
                 }
-              })}\n\n`)
+              })
             } catch {}
             reply.raw.end()
           }
@@ -598,6 +862,14 @@ fastify.post('/v1/messages', async (request, reply) => {
         reply.type('application/json').send({ error: text })
       }
       return
+    }
+
+    // Comment 2: Guard - never run OpenAI↔Anthropic mapping when endpoint-kind is Anthropic
+    // At this point, isAnthropicNative is false, so we proceed with OpenAI-compatible flow
+    if (endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE) {
+      console.error('[Guard Violation] Anthropic-native endpoint reached OpenAI conversion path - this should not happen')
+      reply.code(500)
+      return { error: { message: 'Internal error: endpoint kind mismatch', type: 'internal_error' } }
     }
 
     // Build messages array for the OpenAI payload.
@@ -668,6 +940,9 @@ fastify.post('/v1/messages', async (request, reply) => {
     const selectedModel = payload.model 
       || (payload.thinking ? models.reasoning : models.completion)
     
+    // Comment 7: Enhanced logging of incoming payload.model and payload.thinking
+    console.log(`[Model Selection] Incoming payload.model: ${payload.model || 'none'}, payload.thinking: ${payload.thinking || false}`)
+    
     // Enhanced model selection logging
     const modelSource = payload.model ? 'explicit request' 
       : (payload.thinking ? 'REASONING_MODEL env var' : 'COMPLETION_MODEL env var')
@@ -689,8 +964,17 @@ fastify.post('/v1/messages', async (request, reply) => {
       console.log(`[Model] Using requested model: ${selectedModel}`)
     }
 
+    // Comment 4: Check tool calling capability for OpenRouter models
+    const supportsToolCalling = modelSupportsToolCalling(selectedModel, provider)
+    let shouldDropTools = false
+    
+    if (provider === 'openrouter' && tools.length > 0 && !supportsToolCalling) {
+      console.warn(`[Tool Capability] Model ${selectedModel} does not support tool calling. Stripping tools and tool_choice.`)
+      shouldDropTools = true
+    }
+    
     // Conditionally inject XML tool instructions for models that need them
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
+    const needsXMLTools = !shouldDropTools && tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
     const messagesWithXML = needsXMLTools
       ? injectXMLToolInstructions(messages, tools)
       : messages
@@ -703,9 +987,23 @@ fastify.post('/v1/messages', async (request, reply) => {
       stream: payload.stream === true,
     }
     
-    // Add native tools parameter for models that support it
-    if (!needsXMLTools && tools.length > 0) {
+    // Add native tools parameter for models that support it (only if not dropping tools)
+    if (!shouldDropTools && !needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools
+      if (payload.tool_choice) {
+        openaiPayload.tool_choice = payload.tool_choice
+      }
+    } else if (shouldDropTools && tools.length > 0) {
+      // Comment 4: Inject text-based tool instructions when tools are dropped
+      const toolInstructions = tools.map(t => `- ${t.function.name}: ${t.function.description || 'No description'}`).join('\n')
+      const instructionText = `The following tools are available. Describe which tool you would use and with what parameters:\n\n${toolInstructions}`
+      if (messagesWithXML.length > 0 && messagesWithXML[messagesWithXML.length - 1].role === 'user') {
+        messagesWithXML[messagesWithXML.length - 1].content += '\n\n' + instructionText
+      } else {
+        messagesWithXML.push({ role: 'user', content: instructionText })
+      }
+      openaiPayload.messages = messagesWithXML
+      console.log(`[Tool Capability] Injected text-based tool instructions for ${selectedModel}`)
     }
     
     debug('OpenAI payload:', openaiPayload)
@@ -746,6 +1044,56 @@ fastify.post('/v1/messages', async (request, reply) => {
     console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`)
 
     if (!openaiResponse.ok) {
+      // For streaming requests, surface non-2xx as SSE error event
+      if (openaiPayload.stream) {
+        reply.raw.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive'
+        })
+        
+        let errorBody = ''
+        try {
+          // Read truncated error body (limit to 1000 chars)
+          const reader = openaiResponse.body?.getReader()
+          if (reader) {
+            const decoder = new TextDecoder('utf-8')
+            let done = false
+            let bodyLength = 0
+            while (!done && bodyLength < 1000) {
+              const { value, done: doneReading } = await reader.read()
+              done = doneReading
+              if (value) {
+                const chunk = decoder.decode(value, { stream: true })
+                errorBody += chunk
+                bodyLength += chunk.length
+                if (bodyLength >= 1000) break
+              }
+            }
+          }
+        } catch (err) {
+          errorBody = openaiResponse.statusText || 'Unknown error'
+        }
+        
+        // Truncate error body if too long
+        const truncatedBody = errorBody.length > 1000 
+          ? errorBody.substring(0, 1000) + '...'
+          : errorBody
+        
+        // Emit single error event and end stream
+        sendSSE(reply, 'error', {
+          type: 'error',
+          error: {
+            type: 'upstream_error',
+            message: `Upstream returned ${openaiResponse.status}: ${truncatedBody}`,
+            status: openaiResponse.status
+          }
+        })
+        reply.raw.end()
+        return
+      }
+      
+      // Non-streaming: return JSON error
       const errorDetails = await openaiResponse.text()
       
       // Parse error response

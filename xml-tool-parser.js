@@ -6,8 +6,8 @@
  * maintaining the correct order and position of text vs tools.
  */
 
-// Known tool names from Claude Code MCP tools
-const KNOWN_TOOLS = new Set([
+// Default known tool names from Claude Code MCP tools
+const DEFAULT_KNOWN_TOOLS = new Set([
   // File operations
   'Read', 'Write', 'Edit', 'Create', 'MultiEdit',
   // Execution
@@ -37,11 +37,45 @@ const KNOWN_TOOLS = new Set([
   'ask_followup_question'
 ])
 
+// Registry for dynamically registered tools
+let toolRegistry = new Set(DEFAULT_KNOWN_TOOLS)
+
+/**
+ * Register additional tool names dynamically
+ * @param {string[]|Set<string>} tools - Tool names to add
+ */
+export function registerTools(tools) {
+  if (Array.isArray(tools)) {
+    tools.forEach(tool => toolRegistry.add(tool))
+  } else if (tools instanceof Set) {
+    tools.forEach(tool => toolRegistry.add(tool))
+  } else if (typeof tools === 'string') {
+    toolRegistry.add(tools)
+  }
+}
+
+/**
+ * Get current tool registry
+ * @returns {Set<string>} Copy of current tool registry
+ */
+export function getKnownTools() {
+  return new Set(toolRegistry)
+}
+
+/**
+ * Reset tool registry to defaults
+ */
+export function resetToolRegistry() {
+  toolRegistry = new Set(DEFAULT_KNOWN_TOOLS)
+}
+
 /**
  * Main parsing function - uses character-by-character parsing to extract
  * text and tool blocks while preserving their order and position
+ * @param {string} content - The content to parse
+ * @param {Set<string>|string[]} [knownTools] - Optional set/array of known tool names. If not provided, uses registry.
  */
-export function parseAssistantMessage(content) {
+export function parseAssistantMessage(content, knownTools = null) {
   // Safety check for invalid content
   if (!content || typeof content !== 'string') {
     console.warn('[XML Parser] Invalid content received:', content)
@@ -52,13 +86,18 @@ export function parseAssistantMessage(content) {
   }
 
   try {
+    // Use provided knownTools or fall back to registry
+    const toolsToCheck = knownTools 
+      ? (knownTools instanceof Set ? knownTools : new Set(knownTools))
+      : toolRegistry
+    
     const contentBlocks = []
     let currentTextStart = 0
     let i = 0
 
     while (i < content.length) {
       // Check if we're at the start of a known tool tag
-      const toolMatch = findToolTag(content, i)
+      const toolMatch = findToolTag(content, i, toolsToCheck)
       
       if (toolMatch) {
         // Extract any text BEFORE this tool
@@ -129,8 +168,11 @@ export function parseAssistantMessage(content) {
 /**
  * Find a known tool tag starting at the given index
  * Returns the tool name and tag end position, or null if not found
+ * @param {string} content - Content to search
+ * @param {number} startIndex - Index to start searching from
+ * @param {Set<string>} knownTools - Set of known tool names
  */
-function findToolTag(content, startIndex) {
+function findToolTag(content, startIndex, knownTools) {
   if (content[startIndex] !== '<') {
     return null
   }
@@ -159,11 +201,16 @@ function findToolTag(content, startIndex) {
   }
 
   // Check if this is a known tool
-  if (KNOWN_TOOLS.has(tagName)) {
+  if (knownTools.has(tagName)) {
     return {
       toolName: tagName,
       tagEndIndex: i + 1
     }
+  }
+
+  // Warn about unknown but tool-like tags (for metrics)
+  if (tagName && /^[A-Z]/.test(tagName) && !tagName.includes(' ')) {
+    console.warn(`[XML Parser] Encountered unknown tool-like tag: <${tagName}>. Consider registering it.`)
   }
 
   return null
@@ -245,24 +292,37 @@ function parseToolParameters(toolContent) {
   return params
 }
 
+// Monotonic counter for tool call IDs (ensures stable, collision-free IDs)
+let toolIdCounter = 0
+
 /**
- * Generate a unique tool call ID
+ * Generate a unique tool call ID using a monotonic counter
+ * Format: toolu_<timestamp>_<counter> ensures uniqueness and stability
  */
 function generateToolId() {
-  return `toolu_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  toolIdCounter++
+  const timestamp = Date.now()
+  // Use counter for uniqueness within the same millisecond
+  return `toolu_${timestamp}_${toolIdCounter.toString(36)}`
 }
 
 /**
  * Check if content has any XML tool calls
  * (Useful for quick detection without full parsing)
+ * @param {string} content - Content to check
+ * @param {Set<string>|string[]} [knownTools] - Optional set/array of known tool names
  */
-export function hasXMLToolCalls(content) {
+export function hasXMLToolCalls(content, knownTools = null) {
   if (!content || typeof content !== 'string') {
     return false
   }
 
+  const toolsToCheck = knownTools 
+    ? (knownTools instanceof Set ? knownTools : new Set(knownTools))
+    : toolRegistry
+
   // Check if any known tool tags are present
-  for (const toolName of KNOWN_TOOLS) {
+  for (const toolName of toolsToCheck) {
     if (content.includes(`<${toolName}>`)) {
       return true
     }

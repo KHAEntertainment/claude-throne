@@ -1,9 +1,9 @@
 {
-  "name": "claude-throne",
+  "name": "thronekeeper",
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.17",
+  "version": "1.5.52",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -26,27 +26,15 @@
   ],
   "contributes": {
     "viewsContainers": {
-      "panel": [
-        {
-          "id": "claudeThronePanel",
-          "title": "Thronekeeper"
-        }
-      ],
       "activitybar": [
         {
           "id": "claudeThrone",
-          "title": "Thronekeeper"
+          "title": "Thronekeeper",
+          "icon": "images/thronekeeper-logo.jpg"
         }
       ]
     },
     "views": {
-      "claudeThronePanel": [
-        {
-          "id": "claudeThrone.panel",
-          "name": "Thronekeeper",
-          "type": "webview"
-        }
-      ],
       "claudeThrone": [
         {
           "id": "claudeThrone.activity",
@@ -74,11 +62,11 @@
       },
       {
         "command": "claudeThrone.storeDeepseekKey",
-        "title": "Claude Throne: Store Deepseek API Key"
+        "title": "Thronekeeper: Store Deepseek API Key"
       },
       {
         "command": "claudeThrone.storeGlmKey",
-        "title": "Claude Throne: Store GLM API Key"
+        "title": "Thronekeeper: Store GLM API Key"
       },
       {
         "command": "claudeThrone.storeCustomKey",
@@ -87,6 +75,10 @@
       {
         "command": "claudeThrone.storeAnyKey",
         "title": "Thronekeeper: Store Provider API Key"
+      },
+      {
+        "command": "claudeThrone.storeAnthropicKey",
+        "title": "Thronekeeper: Store Anthropic API Key"
       },
       {
         "command": "claudeThrone.startProxy",
@@ -107,6 +99,10 @@
       {
         "command": "claudeThrone.revertApply",
         "title": "Thronekeeper: Revert to Claude Defaults"
+      },
+      {
+        "command": "claudeThrone.checkConfigHealth",
+        "title": "Thronekeeper: Check Configuration Health"
       }
     ],
     "configuration": {
@@ -117,22 +113,36 @@
           "default": 3000,
           "minimum": 1,
           "maximum": 65535,
-          "markdownDescription": "Port for the bundled proxy server. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
+          "markdownDescription": "Port for the bundled proxy server."
         },
         "claudeThrone.proxy.debug": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable DEBUG=1 for the bundled proxy. Other configuration (provider, custom URL, models) is now handled in the Thronekeeper panel (View → Thronekeeper)."
+          "markdownDescription": "Enable debug logging for the proxy server."
         },
         "claudeThrone.proxy.skipHealthCheck": {
           "type": "boolean",
           "default": false,
           "markdownDescription": "Skip health check during proxy startup for instant initialization. Enable if experiencing startup delays."
         },
+        "claudeThrone.proxy.startupTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 1000,
+          "maximum": 30000,
+          "markdownDescription": "Timeout in milliseconds for waiting for proxy to start listening on port. Default: 3000ms (3 seconds)."
+        },
+        "claudeThrone.proxy.healthTimeoutMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "markdownDescription": "Timeout in milliseconds for individual health check requests. Default: 500ms."
+        },
         "claudeThrone.autoApply": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Automatically apply proxy configuration to Claude Code when the proxy starts. The extension writes the proxy URL and model configuration to `.claude/settings.json`. Disable if you prefer manual control via the 'Apply to Claude Code' button."
+          "markdownDescription": "## Auto-Apply Settings\n\nControl how Thronekeeper applies configuration to Claude Code when the proxy starts.\n\nWhen enabled, the extension writes the proxy URL and model configuration to `.claude/settings.json`."
         },
         "claudeThrone.applyToExtensions": {
           "type": "boolean",
@@ -161,37 +171,30 @@
             "openai",
             "anthropic"
           ],
-          "markdownDescription": "Detection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
+          "markdownDescription": "## Advanced Settings\n\nDetection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
         },
         "claudeThrone.twoModelMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Enable three-model mode to use separate models for reasoning, coding, and value tasks. When disabled, the reasoning model is used for all operations."
+          "markdownDescription": "## Model Configuration\n\nEnable three-model mode to use separate models for reasoning, coding, and value tasks.\n\n**Note:** Model selection is now managed through the Thronekeeper panel (View → Thronekeeper)."
         },
         "claudeThrone.reasoningModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The reasoning model for complex problem-solving tasks (maps to Opus tier in Claude Code)."
         },
         "claudeThrone.completionModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The coding model for balanced development tasks (maps to Sonnet tier in Claude Code)."
         },
         "claudeThrone.valueModel": {
           "type": "string",
           "default": "",
+          "scope": "window",
           "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
-        },
-        "claudeThrone.customCombos": {
-          "type": "array",
-          "default": [],
-          "markdownDescription": "User-saved model combinations (global)."
-        },
-        "claudeThrone.workspaceCombos": {
-          "type": "array",
-          "default": [],
-          "markdownDescription": "User-saved model combinations (workspace-specific)."
         },
         "claudeThrone.savedCombos": {
           "type": "array",
@@ -214,7 +217,32 @@
             }
           },
           "scope": "window",
-          "markdownDescription": "User-saved model combinations for quick access."
+          "markdownDescription": "## Saved Configurations\n\nManage your saved model combos and custom providers through the Thronekeeper panel.\n\nThese are automatically saved when you use the 'Save Model Combo' feature."
+        },
+        "claudeThrone.customProviders": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "baseUrl",
+              "id"
+            ]
+          },
+          "scope": "window",
+          "markdownDescription": "Saved custom provider configurations. Each provider can have its own name, base URL, and API key. Manage these through the Thronekeeper panel."
         },
         "claudeThrone.provider": {
           "type": "string",
@@ -228,7 +256,13 @@
             "custom"
           ],
           "scope": "window",
-          "markdownDescription": "AI provider to use for model routing."
+          "markdownDescription": "## Provider Configuration\n\nSelect your AI provider from the dropdown. Saved custom providers will appear here automatically.\n\n**Note:** Provider selection and API keys are now managed through the Thronekeeper panel (View → Thronekeeper)."
+        },
+        "claudeThrone.selectedCustomProviderId": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Selected custom provider ID when provider is set to 'custom'."
         },
         "claudeThrone.customBaseUrl": {
           "type": "string",
@@ -251,12 +285,34 @@
             }
           },
           "scope": "application",
-          "markdownDescription": "Cached Anthropic default models (internal use)."
+          "markdownDescription": "## Advanced Settings\n\nCached Anthropic default models (internal use). Updated when you store an Anthropic API key."
+        },
+        "claudeThrone.anthropicDefaultsTimestamp": {
+          "type": "number",
+          "default": 0,
+          "scope": "application",
+          "markdownDescription": "Timestamp when Anthropic defaults were last refreshed (internal use)."
+        },
+        "claudeThrone.modelSelectionsByProvider": {
+          "type": "object",
+          "default": {},
+          "scope": "window",
+          "markdownDescription": "Provider-specific model selections (internal use). Maps provider IDs to selected reasoning, completion, and value models."
         },
         "claudeThrone.customEndpointOverrides": {
           "type": "object",
           "default": {},
           "markdownDescription": "Manual endpoint type overrides per URL (internal use)."
+        },
+        "claudeThrone.claudeCode.apiTimeoutMs": {
+          "type": "number",
+          "default": 3000000,
+          "markdownDescription": "## Claude Code Environment Variables\n\nAPI timeout in milliseconds for Claude Code requests. Default: 3000000 (50 minutes)."
+        },
+        "claudeThrone.claudeCode.disableNonessentialTraffic": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Disable non-essential traffic in Claude Code. When enabled, sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in `.claude/settings.json`."
         }
       }
     }
@@ -266,16 +322,22 @@
     "vscode:prepublish": "npm run bundle:proxy && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "tsc": "./node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {
-    "undici": "^6.18.2"
+    "undici": "^6.22.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.8",
     "esbuild": "^0.21.5",
-    "typescript": "^5.4.0",
+    "typescript": "^5.6.3",
+    "vitest": "^1.4.0",
     "vsce": "^2.15.0"
   }
 }

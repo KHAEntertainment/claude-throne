@@ -4,6 +4,11 @@
 
 The Claude-Throne VS Code extension provides a modern React webview panel for configuring and managing your AI model routing. This guide covers all features and functionality of the webview interface.
 
+**Schema Reference** (Comment 15): For message contracts and configuration schemas, see:
+- `extensions/claude-throne/src/schemas/messages.ts` - Message schemas
+- `extensions/claude-throne/src/schemas/config.ts` - Configuration schemas
+- `CONSTITUTION.md` - Invariants and contracts
+
 ## Accessing the Webview
 
 ### Methods to Open the Panel
@@ -226,3 +231,188 @@ Access via: File → Preferences → Settings → Extensions → Claude Throne
 - **Documentation**: Check docs folder for detailed guides
 
 This webview provides a comprehensive interface for managing your AI model routing needs, with features designed for both beginners and advanced users. The intuitive interface makes it easy to configure providers, manage credentials, and optimize your AI workflow.
+
+---
+
+## Technical Reference (Comment 15)
+
+### Message Contracts and Race Protection
+
+The webview communicates with the extension via strongly-typed message schemas. All messages are validated against Zod schemas located in `extensions/claude-throne/src/schemas/messages.ts`.
+
+#### Token-Based Race Protection (Comment 8)
+
+**Problem**: When users rapidly switch providers or refresh model lists, multiple async requests can complete out-of-order, causing stale data to render.
+
+**Solution**: Sequence token validation ensures only the most recent response is rendered.
+
+**Implementation**:
+```javascript
+// Webview (main.js)
+state.requestTokenCounter++;  // Increment before each request
+const requestToken = `token-${state.requestTokenCounter}`;
+state.currentRequestToken = requestToken;
+
+vscode.postMessage({
+  type: 'requestModels',
+  provider: state.provider,
+  token: requestToken  // Include in request
+});
+
+// Response handler validates token
+function handleModelsLoaded(payload) {
+  const responseToken = payload.token;
+  
+  // Ignore late responses with mismatched tokens
+  if (responseToken !== state.currentRequestToken) {
+    console.log('[IGNORED] Late response with old token');
+    return;
+  }
+  
+  // Only render if provider also matches
+  if (payload.provider !== state.provider) {
+    return;
+  }
+  
+  // Safe to render - this is the current request
+  state.models = payload.models;
+  renderModelList();
+}
+```
+
+**Test Coverage**:
+- `tests/webview-race-protection.test.js` - Validates token mismatch rejection
+- Integration tests ensure provider + token matching prevents stale renders
+
+#### Provider Key Normalization (Comment 5)
+
+**Migration Note**: The 'coding' key is **deprecated** as of v1.4.5. All storage now uses the canonical 'completion' key.
+
+**Backward Compatibility**:
+- **Read**: `completion || coding` - falls back to legacy key if needed
+- **Write**: Only writes 'completion' - migration deletes 'coding' on save
+- **Deprecation Warning**: Logged in DEBUG mode when legacy key is used
+
+**Provider Map Structure**:
+```typescript
+interface ProviderMap {
+  reasoning: string;   // Primary reasoning model
+  completion: string;  // Canonical coding/completion model (NEW)
+  value: string;       // Value-focused model
+  
+  // DEPRECATED - read-only fallback
+  coding?: string;     // Only for backward compat, never written
+}
+```
+
+**Migration Path**:
+1. On first save after upgrade, extension automatically migrates 'coding' → 'completion'
+2. Legacy 'coding' keys are deleted from configuration
+3. Read operations still support fallback for configs not yet migrated
+4. v2.0 will remove all 'coding' support completely
+
+### Per-Provider Caching (Comment 7)
+
+**Cache Behavior**:
+- Models are cached by provider key: `state.modelsCache[provider]`
+- Provider switch only clears the *old* provider's cache, not the entire cache
+- Cache TTL: 5 minutes (reused if fresh)
+
+**Benefits**:
+- Faster provider switching (no reload if cached)
+- Reduces API calls when toggling between providers
+- Preserves model lists for all recently-used providers
+
+**Example**:
+```javascript
+// User on OpenRouter, models cached
+state.modelsCache = {
+  openrouter: [/* 400 models */]
+};
+
+// Switch to GLM
+delete state.modelsCache['openrouter'];  // Clear old provider only
+state.provider = 'glm';
+loadModels();  // Fetches GLM models
+
+state.modelsCache = {
+  openrouter: [/* preserved */],
+  glm: [/* newly loaded */]
+};
+```
+
+### Save Operation Lock (Comment 12)
+
+**Problem**: Config updates can trigger unnecessary model reloads during save round-trip, causing UI flicker.
+
+**Solution**: Provider-tracked lock prevents reloads for the provider being saved.
+
+**Implementation**:
+```javascript
+// Before save
+state.inSaveOperation = true;
+state.inSaveProvider = state.provider;
+
+vscode.postMessage({
+  type: 'saveModels',
+  providerId: state.provider,
+  // ...models
+});
+
+// On save confirmation
+function handleModelsSaved(payload) {
+  // Only clear lock if this is the provider we saved
+  if (payload.providerId === state.inSaveProvider) {
+    state.inSaveOperation = false;
+    state.inSaveProvider = null;
+  }
+}
+
+// Model reload guard
+if (state.inSaveOperation) {
+  console.log('Skipping reload - save in progress');
+  return;
+}
+```
+
+**Why Provider Tracking Matters**:
+- Quick provider switches during save would clear lock prematurely
+- Lock must persist until the *correct* provider's save confirms
+- Prevents race where provider A's save clears lock for provider B's ongoing save
+
+### Event Listener Discipline
+
+**Invariant**: No duplicate event listeners allowed.
+
+**Rules**:
+1. **Cleanup on Provider Change**: Remove old listeners before switching providers
+2. **Debounce Filter Input**: 300ms debounce prevents excessive re-renders
+3. **Single Listener Binding**: Check existing listeners before `addEventListener`
+
+**Anti-Pattern**:
+```javascript
+// WRONG - binds duplicate listeners on each provider change
+providerSelect.addEventListener('change', onProviderChange);
+```
+
+**Correct Pattern**:
+```javascript
+// RIGHT - bind once during setupEventListeners()
+function setupEventListeners() {
+  providerSelect?.addEventListener('change', onProviderChange);
+}
+
+// Called only once during init
+document.addEventListener('DOMContentLoaded', () => {
+  setupEventListeners();
+  // ...
+});
+```
+
+**Test Coverage**:
+- Unit tests spy on `addEventListener` call count
+- Smoke tests verify no console errors about duplicate listeners
+
+---
+
+*For complete technical specifications, see `CONSTITUTION.md` and schema files in `extensions/claude-throne/src/schemas/`.*

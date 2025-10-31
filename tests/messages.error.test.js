@@ -25,5 +25,40 @@ describe('POST /v1/messages (errors)', () => {
       upstream.server.close()
     }
   })
+
+  it('sends SSE error event for non-200 streaming responses', async () => {
+    const upstream = await startUpstreamMock({ 
+      mode: 'sse', 
+      statusCode: 400,
+      sseChunks: [],
+      sseTerminator: ''
+    })
+    const proxyPort = 3115
+    const child = await spawnProxyProcess({
+      port: proxyPort,
+      baseUrl: `http://127.0.0.1:${upstream.port}`,
+      env: { 
+        CUSTOM_API_KEY: 'testkey'
+      },
+      isolateEnv: true
+    })
+
+    try {
+      const res = await request(`http://127.0.0.1:${proxyPort}`)
+        .post('/v1/messages')
+        .set('content-type', 'application/json')
+        .send({ messages: [{ role: 'user', content: 'Say hi' }], stream: true })
+        .expect(200) // SSE always returns 200, errors are in events
+      
+      // Check that response contains error event (Comment 8: upstream non-2xx surfaced as event:error)
+      const text = res.text
+      expect(text).toMatch(/event: error/)
+      expect(text).toMatch(/upstream_error/)
+      expect(text).toMatch(/status.*400/)
+    } finally {
+      await stopChild(child)
+      upstream.server.close()
+    }
+  })
 })
 
