@@ -144,9 +144,9 @@ jobs:
           npm ci
 
       - name: Type check root
-        run: npx tsc --noEmit
+        run: npx --yes typescript@latest tsc --noEmit
 
       - name: Type check extension
         run: |
           cd extensions/claude-throne
-          npx tsc --noEmit
+          npx --package=typescript@latest tsc --noEmit

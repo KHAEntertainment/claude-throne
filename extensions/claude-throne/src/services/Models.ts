@@ -15,6 +15,7 @@ export type ProviderId = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'gl
  * @returns The parsed JSON response body returned by the endpoint.
  * @throws Error with property `errorType === 'timeout'` when the overall budget is exceeded or when a final timeout occurs.
  * @throws Error for non-200 HTTP responses; messages include the status code and may include a short response snippet.
+ */
 async function fetchModelsWithRetry(
   url: string, 
   headers: Record<string, string>, 
