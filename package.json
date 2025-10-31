@@ -1,7 +1,7 @@
 {
   "name": "anthropic-proxy",
   "description": "Universal AI model routing for Claude Code with VS Code extension and secure credential management.",
-  "version": "1.5.45",
+  "version": "1.5.51",
   "type": "module",
   "bin": {
     "anthropic-proxy": "index.js"
