@@ -106,16 +106,16 @@ jobs:
 
       - name: Check for VSIX files
         run: |
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q '\.vsix$'; then
+          if git diff --name-only origin/"${{ github.base_ref }}"...HEAD | grep -q '\.vsix$'; then
             echo "❌ Error: VSIX files detected in diff. These should not be committed."
             echo "Please remove .vsix files from the commit."
-            git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.vsix$'
+            git diff --name-only origin/"${{ github.base_ref }}"...HEAD | grep '\.vsix$'
             exit 1
           fi
 
       - name: Check for large binary files (>1MB)
         run: |
-          large_files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | xargs -I {} find {} -type f -size +1M 2>/dev/null || true)
+          large_files=$(git diff --name-only origin/"${{ github.base_ref }}"...HEAD | xargs -I {} find {} -type f -size +1M 2>/dev/null || true)
           if [ -n "$large_files" ]; then
             echo "❌ Error: Large binary files detected (>1MB). These should not be committed."
             echo "$large_files"

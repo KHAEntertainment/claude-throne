@@ -262,81 +262,119 @@ Before creating PR:
 
 ### Test Scaffold Examples
 
-#### Provider-Aware handleModelsLoaded Test
+#### Provider-Aware handleModelsLoaded Test (Template: tests/webview-race-protection.test.js)
 ```javascript
-// tests/provider-model-loading.test.js
-test('handleModelsLoaded respects provider and sequence token', async () => {
-  const { handleModelsLoaded } = await import('../webview/main.js');
-  const setState = vi.fn();
-  
-  // Initial state with provider A
-  let state = { provider: 'openrouter', requestToken: 'token1' };
-  
-  // Response from correct provider with matching token
-  const payload = {
-    provider: 'openrouter',
-    models: [/* model data */],
-    token: 'token1'
-  };
-  
-  handleModelsLoaded(payload, setState, state);
-  expect(setState).toHaveBeenCalledWith(expect.objectContaining({
-    models: expect.any(Array),
-    provider: 'openrouter'
-  }));
-  
-  // Late response from different provider should be ignored
-  const latePayload = {
-    provider: 'glm',
-    models: [/* different model data */],
-    token: 'token1'
-  };
-  
-  setState.mockClear();
-  handleModelsLoaded(latePayload, setState, state);
-  expect(setState).not.toHaveBeenCalled();
-});
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { JSDOM } from 'jsdom'
+
+// This template mirrors the production logic in webview/main.js.
+// Note: handleModelsLoaded(payload) takes a single parameter; it uses internal state.
+
+describe('Provider-aware model loading', () => {
+  let window, document, mockVscode, state
+
+  beforeEach(() => {
+    // jsdom + VS Code API mock (mirrors tests/webview-race-protection.test.js)
+    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>')
+    window = dom.window
+    document = window.document
+    global.window = window
+    global.document = document
+
+    mockVscode = { postMessage: vi.fn(), getState: vi.fn(() => ({})), setState: vi.fn() }
+    global.acquireVsCodeApi = () => mockVscode
+
+    // Minimal state used by handleModelsLoaded
+    state = {
+      provider: 'openrouter',
+      currentRequestToken: 'token-1',
+      models: [],
+      modelsCache: {}
+    }
+
+    // Test-scoped version using the production semantics (single-arg signature)
+    function handleModelsLoaded(payload) {
+      if (!payload || !Array.isArray(payload.models) || payload.models.length === 0) return
+      const provider = payload.provider || state.provider
+      const responseToken = payload.token
+
+      // Token validation – ignore late responses
+      if (responseToken && state.currentRequestToken && responseToken !== state.currentRequestToken) return
+
+      // Cache by provider
+      state.modelsCache[provider] = payload.models
+
+      // Only render when current provider matches
+      if (provider !== state.provider) return
+
+      state.models = payload.models
+    }
+
+    // Expose to test scope
+    global._handleModelsLoaded = handleModelsLoaded
+  })
+
+  it('accepts matching provider and token', () => {
+    const payload = { provider: 'openrouter', models: [{ id: 'or/model-1' }], token: 'token-1' }
+    global._handleModelsLoaded(payload)
+    expect(Array.isArray(state.models)).toBe(true)
+    expect(state.models).toHaveLength(1)
+    expect(state.modelsCache.openrouter).toHaveLength(1)
+  })
+
+  it('ignores cross-provider responses but caches them', () => {
+    const payload = { provider: 'glm', models: [{ id: 'glm/model-1' }], token: 'token-1' }
+    global._handleModelsLoaded(payload)
+    expect(state.models).toHaveLength(0)
+    expect(state.modelsCache.glm).toHaveLength(1)
+  })
+
+  it('ignores late response by token mismatch', () => {
+    const payload = { provider: 'openrouter', models: [{ id: 'or/model-2' }], token: 'token-2' }
+    global._handleModelsLoaded(payload)
+    expect(state.models).toHaveLength(0)
+    expect(state.modelsCache.openrouter).toBeUndefined()
+  })
+})
 ```
 
-#### Start/Stop Hydration Test
+#### Start/Stop Hydration Test (Template: tests/start-stop-hydration.test.js)
 ```javascript
-// tests/start-stop-hydration.test.js
-test('startProxy hydrates globals from active provider before apply', async () => {
-  const mockSettings = {
-    get: vi.fn(),
-    update: vi.fn()
-  };
-  
-  const mockGlobalState = {
-    get: vi.fn().mockReturnValue({
-      modelSelectionsByProvider: {
-        openrouter: {
-          reasoning: 'claude-3.5-sonnet',
-          completion: 'claude-3.5-haiku',
-          value: 'claude-3-opus'
+import { describe, it, expect, vi } from 'vitest'
+
+// Template: create this file if it doesn't exist. Focus is on hydrating legacy
+// globals (reasoningModel, completionModel, valueModel) from the active provider
+// before applying settings.
+
+describe('Start/Stop hydration', () => {
+  it('hydrates globals from active provider before apply', async () => {
+    const mockSettings = { get: vi.fn(), update: vi.fn() }
+    const mockGlobalState = {
+      get: vi.fn().mockReturnValue({
+        modelSelectionsByProvider: {
+          openrouter: {
+            reasoning: 'claude-3.5-sonnet',
+            completion: 'claude-3.5-haiku',
+            value: 'claude-3-opus'
+          }
         }
-      }
-    }),
-    update: vi.fn()
-  };
-  
-  // Simulate provider switch without legacy globals
-  const activeProvider = 'openrouter';
-  
-  const result = await startProxy(activeProvider, mockSettings, mockGlobalState);
-  
-  // Verify hydration happened before apply
-  expect(mockSettings.update).toHaveBeenCalledWith(
-    'claude-throne.anthropic',
-    expect.objectContaining({
-      reasoningModel: 'claude-3.5-sonnet',    // Hydrated from provider
-      completionModel: 'claude-3.5-haiku',   // Hydrated from provider
-      valueModel: 'claude-3-opus'           // Hydrated from provider
-    })
-  );
-});
+      }),
+      update: vi.fn()
+    }
+
+    // Pseudocode: call your startProxy/start flow here and assert updates
+    // const result = await startProxy('openrouter', mockSettings, mockGlobalState)
+    // expect(mockSettings.update).toHaveBeenCalledWith('reasoningModel', 'claude-3.5-sonnet', expect.anything())
+    // expect(mockSettings.update).toHaveBeenCalledWith('completionModel', 'claude-3.5-haiku', expect.anything())
+    // expect(mockSettings.update).toHaveBeenCalledWith('valueModel', 'claude-3-opus', expect.anything())
+  })
+})
 ```
 
+Notes:
+- These are templates; align file names with existing tests or add new ones.
+- The handleModelsLoaded(payload) signature matches webview/main.js usage.
+- Setup (JSDOM + acquireVsCodeApi) mirrors tests/webview-race-protection.test.js.
 ### Debug Mode and Troubleshooting
 
 Enable comprehensive debug logging:
