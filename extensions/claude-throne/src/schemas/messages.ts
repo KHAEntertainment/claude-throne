@@ -5,10 +5,49 @@
  * to prevent race conditions, stale data rendering, and configuration mismatches.
  * 
  * Schema Version: 1.0.0
- * Last Updated: 2025-10-28
+ * Last Updated: 2025-10-31
  */
 
 import { z } from 'zod'
+
+// ============================================================================
+// Legacy Message Type Normalization
+// ============================================================================
+
+/**
+ * Maps legacy message types to their canonical equivalents
+ */
+const LEGACY_TYPE_MAP: Record<string, string> = {
+  'keys': 'keysLoaded',
+  'anthropicKeyStored': 'keyStored',
+  'comboDeleted': 'combosLoaded',
+  'customProviderDeleted': 'customProvidersLoaded',
+  'modelsError': 'proxyError',
+  'listPublicModels': 'requestModels',
+  'listFreeModels': 'requestModels',
+  'storeAnthropicKey': 'storeKey',
+  'stopProxy': 'proxyControl',
+  'revertApply': 'proxyControl',
+  'deleteCombo': 'saveCombo',
+  'deleteCustomProvider': 'saveCustomProvider'
+}
+
+/**
+ * Normalizes legacy message types to canonical types before validation
+ * Use this when receiving messages from the webview or untrusted sources
+ */
+export function normalizeMessageType(message: any): any {
+  if (!message || typeof message !== 'object' || !message.type) {
+    return message
+  }
+  
+  const canonicalType = LEGACY_TYPE_MAP[message.type]
+  if (canonicalType) {
+    return { ...message, type: canonicalType }
+  }
+  
+  return message
+}
 
 // ============================================================================
 // Core Data Types
@@ -150,7 +189,7 @@ export type PopularModelsMessage = z.infer<typeof PopularModelsMessageSchema>
  * Keys loaded message
  */
 export const KeysLoadedMessageSchema = z.object({
-  type: z.union([z.literal('keysLoaded'), z.literal('keys')]),
+  type: z.literal('keysLoaded'),
   payload: z.union([
     z.object({
       keyStatus: z.record(z.string(), z.boolean()).optional()
@@ -165,7 +204,7 @@ export type KeysLoadedMessage = z.infer<typeof KeysLoadedMessageSchema>
  * Key stored confirmation message
  */
 export const KeyStoredMessageSchema = z.object({
-  type: z.union([z.literal('keyStored'), z.literal('anthropicKeyStored')]),
+  type: z.literal('keyStored'),
   payload: z.object({
     provider: z.string().optional(),
     success: z.boolean(),
@@ -195,7 +234,7 @@ export type ModelsSavedMessage = z.infer<typeof ModelsSavedMessageSchema>
  * Combos loaded message
  */
 export const CombosLoadedMessageSchema = z.object({
-  type: z.union([z.literal('combosLoaded'), z.literal('comboDeleted')]),
+  type: z.literal('combosLoaded'),
   payload: z.object({
     combos: z.array(ModelComboSchema)
   })
@@ -207,7 +246,7 @@ export type CombosLoadedMessage = z.infer<typeof CombosLoadedMessageSchema>
  * Custom providers loaded message
  */
 export const CustomProvidersLoadedMessageSchema = z.object({
-  type: z.union([z.literal('customProvidersLoaded'), z.literal('customProviderDeleted')]),
+  type: z.literal('customProvidersLoaded'),
   payload: z.object({
     providers: z.array(CustomProviderSchema),
     deletedId: z.string().optional()
@@ -234,7 +273,7 @@ export const ErrorMessagePayloadSchema = z.object({
  * Comment 1: Always use structured payload format (never plain strings)
  */
 export const ErrorMessageSchema = z.object({
-  type: z.union([z.literal('proxyError'), z.literal('modelsError')]),
+  type: z.literal('proxyError'),
   payload: ErrorMessagePayloadSchema  // Always structured, never plain string
 })
 
@@ -264,7 +303,7 @@ export type ExtensionToWebviewMessage = z.infer<typeof ExtensionToWebviewMessage
  * Request models message (with optional token for response matching)
  */
 export const RequestModelsMessageSchema = z.object({
-  type: z.union([z.literal('requestModels'), z.literal('listPublicModels'), z.literal('listFreeModels')]),
+  type: z.literal('requestModels'),
   provider: z.string().optional(),
   token: z.string().optional()  // Sequence token to match with response
 })
@@ -299,7 +338,7 @@ export type UpdateProviderMessage = z.infer<typeof UpdateProviderMessageSchema>
  * Store key message
  */
 export const StoreKeyMessageSchema = z.object({
-  type: z.union([z.literal('storeKey'), z.literal('storeAnthropicKey')]),
+  type: z.literal('storeKey'),
   provider: z.string().optional(),
   key: z.string()
 })
@@ -310,7 +349,21 @@ export type StoreKeyMessage = z.infer<typeof StoreKeyMessageSchema>
  * Start/Stop proxy messages
  */
 export const ProxyControlMessageSchema = z.object({
-  type: z.union([z.literal('startProxy'), z.literal('stopProxy'), z.literal('revertApply')])
+  type: z.literal('startProxy')
+})
+
+/**
+ * Stop proxy message
+ */
+export const StopProxyMessageSchema = z.object({
+  type: z.literal('stopProxy')
+})
+
+/**
+ * Revert apply message
+ */
+export const RevertApplyMessageSchema = z.object({
+  type: z.literal('revertApply')
 })
 
 export type ProxyControlMessage = z.infer<typeof ProxyControlMessageSchema>
@@ -326,30 +379,47 @@ export const ToggleTwoModelModeMessageSchema = z.object({
 export type ToggleTwoModelModeMessage = z.infer<typeof ToggleTwoModelModeMessageSchema>
 
 /**
- * Save/Delete combo messages
+ * Save combo message
  */
-export const ComboManagementMessageSchema = z.object({
-  type: z.union([z.literal('saveCombo'), z.literal('deleteCombo')]),
+export const SaveComboMessageSchema = z.object({
+  type: z.literal('saveCombo'),
   name: z.string().optional(),
   reasoningModel: z.string().optional(),
   codingModel: z.string().optional(),
-  valueModel: z.string().optional(),
-  index: z.number().optional()
+  valueModel: z.string().optional()
 })
 
-export type ComboManagementMessage = z.infer<typeof ComboManagementMessageSchema>
+/**
+ * Delete combo message
+ */
+export const DeleteComboMessageSchema = z.object({
+  type: z.literal('deleteCombo'),
+  index: z.number()
+})
+
+export type SaveComboMessage = z.infer<typeof SaveComboMessageSchema>
+export type DeleteComboMessage = z.infer<typeof DeleteComboMessageSchema>
 
 /**
- * Save/Delete custom provider messages
+ * Save custom provider message
  */
-export const CustomProviderManagementMessageSchema = z.object({
-  type: z.union([z.literal('saveCustomProvider'), z.literal('deleteCustomProvider')]),
-  name: z.string().optional(),
-  baseUrl: z.string().optional(),
+export const SaveCustomProviderMessageSchema = z.object({
+  type: z.literal('saveCustomProvider'),
+  name: z.string(),
+  baseUrl: z.string(),
   id: z.string()
 })
 
-export type CustomProviderManagementMessage = z.infer<typeof CustomProviderManagementMessageSchema>
+/**
+ * Delete custom provider message
+ */
+export const DeleteCustomProviderMessageSchema = z.object({
+  type: z.literal('deleteCustomProvider'),
+  id: z.string()
+})
+
+export type SaveCustomProviderMessage = z.infer<typeof SaveCustomProviderMessageSchema>
+export type DeleteCustomProviderMessage = z.infer<typeof DeleteCustomProviderMessageSchema>
 
 /**
  * Simple request messages (no payload)
@@ -398,9 +468,13 @@ export const WebviewToExtensionMessageSchema = z.union([
   UpdateProviderMessageSchema,
   StoreKeyMessageSchema,
   ProxyControlMessageSchema,
+  StopProxyMessageSchema,
+  RevertApplyMessageSchema,
   ToggleTwoModelModeMessageSchema,
-  ComboManagementMessageSchema,
-  CustomProviderManagementMessageSchema,
+  SaveComboMessageSchema,
+  DeleteComboMessageSchema,
+  SaveCustomProviderMessageSchema,
+  DeleteCustomProviderMessageSchema,
   SimpleRequestMessageSchema,
   SimpleUpdateMessageSchema,
   OpenExternalMessageSchema
