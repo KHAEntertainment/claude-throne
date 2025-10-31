@@ -327,7 +327,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "undici": "^6.18.2",
+    "undici": "^6.22.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -335,8 +335,8 @@
     "@types/vscode": "^1.85.0",
     "@vscode/test-electron": "^2.3.8",
     "esbuild": "^0.21.5",
-    "typescript": "^5.4.0",
-    "vsce": "^2.15.0",
-    "vitest": "^1.4.0"
+    "typescript": "^5.9.3",
+    "vitest": "^1.4.0",
+    "vsce": "^2.15.0"
   }
 }
