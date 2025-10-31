@@ -1,5 +1,5 @@
 {
-  "name": "claude-throne",
+  "name": "thronekeeper",
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",

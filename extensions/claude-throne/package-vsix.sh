@@ -19,8 +19,9 @@ echo "Step 3: Packaging VSIX..."
 npx vsce package
 
 echo "Step 4: Verifying VSIX created..."
-if [ -f claude-throne-$VERSION.vsix ]; then
-    ls -lh claude-throne-$VERSION.vsix
+# VSIX filename is derived from package.json "name" field (now "thronekeeper")
+if ls thronekeeper-$VERSION.vsix 2>/dev/null; then
+    ls -lh thronekeeper-$VERSION.vsix
     echo "✅ VSIX created successfully!"
 else
     echo "❌ VSIX not found!"

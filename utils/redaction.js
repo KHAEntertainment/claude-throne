@@ -16,5 +16,14 @@ export function redactSecrets(text) {
     .replace(/Authorization:\s*[^\s]+/gi, 'Authorization: [REDACTED]')
     .replace(/"apiKey"\s*:\s*"[^"]+"/g, '"apiKey": "[REDACTED]"')
     .replace(/"x-api-key"\s*:\s*"[^"]+"/g, '"x-api-key": "[REDACTED]"')
-    .replace(/api[-_]?key["\s:=]+[^\s,}"']+/gi, 'api_key=[REDACTED]')
+    // Catch-all for api-key patterns in non-JSON formats (headers, query params, etc.)
+    // Exclude JSON structures (quoted keys) which are handled above
+    .replace(/(?<!["'])(api[-_]?key)(\s*[:=]\s*)([^\s,}"']+)/gi, (match, key, separator, value) => {
+      // Preserve the original separator format
+      if (separator.includes('=')) {
+        return `${key}=[REDACTED]`
+      } else {
+        return `${key}: [REDACTED]`
+      }
+    })
 }

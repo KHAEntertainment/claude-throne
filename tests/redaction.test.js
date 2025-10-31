@@ -34,7 +34,10 @@ describe('redactSecrets utility', () => {
     const output = redactSecrets(input)
     expect(output).toContain('[REDACTED]')
     expect(output).not.toContain('sk-ant-api03')
-    expect(output).toContain('"message": "test"')
+    // Verify JSON is valid and structure is preserved
+    const parsed = JSON.parse(output)
+    expect(parsed.body.message).toBe('test')
+    expect(parsed.headers['x-api-key']).toBe('[REDACTED]')
   })
 
   it('preserves non-secret content', () => {
