@@ -47,11 +47,12 @@ export function isAnthropicEndpoint(url: string): boolean {
 export type CustomEndpointKind = 'auto' | 'anthropic' | 'openai'
 
 /**
- * Returns the correct models endpoint URL for a given base URL.
- * Handles Anthropic-style endpoints by transforming them to use OpenAI-compatible models endpoints.
- * 
- * @param baseUrl - The base URL to transform
- * @returns The correct models endpoint URL
+ * Produce the models endpoint URL corresponding to a provided base URL.
+ *
+ * Transforms Anthropic-style base URLs into their corresponding models endpoint; for other URLs appends `/models`. An empty `baseUrl` is returned unchanged.
+ *
+ * @param baseUrl - The base URL to convert; returned unchanged if falsy
+ * @returns The models endpoint URL for `baseUrl` (Anthropic-style bases are converted to their models path, others have `/models` appended)
  */
 export function getModelsEndpointForBase(baseUrl: string): string {
   if (!baseUrl) return baseUrl

@@ -9,12 +9,16 @@ import { updateClaudeSettings } from './services/ClaudeSettings';
 let proxy: ProxyManager | null = null;
 
 /**
- * Safely updates VS Code configuration with validation and error handling
- * @param config VS Code configuration instance
- * @param key Configuration key (without claudeThrone. prefix)
- * @param value Value to set
- * @param target Configuration target (Global/Workspace)
- * @param fallback Optional fallback action if update fails
+ * Update a claudeThrone setting in VS Code with validation and structured fallback handling.
+ *
+ * Attempts to read the existing value before writing, updates `claudeThrone.{key}` to `value` for the given target, and invokes the optional `fallback` if the property is unregistered or the update fails.
+ *
+ * @param config - The workspace configuration object to update
+ * @param key - Configuration key under the `claudeThrone` namespace (without the `claudeThrone.` prefix)
+ * @param value - The value to write for the configuration key
+ * @param target - The configuration target (global or workspace) to apply the change to
+ * @param fallback - Optional async action to run when the configuration key is not recognized or the update cannot be applied
+ * @returns `true` if the configuration was updated successfully, `false` otherwise
  */
 async function safeConfigUpdate(
   config: vscode.WorkspaceConfiguration,
@@ -1047,6 +1051,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  /**
+   * Clears Thronekeeper-related settings from both workspace and user (global) scopes, then writes a minimal baseline configuration.
+   *
+   * Attempts to remove known Thronekeeper keys from workspace and global scopes, sets the default provider to "openrouter" in the global scope, and restores cached `anthropicDefaults` to global if present.
+   *
+   * @param cfg - The VS Code workspace configuration instance to update.
+   * @throws Propagates any unexpected error that occurs during the reset operation.
+   */
   async function resetConfiguration(cfg: vscode.WorkspaceConfiguration) {
     try {
       console.log('[resetConfiguration] Clearing all Thronekeeper settings from both scopes...');
@@ -1158,13 +1170,11 @@ async function tryOpenView(viewId: string): Promise<boolean> {
 type Provider = 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom'
 
 /**
- * Prompts the user to enter an Anthropic API key and saves it securely, then fetches and caches latest model defaults.
+ * Prompt the user for an Anthropic API key, store it securely, and attempt to refresh and cache the latest Anthropic model defaults.
  *
- * The prompt uses a masked input and validates only that the key is non-empty (accepts any format).
- * Shows an optional warning if the key doesn't start with 'sk-' but still accepts it.
- * On success, immediately fetches latest models from Anthropic API and caches them, showing the user the discovered versions.
+ * If the entered key does not begin with "sk-" a non-blocking warning is shown but the key is accepted. On success the extension will fetch model defaults and update its cached Anthropic defaults and timestamp; if fetching or configuration updates fail, the key remains stored and the user is notified.
  *
- * @param secrets - The SecretsService instance to store the API key securely
+ * @param secrets - SecretsService used to persist the Anthropic API key securely
  */
 async function storeAnthropicKeyHelper(secrets: SecretsService) {
   const key = await vscode.window.showInputBox({
@@ -1248,11 +1258,9 @@ async function storeAnthropicKeyHelper(secrets: SecretsService) {
 }
 
 /**
- * Prompts the user to enter an API key for the specified provider and saves it securely in the extension's secret storage.
+ * Prompt for an API key for the given provider and store it in the extension's secret storage.
  *
- * The prompt uses a masked input and validates that a non-empty key is provided. On success, a confirmation message is shown.
- *
- * @param provider - The provider identifier whose API key will be stored (e.g., `openrouter`, `openai`, `together`, `deepseek`, `glm`, `custom`)
+ * @param provider - Provider identifier (e.g., `openrouter`, `openai`, `together`, `deepseek`, `glm`, `custom`)
  */
 async function storeKey(provider: Provider, secrets: SecretsService) {
   const titles: Record<Provider, string> = {
@@ -1278,4 +1286,3 @@ async function storeKey(provider: Provider, secrets: SecretsService) {
 export function deactivate() {
   try { proxy?.stop() } catch {}
 }
-

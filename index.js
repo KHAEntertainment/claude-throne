@@ -126,7 +126,15 @@ function matchesPattern(modelName, pattern) {
 }
 
 /**
- * Check if a model requires XML tool calling instead of native OpenAI format
+ * Determine whether a model should receive XML-formatted tool instructions instead of native tool calls.
+ *
+ * The decision is true when `FORCE_XML_TOOLS` is set to "1", when the model matches an entry in
+ * `modelCapabilities.xmlTools` for the given provider or the wildcard `*`, or when the model name
+ * matches a known fallback pattern.
+ *
+ * @param {string} modelName - The model's name.
+ * @param {string} providerId - The provider identifier used to look up provider-specific capability rules.
+ * @returns {boolean} `true` if the model requires XML tool instructions, `false` otherwise.
  */
 function modelNeedsXMLTools(modelName, providerId) {
   if (process.env.FORCE_XML_TOOLS === '1') {
@@ -150,7 +158,10 @@ function modelNeedsXMLTools(modelName, providerId) {
 }
 
 /**
- * Comment 4: Check if a model supports tool calling based on capability map
+ * Determine whether a model is allowed to invoke external tools for a given provider.
+ * @param {string} modelName - Provider-specific model identifier (e.g., "gpt-4o-mini").
+ * @param {string} providerId - Provider key used in capability maps (e.g., "openai", "anthropic").
+ * @returns {boolean} `true` if the model supports tool calling for the provider, `false` otherwise. Defaults to `true` when `modelName` or `providerId` is not provided.
  */
 function modelSupportsToolCalling(modelName, providerId) {
   if (!modelName || !providerId) return true // Default to supporting tools
@@ -253,6 +264,10 @@ const fastify = Fastify({
   }
 })
 
+/**
+ * Logs debug information to the console with secrets redacted when DEBUG is set.
+ * @param {...any} args - Values to log; objects are JSON-stringified for redaction when possible.
+ */
 function debug(...args) {
   if (!process.env.DEBUG) return
   // Redact secrets from debug output
@@ -349,7 +364,29 @@ fastify.get('/v1/models', async (request, reply) => {
   }
 })
 
-// Unified health check handler
+/**
+ * Builds and returns the service health payload containing readiness, model selections, and endpoint detection metadata.
+ *
+ * If the proxy is not ready (no API key), the handler sets the HTTP response status to 503 and includes diagnostic fields about the missing key and attempted key sources.
+ *
+ * @returns {object} Health payload with the following keys:
+ *  - status: 'ok' or 'unhealthy'
+ *  - version: package version
+ *  - provider: detected provider identifier
+ *  - baseUrl: configured upstream base URL (if any)
+ *  - endpointKind: inferred or overridden endpoint kind
+ *  - detectionSource: how endpointKind was determined (override|probe|heuristic)
+ *  - lastProbedAt: timestamp of the last endpoint probe or null
+ *  - models: { reasoning, completion } current model values or 'not set'
+ *  - modelSelection: { order, currentReasoning, currentCompletion } selection metadata
+ *  - timestamp: current epoch ms
+ *  - uptime: process uptime in seconds
+ *
+ * When an API key is missing, the payload additionally includes:
+ *  - missingKey: true
+ *  - keySourcesTried: hints of env locations tried for a key
+ *  - forcedProvider: value of FORCE_PROVIDER (if set)
+ */
 async function healthCheckHandler(request, reply) {
   const isReady = !!key // Proxy is ready when API key is available
   const status = isReady ? 'ok' : 'unhealthy'

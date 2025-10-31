@@ -1,4 +1,3 @@
-
 /**
  * Message Schema Definitions for Webview ↔ Extension Communication
  * 
@@ -412,7 +411,10 @@ export type WebviewToExtensionMessage = z.infer<typeof WebviewToExtensionMessage
 // ============================================================================
 
 /**
- * Validate extension → webview message
+ * Validate and parse a value as an extension→webview message.
+ *
+ * @param message - The input value to validate as an extension→webview message
+ * @returns The validated message as an ExtensionToWebviewMessage
  * @throws ZodError if validation fails
  */
 export function validateExtensionMessage(message: unknown): ExtensionToWebviewMessage {
@@ -420,19 +422,24 @@ export function validateExtensionMessage(message: unknown): ExtensionToWebviewMe
 }
 
 /**
- * Validate webview → extension message
- * @throws ZodError if validation fails
+ * Validate a message sent from the webview to the extension.
+ *
+ * @returns The validated `WebviewToExtensionMessage`.
+ * @throws ZodError if the message does not match the schema
  */
 export function validateWebviewMessage(message: unknown): WebviewToExtensionMessage {
   return WebviewToExtensionMessageSchema.parse(message)
 }
 
 /**
- * Safe validation with error logging (for DEBUG mode)
- * @param message - Message to validate
- * @param direction - 'toWebview' or 'toExtension'
- * @param logger - Optional logger function
- * @returns Validated message or null if invalid
+ * Validate a message against the appropriate schema and return the parsed value or null on validation failure.
+ *
+ * Uses `direction` to choose the schema: `'toWebview'` validates as an Extension→Webview message, `'toExtension'` validates as a Webview→Extension message. When validation fails, Zod validation details are forwarded to `logger` if provided and the function returns `null`.
+ *
+ * @param message - The value to validate
+ * @param direction - Which schema to validate against: `'toWebview'` or `'toExtension'`
+ * @param logger - Optional function that receives validation details when validation fails
+ * @returns The validated message (`ExtensionToWebviewMessage` or `WebviewToExtensionMessage`) if valid, `null` otherwise
  */
 export function safeValidateMessage(
   message: unknown,
