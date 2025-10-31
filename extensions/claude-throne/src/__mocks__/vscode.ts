@@ -1,3 +1,5 @@
+import type * as vscode from 'vscode'
+
 export const workspace = {
   getConfiguration: (section?: string) => ({
     get: <T>(key: string, defaultValue?: T): T | undefined => defaultValue,
@@ -5,10 +7,15 @@ export const workspace = {
   })
 }
 export const window = {
-  createOutputChannel: () => ({
-    appendLine: () => {},
-    clear: () => {},
-    dispose: () => {}
+  createOutputChannel: (name: string): vscode.OutputChannel => ({
+    name,
+    append: (value: string): void => {},
+    appendLine: (message: string): void => {},
+    clear: (): void => {},
+    show: (columnOrPreserveFocus?: vscode.ViewColumn | boolean, preserveFocus?: boolean): void => {},
+    hide: (): void => {},
+    dispose: (): void => {},
+    replace: (value: string): void => {}
   })
 }
 export const ConfigurationTarget = {
