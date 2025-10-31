@@ -45,6 +45,16 @@ const ANTHROPIC_LIKE_PATTERNS = [
   { path: '/anthropic' }, // Generic path pattern
 ]
 
+/**
+ * Determine whether a base URL matches any known Anthropic-like host or path pattern.
+ *
+ * The function parses the provided URL and checks it against a data-driven list of
+ * Anthropic-like host and path patterns. If the URL cannot be parsed, the function
+ * returns `false`.
+ *
+ * @param {string} baseUrl - The base URL to test (e.g., "https://api.anthropic.com" or "https://example.com/anthropic").
+ * @returns {boolean} `true` if the URL matches any Anthropic-like host or path pattern, `false` otherwise.
+ */
 function isAnthropicLikeUrl(baseUrl) {
   try {
     const url = new URL(baseUrl)
@@ -65,10 +75,10 @@ function isAnthropicLikeUrl(baseUrl) {
 }
 
 /**
- * Detects which configured provider corresponds to a given base URL.
+ * Determine which known provider best matches the given base URL.
  *
  * @param {string} baseUrl - The base URL or host to inspect.
- * @returns {string} The matching value from `PROVIDERS` (e.g., `PROVIDERS.openrouter`, `PROVIDERS.openai`, `PROVIDERS.together`, `PROVIDERS.deepseek`, `PROVIDERS.glm`). Returns `PROVIDERS.custom` if no known provider is detected or if the URL cannot be parsed.
+ * @returns {string} The matching value from `PROVIDERS` (for example `PROVIDERS.openrouter`, `PROVIDERS.openai`, `PROVIDERS.together`, `PROVIDERS.deepseek`, `PROVIDERS.glm`, `PROVIDERS.anthropic`, `PROVIDERS.grok`). Returns `PROVIDERS.custom` if no known provider is detected or if the URL cannot be parsed.
  */
 export function detectProvider(baseUrl, env = process.env) {
   const forced = (env.FORCE_PROVIDER || '').toLowerCase()
@@ -96,9 +106,13 @@ export function detectProvider(baseUrl, env = process.env) {
 }
 
 /**
- * Comment 1: Negotiate endpoint kind by probing the actual endpoint
- * Issues a short-timeout GET request to test if the endpoint accepts Anthropic headers
- * On explicit header/route mismatch, retries with Authorization: Bearer
+ * Determine whether a base URL exposes an Anthropic-native or OpenAI-compatible API and cache the result.
+ *
+ * Probes the service at the provided base URL (using the optional API key) with a short timeout and, if probing is inconclusive or fails, falls back to a heuristic. The determined endpoint kind is cached for a short period to avoid repeated probing.
+ *
+ * @param {string} baseUrl - The base URL of the endpoint to probe (may include or omit trailing slash).
+ * @param {string|null} key - Optional API key used during the probe; may be null for anonymous probes.
+ * @returns {{ kind: symbol, lastProbedAt: number }} An object containing `kind` (one of `ENDPOINT_KIND` values) and `lastProbedAt` (epoch milliseconds when the probe completed or when the cached value was set).
  */
 export async function negotiateEndpointKind(baseUrl, key) {
   const normalizedUrl = baseUrl.replace(/\/+$/, '')
@@ -180,6 +194,20 @@ export async function negotiateEndpointKind(baseUrl, key) {
   return { kind, lastProbedAt: now }
 }
 
+/**
+ * Infer the endpoint kind for a provider and base URL using explicit overrides, heuristics, or an endpoint probe.
+ *
+ * @param {string} provider - Provider identifier (one of PROVIDERS).
+ * @param {string} baseUrl - The provider base URL to inspect.
+ * @param {Object<string,string>} [overrides={}] - Optional map of normalized base URLs to override values ('anthropic' | 'anthropic-native' | 'openai' | 'openai-compatible').
+ * @param {string|null} [key=null] - Optional API key used to probe custom endpoints; if omitted, probing is skipped.
+ * @returns {{ kind: number, source: 'override'|'heuristic'|'probe', lastProbedAt?: number }}
+ *   An object describing the inferred endpoint kind:
+ *   - `kind`: one of ENDPOINT_KIND (ANThROPIC_NATIVE, OPENAI_COMPATIBLE, or UNKNOWN).
+ *   - `source`: indicates whether the result came from an 'override', a 'heuristic', or a 'probe'.
+ *   - `lastProbedAt`: provided when the result originates from a successful probe.
+ *   When a probe for a custom provider fails, returns `kind: ENDPOINT_KIND.UNKNOWN` with `source: 'probe'`.
+ */
 export async function inferEndpointKind(provider, baseUrl, overrides = {}, key = null) {
   // Check for explicit override first (from env JSON or extension settings)
   const normalizedUrl = baseUrl.replace(/\/+$/, '')
@@ -216,7 +244,15 @@ export async function inferEndpointKind(provider, baseUrl, overrides = {}, key =
   return { kind: ENDPOINT_KIND.OPENAI_COMPATIBLE, source: 'heuristic' }
 }
 
-// Synchronous version for backward compatibility (used at startup)
+/**
+ * Infer the endpoint kind synchronously from provider, base URL, and explicit overrides without performing network probes.
+ *
+ * Checks an exact URL override first; if none applies it uses provider hints and Anthropic-like URL heuristics to decide.
+ * @param {string} provider - Provider identifier (one of the values in `PROVIDERS`).
+ * @param {string} baseUrl - Base URL of the endpoint being classified.
+ * @param {Object.<string,string>} [overrides={}] - Optional mapping of normalized base URLs to override kinds (e.g., `"anthropic"`, `"openai"`).
+ * @returns {number} `ENDPOINT_KIND.ANTHROPIC_NATIVE` when the override, provider, or URL heuristics indicate Anthropic-native; otherwise `ENDPOINT_KIND.OPENAI_COMPATIBLE`.
+ */
 export function inferEndpointKindSync(provider, baseUrl, overrides = {}) {
   const normalizedUrl = baseUrl.replace(/\/+$/, '')
   if (overrides[normalizedUrl]) {
@@ -239,15 +275,11 @@ export function inferEndpointKindSync(provider, baseUrl, overrides = {}) {
 }
 
 /**
- * Resolve the appropriate API key for a given provider using environment variables and configured fallbacks.
- *
- * Checks a provider-specific environment variable first (and for the `custom` provider prefers a custom/global key),
- * then falls back through a fixed priority list: CUSTOM/API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY,
- * DEEPSEEK_API_KEY, and GLM_API_KEY or ZAI_API_KEY.
+ * Determine the API key for a provider by checking configured environment variable names in priority order.
  *
  * @param {string} provider - Provider identifier (one of the values from PROVIDERS).
- * @param {Object} [env=process.env] - Environment-like object containing API key variables.
- * @returns {string|null} The resolved API key, or `null` if no key is found.
+ * @param {Object} [env=process.env] - Environment-like object to read variables from.
+ * @returns {{key: string|null, source: string|null}} The first found key and the environment variable name it came from, or `{ key: null, source: null }` if none was found.
  */
 export function resolveApiKey(provider, env = process.env) {
   const sources = PROVIDER_KEY_SOURCES[provider] || []
@@ -272,4 +304,3 @@ export function providerSpecificHeaders(provider, env = process.env) {
 }
 
 export const PROVIDER = PROVIDERS
-

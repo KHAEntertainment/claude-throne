@@ -116,13 +116,10 @@ export type ClaudeThroneConfig = z.infer<typeof ClaudeThroneConfigSchema>
 // ============================================================================
 
 /**
- * Normalize provider map to ensure canonical 'completion' key
- * 
- * This function handles the transition from legacy 'coding' key to 'completion'.
- * It reads from both keys (completion || coding) but only writes 'completion'.
- * 
- * @param map - Provider map (possibly with legacy 'coding' key)
- * @returns Normalized map with 'completion' key
+ * Canonicalize a provider map to ensure `reasoning`, `completion`, and `value` keys are present.
+ *
+ * @param map - Provider map that may include legacy keys (e.g., `coding`)
+ * @returns An object with `reasoning`, `completion`, and `value` strings
  */
 export function normalizeProviderMap(map: any): {
   reasoning: string
@@ -137,14 +134,11 @@ export function normalizeProviderMap(map: any): {
 }
 
 /**
- * Hydrate global keys from provider-specific configuration
- * 
- * This is used before applying settings to ensure the active provider's
- * models are reflected in the global keys that Claude Code reads.
- * 
- * @param config - Full configuration
- * @param providerId - Active provider ID
- * @returns Hydrated global keys
+ * Derives global model keys from the specified provider's model selections.
+ *
+ * @param config - Full Claude Throne configuration to read provider-specific mappings and legacy global keys from
+ * @param providerId - Active provider identifier whose model selections should be used
+ * @returns An object with `reasoningModel`, `completionModel`, and `valueModel` taken from the provider map when present, or from legacy global keys as a fallback
  */
 export function hydrateGlobalKeysFromProvider(
   config: ClaudeThroneConfig,
@@ -174,14 +168,11 @@ export function hydrateGlobalKeysFromProvider(
 }
 
 /**
- * Check if configuration needs fallback hydration
- * 
- * Returns true if legacy global keys exist but provider-specific map is empty.
- * This indicates a migration scenario where we should save global keys to provider map.
- * 
- * @param config - Full configuration
- * @param providerId - Active provider ID
- * @returns True if fallback hydration needed
+ * Determine whether legacy global model keys should be migrated into the provider-specific map.
+ *
+ * @param config - The full ClaudeThrone configuration object
+ * @param providerId - The active provider identifier to check within `modelSelectionsByProvider`
+ * @returns `true` if legacy global model keys exist and the provider-specific map lacks reasoning/completion models, `false` otherwise
  */
 export function needsFallbackHydration(
   config: ClaudeThroneConfig,
@@ -199,21 +190,23 @@ export function needsFallbackHydration(
 // ============================================================================
 
 /**
- * Validate full configuration
- * @throws ZodError if validation fails
+ * Validate and parse a raw configuration object against the ClaudeThroneConfig schema.
+ *
+ * @param config - The raw configuration to validate and parse
+ * @returns The validated configuration as a `ClaudeThroneConfig`
+ * @throws ZodError if the provided configuration does not conform to the schema
  */
 export function validateConfig(config: unknown): ClaudeThroneConfig {
   return ClaudeThroneConfigSchema.parse(config)
 }
 
 /**
- * Safe validation with defaults
- * 
- * This function validates configuration but provides sensible defaults
- * for missing fields instead of throwing errors.
- * 
- * @param config - Configuration to validate
- * @returns Validated configuration with defaults filled in
+ * Validate a configuration and fall back to the schema's defaults when validation fails.
+ *
+ * Attempts to parse `config` with ClaudeThroneConfigSchema; if parsing fails, logs a warning
+ * and returns the schema's default configuration.
+ *
+ * @returns A `ClaudeThroneConfig` parsed from `config` when valid; otherwise the schema's default configuration.
  */
 export function safeValidateConfig(config: unknown): ClaudeThroneConfig {
   try {
@@ -226,8 +219,11 @@ export function safeValidateConfig(config: unknown): ClaudeThroneConfig {
 }
 
 /**
- * Validate provider map structure
- * @throws ZodError if validation fails
+ * Validate and parse a provider model-selection map.
+ *
+ * @param map - The unvalidated provider map to check and parse
+ * @returns The validated provider map object conforming to ProviderMapSchema
+ * @throws ZodError if `map` does not conform to ProviderMapSchema
  */
 export function validateProviderMap(map: unknown): z.infer<typeof ProviderMapSchema> {
   return ProviderMapSchema.parse(map)
@@ -238,15 +234,10 @@ export function validateProviderMap(map: unknown): z.infer<typeof ProviderMapSch
 // ============================================================================
 
 /**
- * Verify configuration invariants (from CONSTITUTION.md)
- * 
- * These checks ensure that the configuration satisfies critical invariants:
- * 1. Provider map uses 'completion' key (not 'coding')
- * 2. All providers have valid model selections
- * 3. Active provider has models configured
- * 
- * @param config - Configuration to check
- * @returns Array of invariant violations (empty if all pass)
+ * Identify invariant violations in a Claude Throne configuration.
+ *
+ * @param config - The Claude Throne configuration to validate.
+ * @returns An array of human-readable violation messages, empty if no violations.
  */
 export function checkConfigurationInvariants(
   config: ClaudeThroneConfig

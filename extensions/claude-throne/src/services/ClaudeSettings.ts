@@ -19,15 +19,17 @@ import * as path from 'path'
  */
 
 /**
- * Update or revert environment variables in the Claude settings files inside a workspace.
+ * Update or revert environment variables stored in a workspace's Claude settings files.
  *
- * When `revert` is false, merges `newEnv` into the `env` property of each settings file (creating `env` if missing).
- * When `revert` is true, removes the keys present in `newEnv` from the `env` property and deletes `env` (and the file) if they become empty.
- * The function ensures parent directories exist, writes updated JSON with two-space indentation, and logs errors without aborting processing of the other file.
+ * When `revert` is false, merges `newEnv` into the `env` object of each file (`.claude/settings.json`
+ * and `.claude/settings.local.json`), creating `env` if missing. When a value in `newEnv` is `null`,
+ * the corresponding key is removed from the target `env`. When `revert` is true, removes the keys
+ * present in `newEnv` from each file's `env` and removes `env` (and the file) if it becomes empty.
+ * The function creates parent directories and files as needed.
  *
- * @param workspaceDir - Path to the workspace root containing the `.claude` directory
- * @param newEnv - Key/value pairs to merge into or remove from the `env` object (keys are removed when `revert` is true)
- * @param revert - If true, remove keys from settings instead of adding them; defaults to `false`
+ * @param workspaceDir - Path to the workspace root that contains the `.claude` directory
+ * @param newEnv - Key/value pairs to apply; keys with `null` values are deleted when merging. When `revert` is true, the keys of this object are removed from existing `env`
+ * @param revert - If true, remove keys from settings instead of adding/updating them; defaults to `false`
  */
 export async function updateClaudeSettings(
   workspaceDir: string,

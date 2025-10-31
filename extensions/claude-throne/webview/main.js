@@ -55,7 +55,18 @@
   lastSelectedModels: { reasoning: '', coding: '', value: '' } // Track last selected models to detect selection changes
 };
 
-  // Comment 2: Add error to telemetry buffer
+  /**
+   * Appends a timestamped error entry to the in-memory telemetry buffer and enforces the buffer size limit.
+   *
+   * If the UI debug checkbox is enabled, logs a structured view of the error to the console.
+   *
+   * @param {Object} errorData - Structured error information to record.
+   * @param {string} errorData.type - Short identifier for the error category (e.g., "modelsError", "proxyError").
+   * @param {string} [errorData.provider] - Provider id associated with the error, if applicable.
+   * @param {Error|string} [errorData.error] - The error object or message.
+   * @param {string} [errorData.errorType] - More specific error classification or code.
+   * @param {string} [errorData.token] - Optional request/trace token associated with the error.
+   */
   function addErrorToBuffer(errorData) {
     const errorEntry = {
       timestamp: Date.now(),
@@ -83,7 +94,11 @@
     }
   }
 
-  // Comment 2: Display error buffer in debug mode
+  /**
+   * Logs the in-memory error telemetry buffer to the console when debug mode is enabled.
+   *
+   * If the debug checkbox is absent or not checked, the function returns without logging.
+   */
   function displayErrorBuffer() {
     const debugCheckbox = document.getElementById('debugCheckbox');
     if (!debugCheckbox || !debugCheckbox.checked) {
@@ -97,7 +112,15 @@
     });
   }
 
-  // Comment 3: Normalize provider map to canonical keys { reasoning, completion, value }
+  /**
+   * Convert a provider's model map into a canonical object with keys `reasoning`, `completion`, and `value`.
+   *
+   * Normalizes input values to strings, accepts the legacy `coding` key as a fallback for `completion`,
+   * and emits console warnings for unexpected keys and when `coding` is used (deprecated).
+   * @param {Object|null|undefined} providerModels - The provider's raw model map (may contain canonical or legacy keys).
+   * @param {string} providerName - Human-readable provider identifier used in warning messages.
+   * @returns {{reasoning: string, completion: string, value: string}} An object with canonical keys; missing entries are empty strings.
+   */
   function normalizeProviderMap(providerModels, providerName) {
     if (!providerModels || typeof providerModels !== 'object') {
       return { reasoning: '', completion: '', value: '' };
@@ -133,13 +156,25 @@
   }
 
   // Phase 3: Helper function to get coding model with deprecation warning
-  // @deprecated Use normalizeProviderMap instead for full normalization
+  /**
+   * Retrieve a provider's legacy "coding" model mapped to the canonical `completion` key.
+   *
+   * @deprecated Use {@link normalizeProviderMap} for full normalization and migration; this helper will be removed.
+   * @param {Object} providerModels - The provider's model mapping object (may include legacy keys such as `coding`).
+   * @param {string} providerName - The provider identifier, used for diagnostic/deprecation warnings.
+   * @returns {string|undefined} The provider's canonical `completion` model id, or `undefined` if not present.
+   */
   function getCodingModelFromProvider(providerModels, providerName) {
     const normalized = normalizeProviderMap(providerModels, providerName);
     return normalized.completion;
   }
 
-  // Phase 5: Debounce helper to prevent excessive re-renders
+  /**
+   * Create a debounced wrapper that delays invoking a function until calls stop for a specified interval.
+   * @param {Function} func - The function to debounce.
+   * @param {number} wait - Delay in milliseconds to wait after the last call before invoking `func`.
+   * @returns {Function} A debounced function that delays execution of `func` until `wait` milliseconds have elapsed since the last invocation; when called, it forwards the most recent arguments to `func` (it does not preserve the original `this` context).
+   */
   function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -158,7 +193,19 @@
   }, 300);
 
   // Comment 8: Safe message validation for incoming extension messages
-  // Validates messages against schemas and logs mismatches in DEBUG mode
+  /**
+   * Validate an inter-extension message against expected schemas and reject invalid messages.
+   *
+   * Checks the structure and required fields of known message types (e.g., status, models, config,
+   * modelsSaved, modelsError, proxyError, keys-related types, combos, and custom provider events).
+   * When schema validation is disabled via feature flags the original message is returned unchanged.
+   * Validation failures return `null`. Validation mismatches and legacy-format warnings are logged
+   * to the console; additional warnings for unknown types are shown when the UI debug checkbox is enabled.
+   *
+   * @param {any} message - The incoming message object to validate (expected to contain `type` and `payload`).
+   * @param {string} [direction] - Optional direction indicator (e.g., "in" or "out"); not used for validation logic.
+   * @returns {object|null} The original `message` if it conforms to the expected schema, or `null` if validation failed.
+   */
   function safeValidateMessage(message, direction) {
     // Comment 19: Check feature flag
     if (!state.featureFlags.enableSchemaValidation) {
@@ -330,7 +377,13 @@
     }
   };
 
-  // Comment 1: Define endpoint kind change handler before setupEventListeners() attaches it
+  /**
+   * Handle changes to a custom provider's endpoint kind and persist an override when a base URL is present.
+   *
+   * Reads the selected endpoint kind from the event target, normalizes the custom base URL by trimming trailing slashes, updates the detection badge in the UI to reflect "override" or "auto", and posts an `updateEndpointKind` message containing the normalized baseUrl and endpointKind to the extension when a base URL is provided.
+   *
+   * @param {Event} e - Change event from the endpoint-kind selector element; its target's `value` is used as the new endpoint kind.
+   */
   function onEndpointKindChange(e) {
     const endpointKind = e.target.value;
     const customUrlInput = document.getElementById('customUrl');
@@ -380,7 +433,12 @@
     // Models will be loaded after config is received
   }
     
-    function setupEventListeners() {
+    /**
+   * Wire up UI event listeners for provider selection, custom provider controls, API key inputs, model search, proxy controls, combo management, and messaging.
+   *
+   * Attaches change/click/input/keypress handlers to DOM elements so user interactions update state, post messages to the extension host, and trigger model/proxy actions; also registers the global window message handler for inbound messages.
+   */
+  function setupEventListeners() {
         // Provider selection
         const providerSelect = document.getElementById('providerSelect');
     providerSelect?.addEventListener('change', onProviderChange);
@@ -481,6 +539,18 @@
     window.addEventListener('message', handleMessage);
   }
 
+  /**
+   * Route and handle incoming messages from the extension/webview host by type.
+   *
+   * Validates the incoming event data, ignores invalid messages, and dispatches
+   * recognized message types to their corresponding handlers. May update local
+   * state, UI elements, or invoke error and status handlers depending on the
+   * message payload.
+   *
+   * @param {MessageEvent} event - The message event whose `data` is expected to be
+   *   an object with a `type` string and an optional `payload`. The data is
+   *   validated before processing; invalid data is ignored.
+   */
   function handleMessage(event) {
     const rawMessage = event.data;
     
@@ -577,6 +647,14 @@
     }
   }
 
+  /**
+   * Log a configuration warning and—if a provider-specific fallback was used—display it as a UI warning.
+   *
+   * @param {Object} payload - Warning details.
+   * @param {string} payload.message - The warning message to log and potentially display.
+   * @param {string} [payload.provider] - Identifier of the provider related to the warning.
+   * @param {boolean} [payload.fallbackUsed] - If true, show the warning notification to the user.
+   */
   function handleConfigWarning(payload) {
     console.warn('[Config Warning]', payload.message);
     if (payload.provider && payload.fallbackUsed) {
@@ -584,6 +662,12 @@
     }
   }
 
+  /**
+   * Restore persisted webview state into the current in-memory state and refresh the two-model UI.
+   *
+   * Loads saved state from the VS Code webview (via vscode.getState()), merges it into the top-level
+   * state when present, sets the two-model toggle to match the restored state, and updates related UI.
+   */
   function restoreState() {
     const saved = vscode.getState();
     if (saved) {
@@ -595,10 +679,24 @@
     }
   }
 
+  /**
+   * Persist the current in-memory UI and data state to VS Code's webview state.
+   */
   function saveState() {
     vscode.setState(state);
   }
 
+  /**
+   * Handle backend confirmation that model selections were saved and synchronize UI state accordingly.
+   *
+   * Validates the confirmation against the provider that initiated the save, clears in-save flags only for that provider,
+   * shows an error notification when the save failed, and updates UI elements (selected model display and model list)
+   * when the confirmation pertains to the currently active provider.
+   *
+   * @param {Object} payload - Confirmation payload from the extension.
+   * @param {string} payload.providerId - The provider ID the confirmation refers to.
+   * @param {boolean} payload.success - Whether the save operation succeeded.
+   */
   function handleModelsSaved(payload) {
     console.log('[handleModelsSaved] Model save confirmation received:', payload);
     
@@ -636,7 +734,13 @@
     console.log('[handleModelsSaved] UI state synchronized with extension');
   }
 
-  // Provider handling
+  /**
+   * Handle switching the active provider when the user selects a different provider.
+   *
+   * Persists the current provider's selected models, clears per-provider caches and request tokens, optionally records a debug trace, updates in-memory state to the newly selected provider (initializing canonical storage if needed), restores the new provider's selected models (using canonical keys), updates the UI, loads the new provider's models, persists state, and notifies the extension of the provider change.
+   *
+   * @param {Event} e - The change event from the provider selection control; the new provider id is available as `e.target.value`.
+   */
   function onProviderChange(e) {
     // Comment 1: Capture previous provider first
     const previousProvider = state.provider;
@@ -719,6 +823,13 @@
     });
   }
 
+  /**
+   * Update visibility, values, and behavior of provider-related UI controls based on the current state.
+   *
+   * Updates the custom provider sections (URL, name, endpoint-kind selector and detection badge), populates saved custom provider fields when selected, clears custom form inputs for a one-off custom selection, toggles the Popular Combos card for OpenRouter (and requests popular models), shows or hides the delete and "Add Custom Provider" buttons, and adjusts the API key/store button behavior and provider help text.
+   *
+   * This function reads global state (state.provider, state.customProviders, state.endpointOverrides) and directly mutates DOM elements to reflect that state. It has no return value.
+   */
   function updateProviderUI() {
     const customSection = document.getElementById('customUrlSection');
     const combosCard = document.getElementById('popularCombosCard');
@@ -896,6 +1007,14 @@
     }
   }
 
+  /**
+   * Handle the response for an API key storage request by notifying the user and refreshing key/model state.
+   *
+   * When storage succeeds, displays a success notification, requests updated key status from the extension,
+   * and triggers a models reload. When storage fails, displays an error notification with the provided message.
+   *
+   * @param {{success: boolean, error?: string}} payload - Result object from the key storage operation. `success` is `true` on success; `error` contains an error message when `success` is `false`.
+   */
   function handleKeyStored(payload) {
     console.log('[handleKeyStored] Received payload:', payload);
     
@@ -915,6 +1034,12 @@
     }
   }
 
+  /**
+   * Toggle the Anthropic API key input between hidden and visible states.
+   *
+   * Switches the input with id "anthropicKeyInput" between type "password" and "text"
+   * and updates the element with id "anthropicKeyIcon" to "🙈" when visible or "👁" when hidden.
+   */
   function toggleAnthropicKeyVisibility() {
     const input = document.getElementById('anthropicKeyInput');
     const icon = document.getElementById('anthropicKeyIcon');
@@ -928,6 +1053,13 @@
     }
   }
 
+  /**
+   * Sends the Anthropic API key from the UI to the extension and clears the input field.
+   *
+   * If the input is empty or only whitespace, the function does nothing. Otherwise it posts a
+   * `storeAnthropicKey` message containing the key to the extension host and then clears the
+   * Anthropic key input field.
+   */
   function storeAnthropicKey() {
     const input = document.getElementById('anthropicKeyInput');
     const key = input.value.trim();
@@ -953,6 +1085,11 @@
     }
   }
 
+  /**
+   * Validate inputs from the "Add Custom Provider" form and register a new custom provider.
+   *
+   * Validates provider name, base URL, and API key; enforces a maximum of 10 custom providers and prevents IDs that conflict with built-in providers or existing custom IDs. On success, posts a `saveCustomProvider` message to the extension (and a `storeKey` message if an API key was provided), clears the form inputs, and selects the new provider in the UI after a short delay. Displays inline error notifications for any validation failures.
+   */
   function addCustomProviderFromMain() {
     const name = document.getElementById('customProviderNameInput')?.value?.trim();
     const url = document.getElementById('customUrl')?.value?.trim();
@@ -1045,6 +1182,14 @@
     }, 300);
   }
 
+  /**
+   * Handle the backend response for storing an Anthropic API key.
+   *
+   * When `payload.success` is true, shows a success notification and requests updated key status from the host.
+   * When `payload.success` is false, shows an error notification with the provided `payload.error` message if available.
+   *
+   * @param {{success: boolean, error?: string}} payload - Result object from the key storage operation.
+   */
   function handleAnthropicKeyStored(payload) {
     console.log('[handleAnthropicKeyStored] Received payload:', payload);
     
@@ -1061,6 +1206,15 @@
     }
   }
 
+  /**
+   * Displays a transient inline notification in the UI and logs it to the console.
+   *
+   * Creates an inline notification element if one does not exist, updates its text and visual style according to the notification type, makes it visible, and then hides it after the specified duration.
+   *
+   * @param {string} message - The message text to show in the notification.
+   * @param {'info'|'success'|'error'} [type='info'] - Visual category of the notification; affects color and border styling.
+   * @param {number} [duration=3000] - Time in milliseconds before the notification is hidden.
+   */
   function showNotification(message, type = 'info', duration = 3000) {
     console.log(`[${type.toUpperCase()}] ${message}`);
     
@@ -1111,6 +1265,9 @@
     }
   }
 
+  /**
+   * Hides the inline notification element (id "inlineNotification") in the UI if it exists.
+   */
   function clearNotifications() {
     const notificationEl = document.getElementById('inlineNotification');
     if (notificationEl) {
@@ -1118,6 +1275,11 @@
     }
   }
 
+  /**
+   * Update the Save Model Combo button label to reflect the number of saved custom combos.
+   *
+   * When there are saved combos, the label becomes "+ Save Model Combo (N/4)"; otherwise it is "+ Save Model Combo".
+   */
   function updateComboSaveButton() {
     const saveBtn = document.getElementById('saveComboBtn');
     if (saveBtn) {
@@ -1130,6 +1292,16 @@
     }
   }
 
+  /**
+   * Highlights the most recently added combo in the UI and scrolls it into view.
+   * 
+   * Finds the last entry in the provided combos array, locates a matching DOM element
+   * with class `combo-item` containing a `.combo-name` that equals the combo's name,
+   * applies a temporary highlight, scrolls that element into view, and removes the
+   * highlight after two seconds.
+   *
+   * @param {Array<{name: string}>} combos - Array of combo objects; the last element is treated as the newest combo.
+   */
   function highlightNewCombo(combos) {
     if (!combos || combos.length === 0) return;
     
@@ -1152,6 +1324,15 @@
     });
   }
 
+  /**
+   * Initiates saving the current model combo under a user-provided name.
+   *
+   * If the user has already saved 4 combos, shows an error and aborts. Prompts the user for a name and aborts if none is provided.
+   * Clears existing notifications, updates the Save button to a transient "saving" state, and starts a 5-second fallback timeout that will
+   * restore the button and show an error if no confirmation arrives. Posts a `saveCombo` message to the extension containing the
+   * trimmed combo name and the current reasoning, coding, and value model selections. The timeout ID is stored on `window.saveComboTimeout`
+   * so success handlers can clear it.
+   */
   function requestSaveCombo() {
     // Check if we've reached the 4-combo limit
     if (state.customCombos && state.customCombos.length >= 4) {
@@ -1198,6 +1379,11 @@
     });
   }
 
+  /**
+   * Prompts the user to add a new custom provider, validates the entered name and base URL, and requests the extension to save the provider.
+   *
+   * Enforces a maximum of 10 custom providers, derives a provider ID from the name, prevents conflicts with built-in provider IDs and existing custom providers, and displays error notifications for invalid input. On success, posts a `saveCustomProvider` message to the extension containing `name`, `baseUrl`, and `id`.
+   */
   function requestAddCustomProvider() {
     // Check if we've reached the 10 provider limit
     if (state.customProviders && state.customProviders.length >= 10) {
@@ -1249,6 +1435,13 @@
     });
   }
 
+  /**
+   * Integrates a list of custom providers into application state and updates the provider UI.
+   *
+   * Updates state.customProviders (and state.endpointOverrides when provided), rebuilds the provider dropdown,
+   * and selects either the current provider or, if none is selected, the most recently added custom provider before refreshing the UI.
+   * @param {{providers: Array<{id: string, name?: string}>, endpointOverrides?: Object}|null} payload - Payload containing an array of custom provider objects (each must include `id`) and optional endpoint override mappings.
+   */
   function handleCustomProvidersLoaded(payload) {
     console.log('[handleCustomProvidersLoaded] Custom providers loaded:', payload);
     
@@ -1276,6 +1469,17 @@
     }
   }
 
+  /**
+   * Handle removal of a custom provider by updating local state and the UI.
+   *
+   * Updates the in-memory list of custom providers when provided, refreshes the provider dropdown,
+   * switches to the default provider and reloads models if the deleted provider was active, and
+   * shows a success notification.
+   *
+   * @param {Object} payload - Payload describing the deletion.
+   * @param {Array<Object>} [payload.providers] - Updated list of custom providers after deletion.
+   * @param {string} [payload.deletedId] - ID of the provider that was deleted.
+   */
   function handleCustomProviderDeleted(payload) {
     console.log('[handleCustomProviderDeleted] Custom provider deleted:', payload);
     
@@ -1295,6 +1499,11 @@
     showNotification('Custom provider deleted successfully', 'success');
   }
 
+  /**
+   * Rebuilds the provider dropdown element with built-in providers and any custom providers, preserving the previous selection when possible.
+   *
+   * Replaces the dropdown's options, appends built-in providers first, and adds a "Custom Providers" optgroup when state.customProviders contains entries.
+   */
   function updateProviderDropdown() {
     const providerSelect = document.getElementById('providerSelect');
     if (!providerSelect) return;
@@ -1332,6 +1541,13 @@
     }
   }
 
+  /**
+   * Prompt to confirm and request deletion of the currently selected custom provider.
+   *
+   * If the active provider is a custom provider, shows a confirmation dialog and, on confirmation,
+   * posts a `deleteCustomProvider` message with the provider's id to the extension to remove the provider
+   * and its stored API key; does nothing if the active provider is not custom.
+   */
   function deleteCustomProvider() {
     const isCustomProvider = state.customProviders.some(p => p.id === state.provider);
     if (!isCustomProvider) {
@@ -1351,6 +1567,14 @@
     }
   }
 
+  /**
+   * Update local combo state and UI when the backend returns saved/featured model combos.
+   *
+   * Clears any pending save timeout, shows a temporary success state on the Save button and an inline notification when a combo was being saved, updates state.customCombos with payload.combos, re-renders the popular/quick-combo UI combining featured pairings and saved combos, and highlights the newly added combo when applicable.
+   *
+   * @param {Object} payload - The message payload from the backend.
+   * @param {Array<Object>} [payload.combos] - Optional array of saved combo objects to store and render.
+   */
   function handleCombosLoaded(payload) {
     console.log('[handleCombosLoaded] Combos loaded:', payload);
     
@@ -1400,6 +1624,14 @@
     }
   }
 
+  /**
+   * Handle a server confirmation that a saved model combo was deleted and update UI/state accordingly.
+   *
+   * Updates the local saved combos list from payload.combos, refreshes the displayed featured/saved combos,
+   * clears any inline notifications and shows a success notification.
+   *
+   * @param {{ combos?: Array<Object> }} payload - Server payload containing the updated list of saved combos under `combos`.
+   */
   function handleComboDeleted(payload) {
     console.log('[handleComboDeleted] Combo deleted:', payload);
     
@@ -1422,6 +1654,13 @@
     showNotification('Model combo deleted successfully', 'success');
   }
 
+  /**
+   * Update the UI to reflect which API keys are stored for the current provider and for Anthropic.
+   *
+   * Updates placeholders, button labels, and help text based on the provided keys map and the active provider in state.
+   *
+   * @param {Object} keys - Mapping of provider IDs to stored key presence (truthy value indicates a stored key). May include a top-level `anthropic` entry.
+   */
   function handleKeysLoaded(keys) {
     console.log('[handleKeysLoaded] Keys status received:', keys);
     console.log('[handleKeysLoaded] Current provider in state:', state.provider);
@@ -1483,7 +1722,10 @@
     console.log('[handleKeysLoaded] Final UI state - Provider:', state.provider, 'Has key:', hasKey, 'Button text:', storeBtn?.textContent);
   }
 
-  // Two Model Mode
+  /**
+   * Toggles two-model mode from a checkbox, updates UI and persisted state, and notifies the extension backend.
+   * @param {Event} e - Change event from the two-model toggle checkbox; the handler reads `e.target.checked` to determine the new value.
+   */
   function onTwoModelToggle(e) {
     const newValue = e.target.checked;
     console.log('[onTwoModelToggle] Toggling two-model mode from', state.twoModelMode, 'to', newValue);
@@ -1496,6 +1738,11 @@
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: state.twoModelMode });
   }
 
+  /**
+   * Update the UI to reflect the current two-model mode and re-render model controls.
+   *
+   * Recomputes the Save Combo button visibility and refreshes the model list so secondary (coding) controls are shown or hidden based on state.twoModelMode.
+   */
   function updateTwoModelUI() {
     console.log('[updateTwoModelUI] Updating UI, twoModelMode:', state.twoModelMode);
     const modelList = document.getElementById('modelListContainer');
@@ -1521,7 +1768,14 @@
     }
   }
 
-  // Model Selection
+  /**
+   * Set the selected model for the given slot and persist the selection for the active provider.
+   *
+   * Updates in-memory state and the provider's canonical model map, marks the save-in-progress flags for race protection, sends a `saveModels` message to the extension (mapping legacy `coding` to canonical `completion`), updates UI elements, and persists the webview state.
+   *
+   * @param {string} modelId - The model identifier to select.
+   * @param {'reasoning'|'coding'|'value'} type - The selection slot to update; when `type` is `'coding'`, the value is stored under the canonical `completion` key.
+   */
   function setModelFromList(modelId, type) {
     // Comment 3: Initialize provider entry in webview before writing to modelsByProvider when selecting from list
     if (!state.modelsByProvider[state.provider]) {
@@ -1573,6 +1827,15 @@
     // handleModelsSaved will also call renderModelList() as a safety net after backend confirmation
   }
 
+  /**
+   * Update the UI elements that show the currently selected models.
+   *
+   * Updates the elements with IDs `reasoningModelDisplay`, `codingModelDisplay`, and
+   * `valueModelDisplay` to reflect the active selections from `state`. Shows the
+   * model's short name (last path segment) and escapes it for safe HTML rendering.
+   * When two-model mode is enabled, displays placeholders when coding/value models
+   * are not selected; hides coding/value displays when two-model mode is disabled.
+   */
   function updateSelectedModelsDisplay() {
     const reasoningDisplay = document.getElementById('reasoningModelDisplay');
     const codingDisplay = document.getElementById('codingModelDisplay');
@@ -1618,7 +1881,11 @@
     }
   }
 
-  // Model Loading
+  /**
+   * Load and display the model list for the current provider, using cache, manual entry UI for custom providers without a URL, or requesting models from the backend.
+   *
+   * Updates in-memory state (state.models and state.modelsCache), updates the model list container DOM (loading, empty/manual-entry, error, or rendered list), and posts a request to the extension host when remote models are needed.
+   */
   async function loadModels() {
     // Check cache first
     if (state.modelsCache[state.provider]) {
@@ -1716,11 +1983,20 @@
     }
   }
 
-  // Phase 5: Use debounced render to prevent flicker during rapid typing
+  /**
+   * Handle input from the model search field and trigger a debounced render of the model list.
+   * @param {Event} e - Input event from the search field; the field's value (converted to lowercase) is used as the search term.
+   */
   function onModelSearch(e) {
     debouncedRenderModelList(e.target.value.toLowerCase());
   }
 
+  /**
+   * Render the list of available models into the DOM element with id "modelListContainer", applying an optional case-insensitive filter.
+   *
+   * Updates internal render tracking state (state.lastFilteredIds, state.lastTwoModelMode, state.lastSelectedModels) and installs a single delegated click listener for model action buttons when the container is first used. If there are no models or none match the search, renders an appropriate empty-state message.
+   * @param {string} [searchTerm] - Case-insensitive filter applied to model name or id; when empty, all models are shown.
+   */
   function renderModelList(searchTerm = '') {
     const container = document.getElementById('modelListContainer');
     if (!container) return;
@@ -1845,7 +2121,17 @@
     // Phase 5: No individual button listeners needed - using event delegation above
   }
 
-  // Popular Combos - Now handles both featured and saved combos
+  /**
+   * Render featured and user-saved model combos into the combos grid, wire interaction handlers, and enable applying or deleting combos.
+   *
+   * Populates the '#combosGrid' container with buttons for featured pairings and user-saved combos, attaches click and keyboard handlers to:
+   * - apply a combo (calls applyCombo with reasoning, completion, and value model ids),
+   * - request deletion of a saved combo (posts a 'deleteCombo' message to the extension via vscode.postMessage).
+   *
+   * @param {Object} payload - Data describing available combos.
+   * @param {Array<Object>} [payload.pairings] - Featured combo objects with at least `name`, `reasoning`, and `completion` properties; may include `value`.
+   * @param {Array<Object>} [payload.savedCombos] - User-saved combo objects with at least `name`, `reasoning`, and `completion` properties; may include `value`. Order is used for delete indexing.
+   */
   function handlePopularModels(payload) {
     const container = document.getElementById('combosGrid');
     if (!container) return;
@@ -1939,6 +2225,16 @@
     });
   }
 
+  /**
+   * Apply a model combo and enable two-model mode for the current provider.
+   *
+   * Updates selected reasoning, coding (completion), and value models in UI and in-memory state,
+   * persists the per-provider model mapping, re-renders the model list, and notifies the extension backend.
+   *
+   * @param {string} reasoning - Model id to use for reasoning.
+   * @param {string} coding - Model id to use for coding (saved under the canonical `completion` key).
+   * @param {string} value - Model id to use for value.
+   */
   function applyCombo(reasoning, coding, value) {
     // Enable two-model mode
     state.twoModelMode = true;
@@ -1974,16 +2270,21 @@
     });
   }
 
+  /**
+   * Send the updated proxy port from the input change to the extension.
+   * @param {Event} e - Input change event whose `target.value` is the port string to parse and send.
+   */
   function onPortChange(e) {
     const port = e.target.value;
     vscode.postMessage({ type: 'updatePort', port: parseInt(port, 10) });
   }
 
   /**
-   * Request the extension host to start the local proxy using the current UI configuration.
+   * Start the local proxy using the current UI configuration.
    *
-   * Sends a message to start the proxy with the current provider, selected primary/secondary models,
-   * two-model mode flag, and configured port.
+   * Validates that required model selections are present (reasoning, and when two-model mode is enabled, coding and value)
+   * and shows an error notification if validation fails. If validation succeeds, notifies the extension host to start
+   * the proxy with the current provider, selected models, two-model flag, and configured port.
    */
   function startProxy() {
     // Validate that required models are selected for the current provider
@@ -2066,6 +2367,22 @@
     }
   }
 
+  /**
+   * Update the Anthropic cache UI in Advanced Settings based on provided cache metadata.
+   *
+   * Renders or hides the Anthropic cache container, shows "last refreshed" age with an optional stale warning,
+   * displays short identifiers for cached default models when available, and wires the "Refresh Now" button
+   * to post a 'refreshAnthropicDefaults' message to the extension. The refresh button is temporarily disabled
+   * while awaiting a 'config' response to restore its state.
+   *
+   * @param {Object} config - Cache metadata used to populate the UI.
+   * @param {number} [config.cacheAgeDays] - Number of days since the cache was last refreshed; 0 means today.
+   * @param {boolean} [config.cacheStale] - When true, indicates the cached defaults are stale and a warning is shown.
+   * @param {Object} [config.cachedDefaults] - Cached default model IDs.
+   * @param {string} [config.cachedDefaults.opus] - Opus model id (may be undefined or non-string).
+   * @param {string} [config.cachedDefaults.sonnet] - Sonnet model id (may be undefined or non-string).
+   * @param {string} [config.cachedDefaults.haiku] - Haiku model id (may be undefined or non-string).
+   */
   function updateCacheDisplay(config) {
     // Get the static cache container in Advanced Settings
     const cacheContainer = document.getElementById('anthropicCacheContainer');
@@ -2149,6 +2466,28 @@
     }
   }
 
+  /**
+   * Merge backend configuration into the webview's runtime state and refresh related UI.
+   *
+   * Processes feature flags, resolves the effective provider (including selected custom provider),
+   * updates per-provider model selections (with legacy-key fallback and optional one-time auto-hydration),
+   * updates two-model mode and debug UI, refreshes provider and cache displays, and conditionally
+   * triggers a guarded model reload. May persist hydrated model maps back to the extension via
+   * a saveModels message.
+   *
+   * @param {Object} config - Configuration payload from the extension.
+   * @param {string} [config.provider] - Declared provider; may be 'custom' when a custom provider is selected.
+   * @param {string} [config.selectedCustomProviderId] - Selected custom provider id when `provider` is 'custom'.
+   * @param {Object} [config.featureFlags] - Feature flag overrides to merge into local featureFlags.
+   * @param {Object<string, Object>} [config.modelSelectionsByProvider] - Map of providerId -> model selection object.
+   * @param {string} [config.reasoningModel] - Legacy per-webview reasoning model (used as fallback).
+   * @param {string} [config.completionModel] - Legacy per-webview completion/coding model (used as fallback).
+   * @param {string} [config.valueModel] - Legacy per-webview value model (used as fallback).
+   * @param {boolean} [config.twoModelMode] - Explicit two-model mode flag from config.
+   * @param {number|string} [config.port] - Proxy port from config to populate the UI.
+   * @param {string} [config.customBaseUrl] - Custom provider base URL to populate the custom URL input.
+   * @param {boolean} [config.debug] - Debug flag to set the debug UI checkbox.
+   */
   function handleConfigLoaded(config) {
     console.log('[handleConfigLoaded] Received config:', config);
     
@@ -2378,6 +2717,17 @@
     state.previousProvider = state.provider;
   }
 
+  /**
+   * Process a models response from the backend: validate sequencing and provider, cache results, and render for the active provider.
+   *
+   * Validates the incoming payload structure and (when enabled) sequence tokens to guard against late/stale responses, stores the models in the per-provider cache, ignores responses that do not match the currently selected provider, updates in-memory state for the current provider, triggers a model list render, and refreshes the Save Combo button state.
+   *
+   * @param {Object} payload - Response object from the backend containing models and metadata.
+   * @param {Array<Object>} payload.models - Array of model descriptors returned by the backend.
+   * @param {string} [payload.provider] - The provider identifier the models belong to; if omitted, the function uses the current state provider.
+   * @param {string} [payload.token] - Optional sequence/token value used for token-based race protection.
+   * @param {string} [payload.traceId] - Optional trace identifier used for debug logging.
+   */
   function handleModelsLoaded(payload) {
     if (!payload || !Array.isArray(payload.models)) {
       console.log('[handleModelsLoaded] Invalid payload received');
@@ -2440,6 +2790,18 @@
     updateSaveComboButton();
   }
 
+  /**
+   * Display a models-loading error UI for the active provider, record the error to telemetry, and offer manual model entry and retry controls.
+   *
+   * When the payload targets a provider different from the currently selected provider, the function ignores it.
+   *
+   * @param {Object|string} payload - Error information or an error message string. If a string is provided it is treated as a generic error for the current provider. Expected object fields:
+   *   - {string} [provider] - Provider id the error pertains to.
+   *   - {string} [error] - Human-readable error message.
+   *   - {string} [errorType] - Short error classification (e.g., "unauthorized", "generic").
+   *   - {string|number} [token] - Optional request/sequence token associated with the error.
+   *   - {string} [traceId] - Optional trace identifier for debugging.
+   */
   function handleModelsError(payload) {
     // Comment 1: Ensure payload is structured (should always be object now)
     const structuredPayload = typeof payload === 'string' 
@@ -2580,10 +2942,28 @@
     return div.innerHTML;
   }
 
+  /**
+   * Format a number using the current locale's conventions.
+   * @param {number} num - The numeric value to format.
+   * @returns {string} The number formatted with locale-aware grouping and decimals.
+   */
   function formatNumber(num) {
     return new Intl.NumberFormat().format(num);
   }
 
+  /**
+   * Log an error to the console and append a structured entry to the in-memory telemetry error buffer.
+   *
+   * Accepts either a plain string or a structured error object. When given a string, the current
+   * provider is used and the error is recorded with type "generic". When given an object, the
+   * following fields are recognized and used if present: `provider`, `error`, `errorType`, and `traceId`.
+   *
+   * @param {string|Object} message - The error to record. If an object, may contain:
+   *   - {string} provider - Provider identifier associated with the error.
+   *   - {string} error - Human-readable error message.
+   *   - {string} errorType - Short token describing the error category (e.g., "proxyError").
+   *   - {string|null} traceId - Optional trace identifier for debugging.
+   */
   function showError(message) {
     // Comment 1: Handle structured error payload
     const structuredPayload = typeof message === 'string' 
