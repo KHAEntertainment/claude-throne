@@ -25,7 +25,7 @@ echo "Creating pull request..."
 gh pr create \
     --base main \
     --head "$BRANCH" \
-    --title "feat: Schema alignment, sequence token consistency, and model-fetch timeout cap (v1.5.45)" \
+    --title "feat: Schema alignment, sequence token consistency, and model-fetch timeout cap (v$VERSION)" \
     --body "## Summary
 
 This PR implements three critical improvements to ensure schema consistency, proper race condition handling, and improved timeout behavior for model fetching.
@@ -61,7 +61,7 @@ This PR implements three critical improvements to ensure schema consistency, pro
 
 ## Version
 
-Bumped to **v1.5.45** for release."
+Bumped to **v$VERSION** for release."
 
 # Create release
 echo "Creating GitHub release..."
