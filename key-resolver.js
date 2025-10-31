@@ -96,7 +96,7 @@ export function detectProvider(baseUrl, env = process.env) {
     if (host.includes('together.ai') || host.includes('together.xyz')) return PROVIDERS.together
     if (host.includes('deepseek.com')) return PROVIDERS.deepseek
     if (host.includes('z.ai')) return PROVIDERS.glm
-    if (host.includes('anthropic.com') || host.endsWith('.anthropic.app')) return PROVIDERS.anthropic
+    if (host.includes('anthropic.com') || host.includes('anthropic.ai') || host.endsWith('.anthropic.app')) return PROVIDERS.anthropic
     if (host.includes('x.ai') || host.includes('grok')) return PROVIDERS.grok
     if (/\/anthropic/.test(path)) return PROVIDERS.anthropic
     return PROVIDERS.custom

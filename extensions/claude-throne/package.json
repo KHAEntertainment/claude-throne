@@ -62,11 +62,11 @@
       },
       {
         "command": "claudeThrone.storeDeepseekKey",
-        "title": "Claude Throne: Store Deepseek API Key"
+        "title": "Thronekeeper: Store Deepseek API Key"
       },
       {
         "command": "claudeThrone.storeGlmKey",
-        "title": "Claude Throne: Store GLM API Key"
+        "title": "Thronekeeper: Store GLM API Key"
       },
       {
         "command": "claudeThrone.storeCustomKey",

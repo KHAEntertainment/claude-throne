@@ -264,7 +264,7 @@ export type ExtensionToWebviewMessage = z.infer<typeof ExtensionToWebviewMessage
  * Request models message (with optional token for response matching)
  */
 export const RequestModelsMessageSchema = z.object({
-  type: z.literal('requestModels').or(z.literal('listPublicModels')).or(z.literal('listFreeModels')),
+  type: z.union([z.literal('requestModels'), z.literal('listPublicModels'), z.literal('listFreeModels')]),
   provider: z.string().optional(),
   token: z.string().optional()  // Sequence token to match with response
 })
@@ -299,7 +299,7 @@ export type UpdateProviderMessage = z.infer<typeof UpdateProviderMessageSchema>
  * Store key message
  */
 export const StoreKeyMessageSchema = z.object({
-  type: z.literal('storeKey').or(z.literal('storeAnthropicKey')),
+  type: z.union([z.literal('storeKey'), z.literal('storeAnthropicKey')]),
   provider: z.string().optional(),
   key: z.string()
 })
@@ -310,7 +310,7 @@ export type StoreKeyMessage = z.infer<typeof StoreKeyMessageSchema>
  * Start/Stop proxy messages
  */
 export const ProxyControlMessageSchema = z.object({
-  type: z.literal('startProxy').or(z.literal('stopProxy')).or(z.literal('revertApply'))
+  type: z.union([z.literal('startProxy'), z.literal('stopProxy'), z.literal('revertApply')])
 })
 
 export type ProxyControlMessage = z.infer<typeof ProxyControlMessageSchema>
