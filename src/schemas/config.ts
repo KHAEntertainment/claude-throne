@@ -104,7 +104,8 @@ export const ClaudeThroneConfigSchema = z.object({
     enableSchemaValidation: z.boolean().default(true),
     enableTokenValidation: z.boolean().default(true),
     enableKeyNormalization: z.boolean().default(true),
-    enablePreApplyHydration: z.boolean().default(true)
+    enablePreApplyHydration: z.boolean().default(true),
+    enableAnthropicDirectApply: z.boolean().default(false)
   }).optional()
 })
 
