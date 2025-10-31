@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/extensions/claude-throne"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/extensions/claude-throne/out/**/*.js"
+      ],
+      "preLaunchTask": "watch"
+    },
+    {
+      "name": "Extension Tests",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/extensions/claude-throne",
+        "--extensionTestsPath=${workspaceFolder}/extensions/claude-throne/out/test/suite/index"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/extensions/claude-throne/out/test/**/*.js"
+      ],
+      "preLaunchTask": "watch"
+    }
+  ]
+}
+

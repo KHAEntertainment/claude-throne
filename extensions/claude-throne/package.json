@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.45",
+  "version": "1.5.50",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -26,27 +26,15 @@
   ],
   "contributes": {
     "viewsContainers": {
-      "panel": [
-        {
-          "id": "claudeThronePanel",
-          "title": "Thronekeeper"
-        }
-      ],
       "activitybar": [
         {
           "id": "claudeThrone",
-          "title": "Thronekeeper"
+          "title": "Thronekeeper",
+          "icon": "images/thronekeeper-logo.jpg"
         }
       ]
     },
     "views": {
-      "claudeThronePanel": [
-        {
-          "id": "claudeThrone.panel",
-          "name": "Thronekeeper",
-          "type": "webview"
-        }
-      ],
       "claudeThrone": [
         {
           "id": "claudeThrone.activity",
@@ -136,6 +124,20 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Skip health check during proxy startup for instant initialization. Enable if experiencing startup delays."
+        },
+        "claudeThrone.proxy.startupTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 1000,
+          "maximum": 30000,
+          "markdownDescription": "Timeout in milliseconds for waiting for proxy to start listening on port. Default: 3000ms (3 seconds)."
+        },
+        "claudeThrone.proxy.healthTimeoutMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "markdownDescription": "Timeout in milliseconds for individual health check requests. Default: 500ms."
         },
         "claudeThrone.autoApply": {
           "type": "boolean",
@@ -335,6 +337,6 @@
     "esbuild": "^0.21.5",
     "typescript": "^5.4.0",
     "vsce": "^2.15.0",
-    "vitest": "^1.0.0"
+    "vitest": "^1.4.0"
   }
 }

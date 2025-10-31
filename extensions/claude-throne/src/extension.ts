@@ -260,18 +260,15 @@ export function activate(context: vscode.ExtensionContext) {
   log.appendLine('✅ Panel provider created')
   
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('claudeThrone.panel', panelProvider),
     vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
   )
   log.appendLine('✅ Webview providers registered')
 
   // Commands
   const openPanel = vscode.commands.registerCommand('claudeThrone.openPanel', async () => {
-    // Try Panel view first, fall back to Activity Bar view
-    if (!(await tryOpenView('claudeThrone.panel'))) {
-      if (!(await tryOpenView('claudeThrone.activity'))) {
-        await panelProvider.reveal()
-      }
+    // Open Activity Bar view
+    if (!(await tryOpenView('claudeThrone.activity'))) {
+      await panelProvider.reveal()
     }
   })
 
@@ -381,6 +378,10 @@ export function activate(context: vscode.ExtensionContext) {
             restoreEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = null;
             restoreEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = null;
         }
+        
+        // Remove Claude Code environment variables when reverting
+        restoreEnv.API_TIMEOUT_MS = null;
+        restoreEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = null;
         
         // Single call: atomic update
         await updateClaudeSettings(settingsDir, restoreEnv, /*revert*/ false);
@@ -651,9 +652,23 @@ export function activate(context: vscode.ExtensionContext) {
     const twoModelMode = cfg.get<boolean>('twoModelMode', false);
     const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
 
+    // Add optional Claude Code environment variables
+    const apiTimeoutMs = cfg.get<number>('claudeCode.apiTimeoutMs');
+    if (apiTimeoutMs !== undefined && apiTimeoutMs !== null) {
+      env.API_TIMEOUT_MS = String(apiTimeoutMs);
+    }
+    
+    const disableNonessentialTraffic = cfg.get<boolean>('claudeCode.disableNonessentialTraffic', false);
+    if (disableNonessentialTraffic) {
+      env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = 1;
+    }
+
     log.appendLine(`[applyToClaudeCode] Scope: ${scopeStr}`);
     log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
     log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', coding='${completionModel || 'EMPTY'}', value='${valueModel || 'EMPTY'}'`);
+    // Comment 7: Log model configuration to verify propagation
+    log.appendLine(`[applyToClaudeCode] Model configuration - reasoningModel: ${reasoningModel || 'NOT SET'}, completionModel: ${completionModel || 'NOT SET'}, valueModel: ${valueModel || 'NOT SET'}`);
+    log.appendLine(`[applyToClaudeCode] Two-model mode: ${twoModelMode}`);
     
     // Fallback: If reasoningModel is empty but completionModel is set, use completionModel for all defaults
     let effectiveReasoningModel = reasoningModel;

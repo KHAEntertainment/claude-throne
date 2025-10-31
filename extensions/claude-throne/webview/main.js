@@ -16,6 +16,9 @@
     models: [],
     modelsCache: {},
     customProviders: [],
+    endpointOverrides: {}, // Comment 3: Store endpoint kind overrides
+    // Comment 6: Trace ID for provider flows (DEBUG mode only)
+    currentTraceId: null,
     // Provider-specific model storage
     // Comment 5: Use 'completion' as canonical key (read-only fallback to legacy 'coding' for backward compat)
     modelsByProvider: {
@@ -47,7 +50,9 @@
   errorBuffer: [], // In-memory buffer of recent errors
   maxErrorBufferSize: 10, // Keep last 10 errors
   // Comment 3: Performance optimization for filtering
-  lastFilteredIds: null // Track last filtered model IDs to avoid unnecessary DOM work
+  lastFilteredIds: null, // Track last filtered model IDs to avoid unnecessary DOM work
+  lastTwoModelMode: false, // Track last twoModelMode to detect UI changes
+  lastSelectedModels: { reasoning: '', coding: '', value: '' } // Track last selected models to detect selection changes
 };
 
   // Comment 2: Add error to telemetry buffer
@@ -92,19 +97,46 @@
     });
   }
 
-  // Phase 3: Helper function to get coding model with deprecation warning
-  function getCodingModelFromProvider(providerModels, providerName) {
-    const completion = providerModels.completion;
-    const coding = providerModels.coding;
+  // Comment 3: Normalize provider map to canonical keys { reasoning, completion, value }
+  function normalizeProviderMap(providerModels, providerName) {
+    if (!providerModels || typeof providerModels !== 'object') {
+      return { reasoning: '', completion: '', value: '' };
+    }
     
-    // Phase 3: Emit deprecation warning if using legacy 'coding' key
-    if (!completion && coding) {
+    // Comment 3: Runtime assertion in development to fail fast if unexpected keys are present
+    const canonicalKeys = ['reasoning', 'completion', 'value'];
+    const legacyKeys = ['coding']; // Legacy key that we still accept but normalize
+    const allowedKeys = [...canonicalKeys, ...legacyKeys];
+    const unexpectedKeys = Object.keys(providerModels).filter(
+      key => !allowedKeys.includes(key) && providerModels[key] !== undefined && providerModels[key] !== null
+    );
+    
+    if (unexpectedKeys.length > 0) {
+      const warning = `[Provider Map Validation] Provider '${providerName}' has unexpected keys: ${unexpectedKeys.join(', ')}. Expected only: ${canonicalKeys.join(', ')}`;
+      console.warn(warning);
+    }
+    
+    // Normalize to canonical keys
+    const normalized = {
+      reasoning: String(providerModels.reasoning || ''),
+      completion: String(providerModels.completion || providerModels.coding || ''), // Fallback to legacy 'coding'
+      value: String(providerModels.value || '')
+    };
+    
+    // Emit deprecation warning if using legacy 'coding' key
+    if (!providerModels.completion && providerModels.coding) {
       console.warn(`[DEPRECATION] Provider '${providerName}' uses legacy 'coding' key. This key is deprecated and will be removed in a future version. Use 'completion' instead.`);
       console.warn(`[DEPRECATION] Migration: The next save operation will automatically migrate to 'completion' key.`);
     }
     
-    // Return completion first, fallback to coding
-    return completion || coding || '';
+    return normalized;
+  }
+
+  // Phase 3: Helper function to get coding model with deprecation warning
+  // @deprecated Use normalizeProviderMap instead for full normalization
+  function getCodingModelFromProvider(providerModels, providerName) {
+    const normalized = normalizeProviderMap(providerModels, providerName);
+    return normalized.completion;
   }
 
   // Phase 5: Debounce helper to prevent excessive re-renders
@@ -125,7 +157,8 @@
     renderModelList(searchTerm);
   }, 300);
 
-  // Comment 1: Safe message validation for incoming extension messages
+  // Comment 8: Safe message validation for incoming extension messages
+  // Validates messages against schemas and logs mismatches in DEBUG mode
   function safeValidateMessage(message, direction) {
     // Comment 19: Check feature flag
     if (!state.featureFlags.enableSchemaValidation) {
@@ -144,7 +177,7 @@
       return null;
     }
 
-    // Validate payload based on message type
+    // Comment 8: Validate payload based on message type with comprehensive checks
     switch (type) {
       case 'status':
         if (!payload || typeof payload !== 'object') return null;
@@ -152,29 +185,42 @@
         
       case 'models':
         if (!payload || typeof payload !== 'object') return null;
-        // Comment 1: Require provider field for race protection
+        // Comment 8: Require provider field for race protection
         if (!payload.provider || typeof payload.provider !== 'string') {
           console.error('[Schema Validation] models message missing provider field:', message);
+          if (state.featureFlags.enableSchemaValidation) {
+            console.error('[Schema Validation] Rejected models message due to missing provider');
+          }
           return null;
         }
         if (!Array.isArray(payload.models)) {
           console.error('[Schema Validation] models payload.models is not an array:', message);
           return null;
         }
+        // Comment 8: Validate token if present
+        if (payload.token !== undefined && typeof payload.token !== 'string') {
+          console.error('[Schema Validation] models payload.token must be string if present:', message);
+          return null;
+        }
         break;
         
       case 'config':
         if (!payload || typeof payload !== 'object') return null;
-        // Required fields for config
+        // Comment 8: Required fields for config
         if (!payload.provider || typeof payload.provider !== 'string') {
           console.error('[Schema Validation] config message missing provider field:', message);
+          return null;
+        }
+        // Comment 8: Validate modelSelectionsByProvider structure if present
+        if (payload.modelSelectionsByProvider && typeof payload.modelSelectionsByProvider !== 'object') {
+          console.error('[Schema Validation] config.modelSelectionsByProvider must be object:', message);
           return null;
         }
         break;
         
       case 'modelsSaved':
         if (!payload || typeof payload !== 'object') return null;
-        // Comment 1: Require providerId for save confirmation matching
+        // Comment 8: Require providerId for save confirmation matching
         if (!payload.providerId || typeof payload.providerId !== 'string') {
           console.error('[Schema Validation] modelsSaved message missing providerId field:', message);
           return null;
@@ -182,11 +228,34 @@
         break;
         
       case 'modelsError':
+      case 'proxyError':
         if (!payload) return null;
-        // Payload can be string or object
-        if (typeof payload === 'object' && !payload.provider) {
-          console.error('[Schema Validation] modelsError object payload missing provider field:', message);
-          return null;
+        // Comment 8: Validate structured error payload (always object now per Comment 1)
+        if (typeof payload === 'object') {
+          if (!payload.provider || typeof payload.provider !== 'string') {
+            console.error('[Schema Validation] Error message missing provider field:', message);
+            return null;
+          }
+          if (!payload.error || typeof payload.error !== 'string') {
+            console.error('[Schema Validation] Error message missing error field:', message);
+            return null;
+          }
+          if (!payload.errorType || typeof payload.errorType !== 'string') {
+            console.error('[Schema Validation] Error message missing errorType field:', message);
+            return null;
+          }
+          // Comment 8: Validate optional fields
+          if (payload.token !== undefined && typeof payload.token !== 'string') {
+            console.error('[Schema Validation] Error payload.token must be string if present:', message);
+            return null;
+          }
+          if (payload.traceId !== undefined && typeof payload.traceId !== 'string') {
+            console.error('[Schema Validation] Error payload.traceId must be string if present:', message);
+            return null;
+          }
+        } else {
+          // Comment 8: Backward compatibility - allow string payload but log warning
+          console.warn('[Schema Validation] Error payload is string (legacy format), consider upgrading to structured format');
         }
         break;
         
@@ -200,13 +269,20 @@
       case 'customProvidersLoaded':
       case 'customProviderDeleted':
       case 'popularModels':
-      case 'proxyError':
         // These require payload but we don't validate structure in safe mode
+        if (!payload) {
+          console.error('[Schema Validation] Message type requires payload:', type);
+          return null;
+        }
         break;
         
       default:
-        console.warn('[Schema Validation] Unknown message type:', type);
-        // Allow unknown types in safe mode
+        // Comment 8: Log schema mismatches in DEBUG mode
+        const debugCheckbox = document.getElementById('debugCheckbox');
+        if (debugCheckbox && debugCheckbox.checked) {
+          console.warn('[Schema Validation] Unknown message type:', type, 'Message:', message);
+        }
+        // Allow unknown types in safe mode for backward compatibility
         break;
     }
 
@@ -253,6 +329,35 @@
     }
   };
 
+  // Comment 1: Define endpoint kind change handler before setupEventListeners() attaches it
+  function onEndpointKindChange(e) {
+    const endpointKind = e.target.value;
+    const customUrlInput = document.getElementById('customUrl');
+    const baseUrl = customUrlInput?.value?.trim();
+    
+    // Comment 1: Normalize base URL by trimming trailing slashes
+    const normalizedBaseUrl = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
+    
+    if (normalizedBaseUrl) {
+      // Comment 1: Optionally update local UI state optimistically
+      const detectionSourceBadge = document.getElementById('detectionSourceBadge');
+      if (detectionSourceBadge && endpointKind !== 'auto') {
+        detectionSourceBadge.textContent = 'override';
+        detectionSourceBadge.style.display = 'inline-block';
+      } else if (detectionSourceBadge && endpointKind === 'auto') {
+        detectionSourceBadge.textContent = 'auto';
+        detectionSourceBadge.style.display = 'inline-block';
+      }
+      
+      // Comment 1: Post message to extension to persist override
+      vscode.postMessage({
+        type: 'updateEndpointKind',
+        baseUrl: normalizedBaseUrl,
+        endpointKind: endpointKind
+      });
+    }
+  }
+
   // Initialize
   document.addEventListener('DOMContentLoaded', init);
 
@@ -282,6 +387,10 @@
     // Custom URL
         const customUrlInput = document.getElementById('customUrl');
     customUrlInput?.addEventListener('input', onCustomUrlChange);
+    
+    // Comment 3: Endpoint kind selector
+    const endpointKindSelect = document.getElementById('endpointKindSelect');
+    endpointKindSelect?.addEventListener('change', onEndpointKindChange);
 
     // API Key
     const showKeyBtn = document.getElementById('showKeyBtn');
@@ -414,7 +523,11 @@
         handleAnthropicKeyStored(message.payload);
         break;
       case 'proxyError':
-        showError(message.payload);
+        // Comment 1: Handle structured error payload
+        const proxyErrorPayload = typeof message.payload === 'string' 
+          ? { provider: state.provider, error: message.payload, errorType: 'generic' }
+          : message.payload;
+        showError(proxyErrorPayload);
         break;
       case 'modelsError':
         handleModelsError(message.payload);
@@ -433,11 +546,39 @@
       case 'customProviderDeleted':
         handleCustomProviderDeleted(message.payload);
         break;
+      case 'endpointKindUpdated':
+        // Comment 3: Handle endpoint kind update confirmation and update badge
+        if (message.payload && state.endpointOverrides) {
+          const normalizedUrl = message.payload.baseUrl.replace(/\/+$/, '');
+          state.endpointOverrides[normalizedUrl] = message.payload.endpointKind;
+          // Update badge to show detection source
+          const detectionSourceBadge = document.getElementById('detectionSourceBadge');
+          if (detectionSourceBadge) {
+            if (message.payload.endpointKind === 'auto') {
+              detectionSourceBadge.textContent = 'auto';
+            } else {
+              detectionSourceBadge.textContent = 'override';
+            }
+            detectionSourceBadge.style.display = 'inline-block';
+          }
+        }
+        break;
       case 'modelsSaved':
         handleModelsSaved(message.payload);
         break;
+      case 'configWarning':
+        // Comment 9: Handle configWarning message for provider-specific model fallback
+        handleConfigWarning(message.payload);
+        break;
       default:
         console.log('[handleMessage] Unknown message type:', message.type);
+    }
+  }
+
+  function handleConfigWarning(payload) {
+    console.warn('[Config Warning]', payload.message);
+    if (payload.provider && payload.fallbackUsed) {
+      showNotification(payload.message, 'warning', 5000);
     }
   }
 
@@ -517,15 +658,31 @@
     
     const newProvider = e.target.value;
     
-    // Comment 1: Delete only the old provider's cache
+    // Comment 5: Delete only the old provider's cache (isolated per-provider caches)
     delete state.modelsCache[previousProvider];
+    console.log(`[onProviderChange] Cleared cache for previous provider: ${previousProvider}`);
+    
+    // Comment 5: Reset sequence token counter on provider switch to ensure clean state
+    state.requestTokenCounter = 0;
+    state.currentRequestToken = null;
+    
+    // Comment 6: Generate trace ID for provider flow (DEBUG mode only)
+    const debugCheckbox = document.getElementById('debugCheckbox');
+    const debug = debugCheckbox && debugCheckbox.checked;
+    if (debug) {
+      state.currentTraceId = `trace-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
+      console.log(`[Trace ${state.currentTraceId}] Provider switch: ${previousProvider} → ${newProvider}`);
+    } else {
+      state.currentTraceId = null;
+    }
     
     // Now update provider state
     state.provider = newProvider;
     state.models = [];
     
-    // Comment 3: Reset filtered IDs when switching providers
+    // Comment 3: Reset filtered IDs and selection tracking when switching providers
     state.lastFilteredIds = null;
+    state.lastSelectedModels = { reasoning: '', coding: '', value: '' };
     
     // Reset models and clear the visual list before loading
     renderModelList();
@@ -538,10 +695,11 @@
     
     // Restore models for the new provider
     if (state.modelsByProvider[newProvider]) {
-      state.reasoningModel = state.modelsByProvider[newProvider].reasoning || '';
-      // Phase 3: Use helper function with deprecation warning
-      state.codingModel = getCodingModelFromProvider(state.modelsByProvider[newProvider], newProvider);
-      state.valueModel = state.modelsByProvider[newProvider].value || '';
+      // Comment 3: Normalize provider map before reading
+      const normalized = normalizeProviderMap(state.modelsByProvider[newProvider], newProvider);
+      state.reasoningModel = normalized.reasoning;
+      state.codingModel = normalized.completion;
+      state.valueModel = normalized.value;
     } else {
       state.reasoningModel = '';
       state.codingModel = '';
@@ -578,15 +736,46 @@
     if (state.provider === 'custom' || isCustomProvider) {
       customSection?.classList.add('visible');
       
-      // If it's a saved custom provider, populate its URL
+      // Comment 3: Show endpoint kind selector for custom providers
+      const endpointKindSection = document.getElementById('endpointKindSection');
+      if (endpointKindSection) {
+        endpointKindSection.style.display = 'block';
+      }
+      
+      // If it's a saved custom provider, populate its URL and endpoint kind
       if (isCustomProvider) {
         const customProvider = state.customProviders.find(p => p.id === state.provider);
-        if (customProvider && document.getElementById('customUrl')) {
-          document.getElementById('customUrl').value = customProvider.baseUrl;
+        if (customProvider) {
+          if (document.getElementById('customUrl')) {
+            document.getElementById('customUrl').value = customProvider.baseUrl;
+          }
+          // Comment 3: Set endpoint kind from overrides and show detection source badge
+          const normalizedUrl = customProvider.baseUrl.replace(/\/+$/, '');
+          const endpointKindSelect = document.getElementById('endpointKindSelect');
+          const detectionSourceBadge = document.getElementById('detectionSourceBadge');
+          if (endpointKindSelect && state.endpointOverrides) {
+            const override = state.endpointOverrides[normalizedUrl];
+            endpointKindSelect.value = override || 'auto';
+            // Comment 3: Show badge with detection source
+            if (detectionSourceBadge) {
+              if (override) {
+                detectionSourceBadge.textContent = 'override';
+                detectionSourceBadge.style.display = 'inline-block';
+              } else {
+                detectionSourceBadge.textContent = 'auto';
+                detectionSourceBadge.style.display = 'inline-block';
+              }
+            }
+          }
         }
       }
     } else {
       customSection?.classList.remove('visible');
+      // Comment 3: Hide endpoint kind selector for non-custom providers
+      const endpointKindSection = document.getElementById('endpointKindSection');
+      if (endpointKindSection) {
+        endpointKindSection.style.display = 'none';
+      }
     }
 
     // Clear form fields when switching to custom provider
@@ -640,11 +829,11 @@
 
     // Update help text - prioritize explicit cases first
     if (state.provider === 'custom' && helpDiv) {
-      // For one-off custom provider
-      helpDiv.innerHTML = 'Custom = one‑off URL below. Saved Custom Providers appear in this list when created.';
+      // Comment 3: Updated help text with endpoint kind recommendation
+      helpDiv.innerHTML = 'Custom = one‑off URL below. Set endpoint type to avoid 401/404 errors. Saved Custom Providers appear in this list when created.';
     } else if (isCustomProvider && helpDiv) {
-      // For saved custom providers
-      helpDiv.innerHTML = 'This is a saved custom provider. URL and key are stored for reuse.';
+      // Comment 3: Updated help text with endpoint kind recommendation
+      helpDiv.innerHTML = 'This is a saved custom provider. URL and key are stored for reuse. Set endpoint type to avoid 401/404 errors.';
     } else {
       // For built-in providers
       const providerInfo = providers[state.provider];
@@ -1058,8 +1247,12 @@
   function handleCustomProvidersLoaded(payload) {
     console.log('[handleCustomProvidersLoaded] Custom providers loaded:', payload);
     
-    if (payload.providers) {
+    if (payload && payload.providers) {
       state.customProviders = payload.providers;
+      // Comment 3: Store endpoint kind overrides
+      if (payload.endpointOverrides) {
+        state.endpointOverrides = payload.endpointOverrides;
+      }
       updateProviderDropdown();
       
       // Set provider value after dropdown is populated
@@ -1287,7 +1480,9 @@
 
   // Two Model Mode
   function onTwoModelToggle(e) {
-    state.twoModelMode = e.target.checked;
+    const newValue = e.target.checked;
+    console.log('[onTwoModelToggle] Toggling two-model mode from', state.twoModelMode, 'to', newValue);
+    state.twoModelMode = newValue;
     updateTwoModelUI();
     saveState();
     
@@ -1297,6 +1492,7 @@
   }
 
   function updateTwoModelUI() {
+    console.log('[updateTwoModelUI] Updating UI, twoModelMode:', state.twoModelMode);
     const modelList = document.getElementById('modelListContainer');
     const saveComboBtn = document.getElementById('saveComboBtn');
 
@@ -1304,6 +1500,7 @@
     updateSaveComboButton();
 
     // Re-render model list to show/hide secondary buttons
+    console.log('[updateTwoModelUI] Calling renderModelList()');
     renderModelList();
   }
 
@@ -1323,26 +1520,27 @@
   function setModelFromList(modelId, type) {
     // Comment 3: Initialize provider entry in webview before writing to modelsByProvider when selecting from list
     if (!state.modelsByProvider[state.provider]) {
-      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
-      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', value: '' };
       console.log(`[setModelFromList] Initialized modelsByProvider entry for provider: ${state.provider}`);
     }
     
+    // Comment 3: Normalize existing map before updating
+    const normalized = normalizeProviderMap(state.modelsByProvider[state.provider], state.provider);
+    
     if (type === 'reasoning') {
       state.reasoningModel = modelId;
-      // Save to provider-specific storage
-      state.modelsByProvider[state.provider].reasoning = modelId;
+      normalized.reasoning = modelId;
     } else if (type === 'coding') {
       state.codingModel = modelId;
-      // Comment 1: Standardize on 'completion' key for provider-scoped coding model values
-      state.modelsByProvider[state.provider].completion = modelId;
-      // Also set .coding for backward compatibility
-      state.modelsByProvider[state.provider].coding = modelId;
+      // Comment 3: Map 'coding' to 'completion' canonical key
+      normalized.completion = modelId;
     } else if (type === 'value') {
       state.valueModel = modelId;
-      // Save to provider-specific storage
-      state.modelsByProvider[state.provider].value = modelId;
+      normalized.value = modelId;
     }
+    
+    // Comment 3: Save normalized map back (ensures canonical keys only)
+    state.modelsByProvider[state.provider] = normalized;
     
     // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
     console.log(`[setModelFromList] Save round-trip - state.provider: ${state.provider}, models: { reasoning: ${state.reasoningModel}, coding: ${state.codingModel}, value: ${state.valueModel} }`);
@@ -1365,8 +1563,9 @@
     updateSaveComboButton();
     updateSelectedModelsDisplay();
     saveState();
-    // Remove immediate renderModelList() - let handleModelsSaved trigger re-render after confirmation
-    // renderModelList(); // REMOVED: Prevents race condition with extension state
+    // Immediately re-render model list to update highlighting - state is already updated synchronously above
+    renderModelList();
+    // handleModelsSaved will also call renderModelList() as a safety net after backend confirmation
   }
 
   function updateSelectedModelsDisplay() {
@@ -1484,12 +1683,14 @@
     }
 
     try {
-      // Phase 2: Generate sequence token for race protection
+      // Comment 4: Generate sequence token for race protection
       state.requestTokenCounter++;
       const requestToken = `token-${state.requestTokenCounter}`;
       state.currentRequestToken = requestToken;
       
-      console.log(`[loadModels] Requesting models for provider: ${state.provider}, token: ${requestToken}`);
+      // Comment 6: Include trace ID in logs (DEBUG mode only)
+      const traceInfo = state.currentTraceId ? ` [Trace ${state.currentTraceId}]` : '';
+      console.log(`[loadModels] Requesting models for provider: ${state.provider}, sequence token: ${requestToken}${traceInfo}`);
       
       // Request models from backend with token
       vscode.postMessage({ 
@@ -1521,8 +1722,9 @@
 
     if (state.models.length === 0) {
       container.innerHTML = '<div class="empty-state">No model(s) selected for this provider.</div>';
-      // Comment 3: Clear last filtered IDs when no models
+      // Comment 3: Clear last filtered IDs and selection tracking when no models
       state.lastFilteredIds = null;
+      state.lastSelectedModels = { reasoning: '', coding: '', value: '' };
       return;
     }
 
@@ -1539,6 +1741,7 @@
       container.innerHTML = '<div class="empty-state">No models match your search</div>';
       // Comment 3: Update filtered IDs even for empty results
       state.lastFilteredIds = [];
+      // Don't reset selection tracking on empty search - selections are still valid
       return;
     }
 
@@ -1546,16 +1749,29 @@
     const filteredIds = filtered.map(m => m.id).sort();
     
     // Compare with previous filtered IDs to avoid unnecessary DOM work
-    if (state.lastFilteredIds && 
+    // IMPORTANT: Also check if twoModelMode or selected models changed - UI needs update even if IDs unchanged
+    const twoModelModeChanged = state.lastTwoModelMode !== state.twoModelMode;
+    const selectionsChanged = 
+      state.lastSelectedModels.reasoning !== state.reasoningModel ||
+      state.lastSelectedModels.coding !== state.codingModel ||
+      state.lastSelectedModels.value !== state.valueModel;
+    
+    if (!twoModelModeChanged && !selectionsChanged && state.lastFilteredIds && 
         state.lastFilteredIds.length === filteredIds.length &&
         state.lastFilteredIds.every((id, index) => id === filteredIds[index])) {
-      // Filtered results unchanged - skip DOM update
-      console.log('[Comment 3] Skipping render - filtered IDs unchanged');
+      // Filtered results, twoModelMode, and selections unchanged - skip DOM update
+      console.log('[Comment 3] Skipping render - filtered IDs, twoModelMode, and selections unchanged');
       return;
     }
     
-    // Update tracked filtered IDs
+    // Update tracked filtered IDs, twoModelMode, and selections
     state.lastFilteredIds = filteredIds;
+    state.lastTwoModelMode = state.twoModelMode;
+    state.lastSelectedModels = {
+      reasoning: state.reasoningModel,
+      coding: state.codingModel,
+      value: state.valueModel
+    };
     console.log(`[Comment 3] Rendering ${filtered.length} models (filtered from ${state.models.length})`);
 
     // Phase 5: Mark container for event delegation setup
@@ -1576,6 +1792,8 @@
     }
 
     // Render model items
+    console.log('[renderModelList] Rendering models - twoModelMode:', state.twoModelMode, 'filtered count:', filtered.length);
+    console.log('[renderModelList] Current selections - reasoning:', state.reasoningModel, 'coding:', state.codingModel, 'value:', state.valueModel);
     container.innerHTML = filtered.map(model => {
       const isReasoning = model.id === state.reasoningModel;
       const isCoding = model.id === state.codingModel;
@@ -1727,13 +1945,12 @@
     state.codingModel = coding;
     state.valueModel = value;
 
-    // Comment 5: Save to provider-specific storage (canonical 'completion' key only)
+    // Comment 3: Normalize before saving to provider-specific storage
     if (!state.modelsByProvider[state.provider]) {
       state.modelsByProvider[state.provider] = { reasoning: '', completion: '', value: '' };
     }
-    state.modelsByProvider[state.provider].reasoning = reasoning;
-    state.modelsByProvider[state.provider].completion = coding;
-    state.modelsByProvider[state.provider].value = value;
+    const normalized = normalizeProviderMap({ reasoning, completion: coding, value }, state.provider);
+    state.modelsByProvider[state.provider] = normalized;
 
     // Save
     saveState();
@@ -1949,13 +2166,28 @@
       console.log(`[handleConfigLoaded] Effective provider resolution: config.provider=${config.provider}, selectedCustomProviderId=${config.selectedCustomProviderId} => effectiveProvider=${effectiveProvider}`);
     }
     
-    // NOW compare using effective provider to decide if we should clear models
+    // Comment 5: Compare using effective provider to decide if we should clear cache
     if (effectiveProvider !== state.provider) {
       console.log('[handleConfigLoaded] Provider changed from', state.provider, 'to', effectiveProvider, '- clearing cache');
+      // Comment 5: Clear only the old provider's cache, preserve others
+      const oldProvider = state.provider;
+      delete state.modelsCache[oldProvider];
+      console.log(`[handleConfigLoaded] Cleared cache for provider: ${oldProvider}`);
       state.models = [];
-      state.modelsCache = {};
       // Comment 3: Reset filtered IDs when clearing models
       state.lastFilteredIds = null;
+      // Comment 5: Reset sequence token counter on provider change
+      state.requestTokenCounter = 0;
+      state.currentRequestToken = null;
+      // Comment 6: Generate trace ID for provider flow (DEBUG mode only)
+      const debugCheckbox = document.getElementById('debugCheckbox');
+      const debug = debugCheckbox && debugCheckbox.checked;
+      if (debug) {
+        state.currentTraceId = `trace-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 5)}`;
+        console.log(`[Trace ${state.currentTraceId}] Provider changed via config: ${oldProvider} → ${effectiveProvider}`);
+      } else {
+        state.currentTraceId = null;
+      }
     } else {
       console.log('[handleConfigLoaded] Provider unchanged - preserving cache');
     }
@@ -1986,11 +2218,13 @@
     // Read modelSelectionsByProvider from the payload
     if (config.modelSelectionsByProvider) {
       state.modelsByProvider = config.modelSelectionsByProvider;
-      // Ensure built-in providers have entries
+      // Ensure built-in providers have entries (normalized to canonical keys)
       ['openrouter', 'openai', 'together', 'deepseek', 'glm', 'custom'].forEach(provider => {
         if (!state.modelsByProvider[provider]) {
-          // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
-          state.modelsByProvider[provider] = { reasoning: '', completion: '', coding: '', value: '' };
+          state.modelsByProvider[provider] = { reasoning: '', completion: '', value: '' };
+        } else {
+          // Comment 3: Normalize existing entries to ensure canonical keys
+          state.modelsByProvider[provider] = normalizeProviderMap(state.modelsByProvider[provider], provider);
         }
       });
     }
@@ -2000,17 +2234,19 @@
     
     // Only seed modelsByProvider for the current provider if no entry exists
     if (!state.modelsByProvider[state.provider]) {
-      // Comment 3: Normalize terminology - use 'completion' key internally for provider-scoped coding model values
-      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', coding: '', value: '' };
+      state.modelsByProvider[state.provider] = { reasoning: '', completion: '', value: '' };
+    } else {
+      // Comment 3: Normalize existing entry to ensure canonical keys
+      state.modelsByProvider[state.provider] = normalizeProviderMap(state.modelsByProvider[state.provider], state.provider);
     }
     
     // Set models from provider-specific storage, with validation
     if (state.modelsByProvider[state.provider]) {
-      const providerModels = state.modelsByProvider[state.provider];
-      state.reasoningModel = providerModels.reasoning || '';
-      // Phase 3: Use helper function with deprecation warning
-      state.codingModel = getCodingModelFromProvider(providerModels, state.provider);
-      state.valueModel = providerModels.value || '';
+      // Comment 3: Normalize provider map before reading
+      const normalized = normalizeProviderMap(state.modelsByProvider[state.provider], state.provider);
+      state.reasoningModel = normalized.reasoning;
+      state.codingModel = normalized.completion;
+      state.valueModel = normalized.value;
       
       // Validation: check if all models are empty for this provider
       if (!state.reasoningModel && !state.codingModel && !state.valueModel) {
@@ -2145,24 +2381,44 @@
       return;
     }
     
-    // Phase 2: Validate provider and token to prevent race conditions
+    // Comment 4: Validate provider and sequence token to prevent race conditions
     // Use the provider from the payload, not the current state
     const provider = payload.provider || state.provider;
     const responseToken = payload.token;
     
-    console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}, token: ${responseToken}, currentRequestToken: ${state.currentRequestToken}`);
+    // Comment 6: Include trace ID in logs (DEBUG mode only)
+    const traceInfo = payload.traceId ? ` [Trace ${payload.traceId}]` : (state.currentTraceId ? ` [Trace ${state.currentTraceId}]` : '');
+    console.log(`[handleModelsLoaded] Received ${payload.models.length} models for provider: ${provider}, token: ${responseToken}, currentRequestToken: ${state.currentRequestToken}${traceInfo}`);
     
-    // Phase 2: Token validation - ignore late responses with mismatched tokens
-    // Comment 4: Gate token validation with feature flag
-    if (state.featureFlags.enableTokenValidation && responseToken && state.currentRequestToken && responseToken !== state.currentRequestToken) {
-      console.log(`[handleModelsLoaded] IGNORING late response - token mismatch (expected: ${state.currentRequestToken}, got: ${responseToken})`);
-      return;
+    // Comment 4: Sequence token validation - gate UI application on matching tokens
+    // Compare sequence numbers if tokens are in seq-N format, otherwise compare strings
+    if (state.featureFlags.enableTokenValidation && responseToken && state.currentRequestToken) {
+      let isValid = false
+      
+      // Try to parse sequence numbers for better comparison
+      const responseSeqMatch = responseToken.match(/^(?:seq-|token-)(\d+)$/)
+      const currentSeqMatch = state.currentRequestToken.match(/^(?:seq-|token-)(\d+)$/)
+      
+      if (responseSeqMatch && currentSeqMatch) {
+        const responseSeq = parseInt(responseSeqMatch[1], 10)
+        const currentSeq = parseInt(currentSeqMatch[1], 10)
+        isValid = responseSeq >= currentSeq // Accept equal or newer tokens
+      } else {
+        // Fallback to string comparison
+        isValid = responseToken === state.currentRequestToken
+      }
+      
+      if (!isValid) {
+        console.log(`[handleModelsLoaded] IGNORING late response - sequence token mismatch (expected: ${state.currentRequestToken}, got: ${responseToken})`);
+        return;
+      }
     }
     
-    // Always cache under the provider the backend says these belong to
+    // Comment 5: Cache under the provider the backend says these belong to (isolated per-provider cache)
     state.modelsCache[provider] = payload.models;
+    console.log(`[handleModelsLoaded] Cached ${payload.models.length} models for provider: ${provider}`);
     
-    // Phase 2: Provider validation - only render if this response is for the currently selected provider
+    // Comment 5: Provider validation - only render if this response is for the currently selected provider
     if (provider !== state.provider) {
       console.log(`[handleModelsLoaded] IGNORING cross-provider response - stashed ${payload.models.length} models for ${provider}, current provider is ${state.provider}`);
       return;
@@ -2177,17 +2433,23 @@
   }
 
   function handleModelsError(payload) {
+    // Comment 1: Ensure payload is structured (should always be object now)
+    const structuredPayload = typeof payload === 'string' 
+      ? { provider: state.provider, error: payload, errorType: 'generic' }
+      : payload;
+    
     // Comment 2: Add error to telemetry buffer first
     addErrorToBuffer({
       type: 'modelsError',
-      provider: payload.provider || 'unknown',
-      error: typeof payload === 'string' ? payload : payload.error || 'Unknown error',
-      errorType: typeof payload === 'object' ? payload.errorType || 'unknown' : 'unknown',
-      token: payload.token || null
+      provider: structuredPayload.provider || 'unknown',
+      error: structuredPayload.error || 'Unknown error',
+      errorType: structuredPayload.errorType || 'unknown',
+      token: structuredPayload.token || null,
+      traceId: structuredPayload.traceId || null
     });
     
     // Comment 11: Only render errors for the currently selected provider
-    const errorProvider = payload.provider || state.provider;
+    const errorProvider = structuredPayload.provider || state.provider;
     if (errorProvider !== state.provider) {
       console.log(`[handleModelsError] Ignoring error for ${errorProvider}, current provider is ${state.provider}`);
       return;
@@ -2210,7 +2472,7 @@
     
     // Comment 11: Show dedicated hint using errorProvider, not state.provider
     let dedicatedHint = '';
-    if (errorProvider === 'together' && payload.error && (payload.error.includes('401') || payload.error.includes('403'))) {
+    if (errorProvider === 'together' && structuredPayload.error && (structuredPayload.error.includes('401') || structuredPayload.error.includes('403'))) {
       dedicatedHint = `
         <div class="manual-entry-hint" style="background: var(--vscode-inputValidation-warningBackground); padding: 8px; border-radius: 4px; margin-bottom: 12px;">
           <p class="manual-entry-hint-title">🔑 Together AI Authentication Issue</p>
@@ -2227,7 +2489,7 @@
     // Show error with manual entry option for all providers
     container.innerHTML = `
       <div class="empty-state">
-        <p class="empty-state-error">${escapeHtml(payload.error)}</p>
+        <p class="empty-state-error">${escapeHtml(structuredPayload.error)}</p>
         ${dedicatedHint}
         
         <div class="manual-entry-section">
@@ -2315,16 +2577,22 @@
   }
 
   function showError(message) {
-    console.error('Error:', message);
+    // Comment 1: Handle structured error payload
+    const structuredPayload = typeof message === 'string' 
+      ? { provider: state.provider, error: message, errorType: 'generic' }
+      : message;
+    
+    console.error('Error:', structuredPayload.error);
     
     // Comment 2: Add to error buffer for telemetry
     addErrorToBuffer({
       type: 'proxyError',
-      provider: state.provider,
-      error: typeof message === 'string' ? message : JSON.stringify(message),
-      errorType: 'proxy'
+      provider: structuredPayload.provider || state.provider,
+      error: structuredPayload.error || 'Unknown error',
+      errorType: structuredPayload.errorType || 'generic',
+      traceId: structuredPayload.traceId || null
     });
     
-    // Could add a toast notification here
+    // Could add a toast notification here with structuredPayload.error
   }
 })();

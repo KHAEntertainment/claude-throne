@@ -17,6 +17,23 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   private currentTraceId: string | null = null
 
   /**
+   * Determines the appropriate ConfigurationTarget based on applyScope setting and workspace availability.
+   * Falls back to Global if workspace is requested but no workspace is open.
+   */
+  private getConfigurationTarget(applyScope: string = 'workspace'): vscode.ConfigurationTarget {
+    if (applyScope === 'global') {
+      return vscode.ConfigurationTarget.Global
+    }
+    // Check if workspace is available before using Workspace target
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      return vscode.ConfigurationTarget.Workspace
+    }
+    // Fall back to Global if no workspace is open
+    this.log.appendLine('[getConfigurationTarget] No workspace open, falling back to Global settings')
+    return vscode.ConfigurationTarget.Global
+  }
+
+  /**
    * Comment 3: Normalize provider map to canonical keys { reasoning, completion, value }
    * Remaps any incoming provider model objects to the canonical format
    * Adds runtime assertion in development to fail fast if unexpected keys are present
@@ -90,9 +107,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   ): Promise<boolean> {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const applyScope = cfg.get<string>('applyScope', 'workspace')
-    const target = applyScope === 'global' 
-      ? vscode.ConfigurationTarget.Global 
-      : vscode.ConfigurationTarget.Workspace
+    const target = this.getConfigurationTarget(applyScope)
 
     this.log.appendLine(`[hydrateGlobalKeys] BEFORE hydration for provider '${providerId}':`)
     this.log.appendLine(`[hydrateGlobalKeys]   - target: ${vscode.ConfigurationTarget[target]} (${applyScope})`)
@@ -208,9 +223,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       return
     }
     try {
-      await vscode.commands.executeCommand('workbench.view.openView', 'claudeThrone.panel', true)
+      await vscode.commands.executeCommand('workbench.view.openView', 'claudeThrone.activity', true)
     } catch {
-      vscode.window.showInformationMessage('Open the Thronekeeper view from the Panel (bottom) — it is movable like Output/Terminal.')
+      vscode.window.showInformationMessage('Open the Thronekeeper view from the Activity Bar sidebar.')
     }
   }
 
@@ -295,6 +310,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             break
           case 'storeKey':
             await this.handleStoreKey(msg.provider, msg.key)
+            // Comment 1: After storing keys, refresh keys status and re-run model list
+            await this.postKeys()
+            await this.handleListModels(false)
             break
           case 'startProxy':
             await this.handleStartProxy()
@@ -342,6 +360,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             break
           case 'requestCustomProviders':
             await this.postCustomProviders()
+            break
+          case 'updateEndpointKind':
+            // Comment 3: Handle endpoint kind update for custom provider
+            await this.handleUpdateEndpointKind(msg.baseUrl, msg.endpointKind)
             break
           case 'storeAnthropicKey':
             await this.handleStoreAnthropicKey(msg.key)
@@ -741,9 +763,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
                typeof provider.id === 'string' && provider.id.trim()
       })
       
+      // Comment 3: Include endpoint kind overrides in payload
+      const endpointOverrides = cfg.get<Record<string, string>>('customEndpointOverrides', {})
+      
       this.post({ 
         type: 'customProvidersLoaded', 
-        payload: { providers: validProviders } 
+        payload: { 
+          providers: validProviders,
+          endpointOverrides // Comment 3: Send endpoint kind overrides to webview
+        } 
       })
     } catch (err) {
       this.log.appendLine(`Failed to load custom providers: ${err}`)
@@ -837,16 +865,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const customProviders = cfg.get<any[]>('customProviders', [])
       const customProvider = customProviders.find(p => p.id === provider)
       
+      const target = this.getConfigurationTarget(cfg.get<string>('applyScope', 'workspace'))
       if (customProvider) {
         // This is a saved custom provider - set provider to 'custom' and save the custom provider ID
-        await cfg.update('provider', 'custom', vscode.ConfigurationTarget.Workspace)
-        await cfg.update('selectedCustomProviderId', provider, vscode.ConfigurationTarget.Workspace)
-        await cfg.update('customBaseUrl', customProvider.baseUrl, vscode.ConfigurationTarget.Workspace)
+        await cfg.update('provider', 'custom', target)
+        await cfg.update('selectedCustomProviderId', provider, target)
+        await cfg.update('customBaseUrl', customProvider.baseUrl, target)
         await cfg.update('customEndpointKind', 'openai')
       } else {
         // Built-in provider - clear selectedCustomProviderId
-        await cfg.update('provider', provider, vscode.ConfigurationTarget.Workspace)
-        await cfg.update('selectedCustomProviderId', '', vscode.ConfigurationTarget.Workspace)
+        await cfg.update('provider', provider, target)
+        await cfg.update('selectedCustomProviderId', '', target)
         await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
       }
     } catch (err) {
@@ -877,11 +906,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
   private async handleUpdateCustomUrl(url: string) {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    await cfg.update('customBaseUrl', url, vscode.ConfigurationTarget.Workspace)
+    const target = this.getConfigurationTarget(cfg.get<string>('applyScope', 'workspace'))
+    await cfg.update('customBaseUrl', url, target)
   }
 
   private async handleUpdatePort(port: number) {
-    await vscode.workspace.getConfiguration('claudeThrone').update('proxy.port', port, vscode.ConfigurationTarget.Workspace)
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const target = this.getConfigurationTarget(cfg.get<string>('applyScope', 'workspace'))
+    await cfg.update('proxy.port', port, target)
     this.postConfig()
   }
 
@@ -904,7 +936,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       const updatedCombos = [...savedCombos, newCombo]
-      await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
+      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
+      await config.update('savedCombos', updatedCombos, target)
       
       vscode.window.showInformationMessage('Model combo saved successfully')
       this.post({ 
@@ -972,7 +1005,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       const updatedProviders = [...customProviders, newProvider]
-      await config.update('customProviders', updatedProviders, vscode.ConfigurationTarget.Workspace)
+      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
+      await config.update('customProviders', updatedProviders, target)
       
       vscode.window.showInformationMessage('Custom provider saved successfully')
       
@@ -1019,13 +1053,14 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         // Continue with provider deletion even if key deletion fails
       }
       
-      await config.update('customProviders', updatedProviders, vscode.ConfigurationTarget.Workspace)
+      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
+      await config.update('customProviders', updatedProviders, target)
       
       // If deleted provider was currently selected, switch to default
       if (this.currentProvider === id.trim()) {
         this.currentProvider = 'openrouter'
-        await config.update('provider', 'openrouter', vscode.ConfigurationTarget.Workspace)
-        await config.update('selectedCustomProviderId', '', vscode.ConfigurationTarget.Workspace)
+        await config.update('provider', 'openrouter', target)
+        await config.update('selectedCustomProviderId', '', target)
         this.postConfig()
         this.handleListModels(false)
       }
@@ -1044,6 +1079,46 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       this.log.appendLine(`❌ Failed to delete custom provider: ${err}`)
       vscode.window.showErrorMessage(`Failed to delete custom provider: ${err}`)
+    }
+  }
+
+  // Comment 3: Handle endpoint kind update for custom provider
+  private async handleUpdateEndpointKind(baseUrl: string, endpointKind: string) {
+    try {
+      const normalizedUrl = baseUrl.replace(/\/+$/, '')
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const currentOverrides = cfg.get<Record<string, string>>('customEndpointOverrides', {})
+      
+      // Update the override map
+      const updatedOverrides = { ...currentOverrides }
+      if (endpointKind === 'auto' || !endpointKind) {
+        // Remove override if set to auto
+        delete updatedOverrides[normalizedUrl]
+      } else {
+        // Set override (normalize to 'openai' or 'anthropic')
+        const normalizedKind = endpointKind.toLowerCase()
+        if (normalizedKind === 'openai' || normalizedKind === 'openai-compatible') {
+          updatedOverrides[normalizedUrl] = 'openai'
+        } else if (normalizedKind === 'anthropic' || normalizedKind === 'anthropic-native') {
+          updatedOverrides[normalizedUrl] = 'anthropic'
+        } else {
+          this.log.appendLine(`⚠️ Invalid endpoint kind: ${endpointKind}`)
+          return
+        }
+      }
+      
+      const target = this.getConfigurationTarget(cfg.get<string>('applyScope', 'workspace'))
+      await cfg.update('customEndpointOverrides', updatedOverrides, target)
+      this.log.appendLine(`✅ Updated endpoint kind for ${normalizedUrl}: ${endpointKind || 'auto'}`)
+      
+      // Notify webview of the update
+      this.post({ 
+        type: 'endpointKindUpdated', 
+        payload: { baseUrl: normalizedUrl, endpointKind: endpointKind || 'auto' } 
+      })
+    } catch (err) {
+      this.log.appendLine(`❌ Failed to update endpoint kind: ${err}`)
+      vscode.window.showErrorMessage(`Failed to update endpoint kind: ${err}`)
     }
   }
 
@@ -1071,7 +1146,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       updatedCombos.splice(index, 1)
       
       // Update config
-      await config.update('savedCombos', updatedCombos, vscode.ConfigurationTarget.Workspace)
+      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
+      await config.update('savedCombos', updatedCombos, target)
       
       this.log.appendLine(`✅ Deleted combo at index ${index}`)
       vscode.window.showInformationMessage('Model combo deleted successfully')
@@ -1088,36 +1164,54 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleStoreKey(provider: string, key: string) {
-    this.log.appendLine(`🔑 Storing key for provider: ${provider} (length: ${key?.length})`)
+    // Comment 1: Normalize provider ID to ensure correct secret lookup
+    // Built-ins: openrouter, openai, together, deepseek, glm
+    // Custom: use their configured id
+    const normalizedProvider = provider.toLowerCase().trim()
+    const validBuiltIns = ['openrouter', 'openai', 'together', 'deepseek', 'glm']
+    
+    // Verify provider ID matches expected format
+    if (!validBuiltIns.includes(normalizedProvider) && normalizedProvider !== 'custom') {
+      // Check if it's a custom provider ID
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const customProviders = cfg.get<any[]>('customProviders', [])
+      const customProvider = customProviders.find(p => p.id === normalizedProvider)
+      
+      if (!customProvider) {
+        const errorMsg = `Invalid provider ID: ${provider}. Expected one of: ${validBuiltIns.join(', ')}, custom, or a saved custom provider ID.`
+        this.log.appendLine(`❌ ${errorMsg}`)
+        vscode.window.showErrorMessage(errorMsg)
+        this.post({ 
+          type: 'keyStored', 
+          payload: { provider, success: false, error: errorMsg }
+        })
+        return
+      }
+    }
+    
+    this.log.appendLine(`🔑 Storing key for provider: ${normalizedProvider} (length: ${key?.length})`)
     try {
-      await this.secrets.setProviderKey(provider, key)
-      this.log.appendLine('✅ Key stored successfully in system keychain')
-      await this.postKeys()
+      // Comment 1: Use normalized provider ID for storage
+      await this.secrets.setProviderKey(normalizedProvider, key)
+      this.log.appendLine(`✅ Key stored successfully in system keychain for provider: ${normalizedProvider}`)
       
       // Show VS Code notification
-      vscode.window.showInformationMessage(`API key for ${provider} stored successfully`)
+      vscode.window.showInformationMessage(`API key for ${normalizedProvider} stored successfully`)
       
       this.log.appendLine('📤 Sending keyStored confirmation to webview')
       const message = { 
         type: 'keyStored', 
-        payload: { provider, success: true }
+        payload: { provider: normalizedProvider, success: true }
       }
       this.log.appendLine(`📤 Message content: ${JSON.stringify(message)}`)
       this.post(message)
       this.log.appendLine('📤 Message sent via post()')
-      
-      // If this was the first key, try to load models
-      if (key && key.trim()) {
-        this.log.appendLine('📋 Triggering model list load...')
-        this.handleListModels(false)
-        this.postPopularModels()
-      }
     } catch (err) {
       this.log.appendLine(`❌ Failed to store key: ${err}`)
       vscode.window.showErrorMessage(`Failed to store API key: ${err}`)
       this.post({ 
         type: 'keyStored', 
-        payload: { provider, success: false, error: String(err) }
+        payload: { provider: normalizedProvider, success: false, error: String(err) }
       })
     }
   }
@@ -1291,6 +1385,19 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const hasProviderSpecific = modelSelectionsByProvider[this.runtimeProvider] && 
                                modelSelectionsByProvider[this.runtimeProvider].reasoning
       this.log.appendLine(`[handleStartProxy] Model source - Provider-specific: ${hasProviderSpecific ? 'YES' : 'NO'}, Fallback used: ${hasProviderSpecific ? 'NO' : 'YES'}`)
+      
+      // Comment 9: Post configWarning when fallback occurs
+      if (!hasProviderSpecific && reasoningModel) {
+        this.post({
+          type: 'configWarning',
+          payload: {
+            provider: this.runtimeProvider,
+            message: `No models saved for provider "${this.runtimeProvider}". Using global fallback. Please select and save models for this provider.`,
+            hasProviderSpecific: false,
+            fallbackUsed: true
+          }
+        })
+      }
       
       // Add guard: if required models are missing for the active provider, return error
       if (!reasoningModel || reasoningModel.trim() === '') {
@@ -1559,7 +1666,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // Comment 6: Add targeted logs around save round-trip to verify persistence and provider alignment
       const cfg = vscode.workspace.getConfiguration('claudeThrone')
       const applyScope = cfg.get<string>('applyScope', 'workspace')
-      const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+      const target = this.getConfigurationTarget(applyScope)
       
       this.log.appendLine(`[handleSaveModels] Save round-trip - providerId: ${providerId}, target: ${vscode.ConfigurationTarget[target]}, models: { reasoning: ${reasoning}, completion: ${completion}, value: ${value} }`)
 
@@ -1690,7 +1797,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     
     // Determine configuration target based on applyScope setting
     const applyScope = cfg.get<string>('applyScope', 'workspace')
-    const target = applyScope === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace
+    const target = this.getConfigurationTarget(applyScope)
     
     this.log.appendLine(`[handleSetModelFromList] Using config target: ${vscode.ConfigurationTarget[target]} (applyScope: ${applyScope})`)
     
@@ -1758,19 +1865,22 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`[handleToggleTwoModelMode] Two-model mode ${enabled ? 'enabled' : 'disabled'}`)
     this.log.appendLine(`[handleToggleTwoModelMode] Current models: reasoning=${reasoningModel}, completion=${completionModel}`)
     
-    await cfg.update('twoModelMode', enabled, vscode.ConfigurationTarget.Workspace)
+    const applyScope = cfg.get<string>('applyScope', 'workspace')
+    const target = this.getConfigurationTarget(applyScope)
+    await cfg.update('twoModelMode', enabled, target)
     
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
+    // Post config update to webview to ensure state synchronization
+    this.postConfig()
   }
 
   private async handleUpdateDebug(enabled: boolean) {
     this.log.appendLine(`[handleUpdateDebug] Debug ${enabled ? 'enabled' : 'disabled'}`)
     
-    await vscode.workspace.getConfiguration('claudeThrone').update(
-      'proxy.debug', 
-      enabled, 
-      vscode.ConfigurationTarget.Workspace
-    )
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const applyScope = cfg.get<string>('applyScope', 'workspace')
+    const target = this.getConfigurationTarget(applyScope)
+    await cfg.update('proxy.debug', enabled, target)
     
     this.log.appendLine(`[handleUpdateDebug] Debug setting updated successfully`)
   }
@@ -1828,6 +1938,21 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
                   <span>×</span>
                 </button>
               </div>
+            </div>
+            <!-- Comment 3: Endpoint kind selector for custom providers with detection source badge -->
+            <div class="form-group" id="endpointKindSection" style="display: none;">
+              <label class="form-label" for="endpointKindSelect" style="display: flex; align-items: center; gap: 8px;">
+                Endpoint Type
+                <span id="detectionSourceBadge" style="font-size: 10px; padding: 2px 6px; border-radius: 3px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); display: none;"></span>
+              </label>
+              <select class="form-input" id="endpointKindSelect">
+                <option value="auto">Auto-detect (recommended)</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic-native</option>
+              </select>
+              <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
+                Select endpoint type to avoid 401/404 errors. Auto-detect probes the endpoint on first request.
+              </p>
             </div>
           </div>
 
