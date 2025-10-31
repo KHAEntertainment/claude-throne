@@ -136,13 +136,17 @@ export async function spawnProxyProcess({ port, baseUrl, env = {}, isolateEnv = 
 }
 
 async function waitForReady(healthUrl, baseUrl, attempts = 30) {
-  // Use canonical health endpoint
-  const url = `${baseUrl}/health`
+  // Try both /health and /healthz endpoints
+  const urls = [`${baseUrl}/healthz`, `${baseUrl}/health`]
   for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(url, { method: 'GET' })
-      if (res.status === 200) return // Ready when health returns 200
-    } catch (_) {}
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { method: 'GET' })
+        if (res.status === 200) return // Ready when health returns 200
+      } catch (_) {
+        // Continue to next attempt
+      }
+    }
     await new Promise((r) => setTimeout(r, 150))
   }
   throw new Error('Proxy did not start in time')
