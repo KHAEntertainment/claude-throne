@@ -871,12 +871,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         await cfg.update('provider', 'custom', target)
         await cfg.update('selectedCustomProviderId', provider, target)
         await cfg.update('customBaseUrl', customProvider.baseUrl, target)
-        await cfg.update('customEndpointKind', 'openai')
+        await cfg.update('customEndpointKind', 'openai', target)
       } else {
         // Built-in provider - clear selectedCustomProviderId
         await cfg.update('provider', provider, target)
         await cfg.update('selectedCustomProviderId', '', target)
-        await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto')
+        await cfg.update('customEndpointKind', provider === 'custom' ? 'openai' : 'auto', target)
       }
     } catch (err) {
       console.error('Failed to update provider config:', err)
