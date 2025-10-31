@@ -127,9 +127,10 @@ export async function negotiateEndpointKind(baseUrl, key) {
     })
     clearTimeout(timeoutId)
     
-    // Comment 1: On explicit header/route mismatch (e.g., 400/404), retry with Authorization
-    if (resp.status === 400 || resp.status === 404) {
-      // Header/route mismatch - try OpenAI-compatible endpoint
+    // Comment 1: On ambiguous responses (400/404/401/403), retry with OpenAI-style Authorization header
+    // 400/404 suggest route mismatch, 401/403 are ambiguous (could be either endpoint type)
+    if (resp.status === 400 || resp.status === 404 || resp.status === 401 || resp.status === 403) {
+      // Try OpenAI-compatible endpoint to disambiguate
       try {
         const openaiController = new AbortController()
         const openaiTimeoutId = setTimeout(() => openaiController.abort(), 1500)
@@ -142,21 +143,24 @@ export async function negotiateEndpointKind(baseUrl, key) {
         })
         clearTimeout(openaiTimeoutId)
         
-        // If OpenAI endpoint responds (even with 401/403), it's OpenAI-compatible
-        if (openaiResp.status === 401 || openaiResp.status === 403 || openaiResp.ok) {
+        // If OpenAI endpoint responds (ok or 401/403), it's OpenAI-compatible
+        if (openaiResp.ok || openaiResp.status === 401 || openaiResp.status === 403) {
           const kind = ENDPOINT_KIND.OPENAI_COMPATIBLE
           endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
           return { kind, lastProbedAt: now }
         }
+        // OpenAI probe failed (non-ok and not 401/403) - classify as Anthropic-native
+        // This means the endpoint doesn't recognize OpenAI-style requests
+        const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+        endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+        return { kind, lastProbedAt: now }
       } catch (openaiErr) {
-        // OpenAI probe failed, continue to fallback
+        // OpenAI probe failed (network/timeout) - classify as Anthropic-native
         console.warn(`[negotiateEndpointKind] OpenAI probe failed:`, openaiErr.message)
+        const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+        endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+        return { kind, lastProbedAt: now }
       }
-    } else if (resp.status === 401 || resp.status === 403) {
-      // 401/403 with Anthropic headers suggests Anthropic-native endpoint (wrong key but correct format)
-      const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
-      endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
-      return { kind, lastProbedAt: now }
     } else if (resp.ok) {
       // 200 OK with Anthropic headers confirms Anthropic-native
       const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
