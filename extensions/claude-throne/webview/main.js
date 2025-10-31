@@ -524,12 +524,14 @@
         handleAnthropicKeyStored(message.payload);
         break;
       case 'proxyError':
+      case 'proxyError': {
         // Comment 1: Handle structured error payload
         const proxyErrorPayload = typeof message.payload === 'string' 
           ? { provider: state.provider, error: message.payload, errorType: 'generic' }
           : message.payload;
         showError(proxyErrorPayload);
         break;
+      }
       case 'modelsError':
         handleModelsError(message.payload);
         break;

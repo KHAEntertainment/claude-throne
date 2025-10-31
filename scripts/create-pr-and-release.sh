@@ -67,21 +67,6 @@ This PR implements three critical improvements to ensure schema consistency, pro
 
 Bumped to **v$VERSION** for release."
 
-# Build VSIX package
-echo "Building VSIX package..."
-cd extensions/claude-throne
-npm run package
-cd ../..
-
-# Verify VSIX exists
-VSIX_PATH="extensions/claude-throne/claude-throne-$VERSION.vsix"
-if [ ! -f "$VSIX_PATH" ]; then
-    echo "❌ Error: VSIX file not found at $VSIX_PATH"
-    echo "Build may have failed. Please check the output above."
-    exit 1
-fi
-echo "✅ VSIX file found at $VSIX_PATH"
-
 # Create release
 echo "Creating GitHub release..."
 gh release create "v$VERSION" \
@@ -98,7 +83,7 @@ gh release create "v$VERSION" \
 - \`extensions/claude-throne/src/services/Models.ts\` - Timeout budget implementation
 - \`extensions/claude-throne/src/views/PanelViewProvider.ts\` - Sequence token consistency
 - \`tests/contract.test.js\` - Updated test expectations" \
-    "$VSIX_PATH"
+    ""
 
 echo "✅ PR and release created successfully!"
 
