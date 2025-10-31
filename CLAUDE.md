@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claude-Throne (formerly Thronekeeper) is a sophisticated AI model routing system that provides universal access to multiple AI providers through a unified Anthropic-compatible API. It's a fork and evolution of anthropic-proxy with enhanced features including a VS Code extension, secure credential management, and multi-provider support.
+Thronekeeper (formerly Claude-Throne) is a sophisticated AI model routing system that provides universal access to multiple AI providers through a unified Anthropic-compatible API. It's a fork and evolution of anthropic-proxy with enhanced features including a VS Code extension, secure credential management, and multi-provider support.
 
 ## Architecture
 

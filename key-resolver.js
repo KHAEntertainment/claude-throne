@@ -15,7 +15,12 @@ const PROVIDERS = {
 export const ENDPOINT_KIND = {
   OPENAI_COMPATIBLE: 'openai-compatible',
   ANTHROPIC_NATIVE: 'anthropic-native',
+  UNKNOWN: 'unknown', // Comment 1: Unknown state until negotiation completes
 }
+
+// Comment 1: In-memory cache for endpoint kind probe results
+const endpointKindCache = new Map() // key: normalized baseUrl, value: { kind, timestamp, lastProbedAt }
+const CACHE_TTL_MS = 3600000 // 1 hour
 
 const PROVIDER_KEY_SOURCES = {
   [PROVIDERS.custom]: ['CUSTOM_API_KEY', 'API_KEY'],
@@ -23,21 +28,36 @@ const PROVIDER_KEY_SOURCES = {
   [PROVIDERS.openai]: ['OPENAI_API_KEY'],
   [PROVIDERS.together]: ['TOGETHER_API_KEY'],
   [PROVIDERS.deepseek]: ['DEEPSEEK_API_KEY'],
-  [PROVIDERS.glm]: ['GLM_API_KEY', 'ZAI_API_KEY'],
+  [PROVIDERS.glm]: ['GLM_API_KEY', 'ZAI_API_KEY'], // Comment 2: Support both names for backward compatibility
   [PROVIDERS.anthropic]: ['ANTHROPIC_API_KEY'],
   [PROVIDERS.grok]: ['GROK_API_KEY', 'XAI_API_KEY'],
 }
+
+// Comment 4: Data-driven known-host registry for Anthropic-like endpoints
+// Broaden heuristics with a static array of known Anthropic-like host substrings or regex patterns
+const ANTHROPIC_LIKE_PATTERNS = [
+  { host: 'anthropic.com' },
+  { host: 'anthropic.ai' },
+  { host: 'deepseek.com', path: 'anthropic' },
+  { host: 'z.ai', path: 'anthropic' },
+  { host: 'moonshot.cn', path: 'anthropic' }, // Comment 4: Known Anthropic-like provider
+  { host: 'minimax.chat', path: 'anthropic' }, // Comment 4: Known Anthropic-like provider
+  { path: '/anthropic' }, // Generic path pattern
+]
 
 function isAnthropicLikeUrl(baseUrl) {
   try {
     const url = new URL(baseUrl)
     const host = url.host.toLowerCase()
     const path = url.pathname.toLowerCase()
-    if (host.includes('anthropic.com')) return true
-    if (host.includes('anthropic.ai')) return true
-    if (host.includes('deepseek.com') && path.includes('anthropic')) return true
-    if (host.includes('z.ai') && path.includes('anthropic')) return true
-    if (path.includes('/anthropic')) return true
+    
+    // Comment 2: Check against data-driven patterns
+    for (const pattern of ANTHROPIC_LIKE_PATTERNS) {
+      if (pattern.host && !host.includes(pattern.host)) continue
+      if (pattern.path && !path.includes(pattern.path)) continue
+      if (!pattern.host && !pattern.path) continue
+      return true
+    }
     return false
   } catch {
     return false
@@ -75,7 +95,136 @@ export function detectProvider(baseUrl, env = process.env) {
   }
 }
 
-export function inferEndpointKind(provider, baseUrl) {
+/**
+ * Comment 1: Negotiate endpoint kind by probing the actual endpoint
+ * Issues a short-timeout GET request to test if the endpoint accepts Anthropic headers
+ * On explicit header/route mismatch, retries with Authorization: Bearer
+ */
+export async function negotiateEndpointKind(baseUrl, key) {
+  const normalizedUrl = baseUrl.replace(/\/+$/, '')
+  const now = Date.now()
+  
+  // Check cache first
+  const cached = endpointKindCache.get(normalizedUrl)
+  if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return { kind: cached.kind, lastProbedAt: cached.lastProbedAt }
+  }
+  
+  const probeUrl = `${normalizedUrl}/v1/models`
+  
+  // Comment 1: Try Anthropic-native first with short timeout (1-2s), no retries
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 1500) // 1.5 second timeout
+    
+    const resp = await fetch(probeUrl, {
+      method: 'GET',
+      headers: {
+        'x-api-key': key || 'test-key',
+        'anthropic-version': '2023-06-01',
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    
+    // Comment 1: On explicit header/route mismatch (e.g., 400/404), retry with Authorization
+    if (resp.status === 400 || resp.status === 404) {
+      // Header/route mismatch - try OpenAI-compatible endpoint
+      try {
+        const openaiController = new AbortController()
+        const openaiTimeoutId = setTimeout(() => openaiController.abort(), 1500)
+        const openaiResp = await fetch(probeUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${key || 'test-key'}`,
+          },
+          signal: openaiController.signal,
+        })
+        clearTimeout(openaiTimeoutId)
+        
+        // If OpenAI endpoint responds (even with 401/403), it's OpenAI-compatible
+        if (openaiResp.status === 401 || openaiResp.status === 403 || openaiResp.ok) {
+          const kind = ENDPOINT_KIND.OPENAI_COMPATIBLE
+          endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+          return { kind, lastProbedAt: now }
+        }
+      } catch (openaiErr) {
+        // OpenAI probe failed, continue to fallback
+        console.warn(`[negotiateEndpointKind] OpenAI probe failed:`, openaiErr.message)
+      }
+    } else if (resp.status === 401 || resp.status === 403) {
+      // 401/403 with Anthropic headers suggests Anthropic-native endpoint (wrong key but correct format)
+      const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+      endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+      return { kind, lastProbedAt: now }
+    } else if (resp.ok) {
+      // 200 OK with Anthropic headers confirms Anthropic-native
+      const kind = ENDPOINT_KIND.ANTHROPIC_NATIVE
+      endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+      return { kind, lastProbedAt: now }
+    }
+  } catch (err) {
+    // Network error or timeout - fall back to heuristic
+    console.warn(`[negotiateEndpointKind] Probe failed for ${normalizedUrl}:`, err.message)
+  }
+  
+  // Fallback to heuristic detection
+  const kind = isAnthropicLikeUrl(baseUrl) 
+    ? ENDPOINT_KIND.ANTHROPIC_NATIVE 
+    : ENDPOINT_KIND.OPENAI_COMPATIBLE
+  endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now })
+  return { kind, lastProbedAt: now }
+}
+
+export async function inferEndpointKind(provider, baseUrl, overrides = {}, key = null) {
+  // Check for explicit override first (from env JSON or extension settings)
+  const normalizedUrl = baseUrl.replace(/\/+$/, '')
+  if (overrides[normalizedUrl]) {
+    const override = overrides[normalizedUrl].toLowerCase()
+    if (override === 'anthropic' || override === 'anthropic-native') {
+      return { kind: ENDPOINT_KIND.ANTHROPIC_NATIVE, source: 'override' }
+    }
+    if (override === 'openai' || override === 'openai-compatible') {
+      return { kind: ENDPOINT_KIND.OPENAI_COMPATIBLE, source: 'override' }
+    }
+  }
+  
+  // Fall back to automatic detection
+  if (provider === PROVIDERS.deepseek || provider === PROVIDERS.glm || provider === PROVIDERS.anthropic) {
+    return { kind: ENDPOINT_KIND.ANTHROPIC_NATIVE, source: 'heuristic' }
+  }
+  if (isAnthropicLikeUrl(baseUrl)) {
+    return { kind: ENDPOINT_KIND.ANTHROPIC_NATIVE, source: 'heuristic' }
+  }
+  
+  // Comment 1: For custom providers without override, probe the endpoint
+  if (provider === PROVIDERS.custom && key) {
+    try {
+      const result = await negotiateEndpointKind(baseUrl, key)
+      return { kind: result.kind, source: 'probe', lastProbedAt: result.lastProbedAt }
+    } catch (err) {
+      console.warn(`[inferEndpointKind] Probe failed, using heuristic:`, err.message)
+      // Return unknown so request is gated until negotiation completes
+      return { kind: ENDPOINT_KIND.UNKNOWN, source: 'probe' }
+    }
+  }
+  
+  return { kind: ENDPOINT_KIND.OPENAI_COMPATIBLE, source: 'heuristic' }
+}
+
+// Synchronous version for backward compatibility (used at startup)
+export function inferEndpointKindSync(provider, baseUrl, overrides = {}) {
+  const normalizedUrl = baseUrl.replace(/\/+$/, '')
+  if (overrides[normalizedUrl]) {
+    const override = overrides[normalizedUrl].toLowerCase()
+    if (override === 'anthropic' || override === 'anthropic-native') {
+      return ENDPOINT_KIND.ANTHROPIC_NATIVE
+    }
+    if (override === 'openai' || override === 'openai-compatible') {
+      return ENDPOINT_KIND.OPENAI_COMPATIBLE
+    }
+  }
+  
   if (provider === PROVIDERS.deepseek || provider === PROVIDERS.glm || provider === PROVIDERS.anthropic) {
     return ENDPOINT_KIND.ANTHROPIC_NATIVE
   }

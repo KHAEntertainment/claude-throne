@@ -182,3 +182,43 @@ area:model-selection | area:provider | area:proxy | area:webview | area:config
   - For repos with dedicated doc helpers (e.g., `davila7/docs`), use `git-mcp__fetch_docs_documentation` and `git-mcp__search_docs_documentation`.
   - For other URLs or assets, use `git-mcp__fetch_generic_url_content` with the canonical link (README, docs pages, or raw content).
 - Workflow policy: Before implementing unfamiliar features, consult Context7; when integrating with OSS projects, fetch the latest repo docs via Git‑MCP. Capture key learnings and decisions in core‑memory after tasks.
+
+## Endpoint-Kind Overrides Configuration
+
+The proxy supports explicit endpoint-kind overrides via the `CUSTOM_ENDPOINT_OVERRIDES` environment variable. This allows per-URL configuration when automatic detection is insufficient.
+
+### Structure
+
+`CUSTOM_ENDPOINT_OVERRIDES` is a JSON string containing a map of base URLs to endpoint kinds:
+
+```json
+{
+  "https://api.example.com": "openai",
+  "https://custom-anthropic.com": "anthropic"
+}
+```
+
+### Endpoint Kinds
+
+- `"openai"`: OpenAI-compatible endpoint (uses `/chat/completions`, `Authorization: Bearer` header)
+- `"anthropic"`: Anthropic-native endpoint (uses `/v1/messages`, `x-api-key` header)
+
+### VS Code Setting
+
+The extension exposes this via `claudeThrone.customEndpointOverrides` setting (object type). When set, the extension serializes it to `CUSTOM_ENDPOINT_OVERRIDES` environment variable when starting the proxy.
+
+**Example VS Code settings.json:**
+```json
+{
+  "claudeThrone.customEndpointOverrides": {
+    "https://api.example.com": "openai",
+    "https://custom-anthropic.com": "anthropic"
+  }
+}
+```
+
+### Implementation Details
+
+- **Extension → Proxy**: `ProxyManager.ts` reads `customEndpointOverrides` from VS Code config and serializes to `CUSTOM_ENDPOINT_OVERRIDES` env var
+- **Proxy**: `index.js` reads `CUSTOM_ENDPOINT_OVERRIDES` and passes to `inferEndpointKind()` in `key-resolver.js`
+- **Override Priority**: Explicit overrides take precedence over automatic detection based on provider or URL patterns

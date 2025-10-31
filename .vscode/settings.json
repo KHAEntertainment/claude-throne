@@ -1,13 +1,13 @@
 {
   "claudeThrone.backendPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd",
   "claudeThrone.pythonInterpreterPath": "/Users/bbrenner/Documents/Scripting Projects/claude-throne/backends/python/ct_secretsd/venv/bin/python3",
-  "claudeThrone.reasoningModel": "glm-4.6",
-  "claudeThrone.completionModel": "glm-4.6",
+  "claudeThrone.reasoningModel": "inclusionai/ring-1t",
+  "claudeThrone.completionModel": "minimax/minimax-m2:free",
   "claudeThrone.customEndpointKind": "auto",
   "claudeThrone.proxy.port": 3616,
   "claudeThrone.twoModelMode": true,
-  "claudeThrone.provider": "glm",
-  "claudeThrone.valueModel": "glm-4.5-air",
+  "claudeThrone.provider": "openrouter",
+  "claudeThrone.valueModel": "anthropic/claude-haiku-4.5",
   "claudeThrone.customBaseUrl": "https://api.minimax.io/anthropic",
   "claudeThrone.customProviders": [
     {
@@ -24,14 +24,14 @@
   "claudeThrone.selectedCustomProviderId": "",
   "claudeThrone.modelSelectionsByProvider": {
     "openai": {
-      "reasoning": "gpt-5-chat-latest",
-      "completion": "gpt-5-codex",
+      "reasoning": "gpt-realtime-mini",
+      "completion": "gpt-4",
       "value": "codex-mini-latest"
     },
     "openrouter": {
       "reasoning": "inclusionai/ring-1t",
       "completion": "minimax/minimax-m2:free",
-      "value": "ibm-granite/granite-4.0-h-micro"
+      "value": "anthropic/claude-haiku-4.5"
     },
     "moonshot": {
       "reasoning": "kimi-thinking-preview",
@@ -47,6 +47,16 @@
       "reasoning": "glm-4.6",
       "completion": "glm-4.6",
       "value": "glm-4.5-air"
+    },
+    "minimax": {
+      "reasoning": "glm-4.6",
+      "completion": "glm-4.6",
+      "value": "glm-4.5-air"
+    },
+    "together": {
+      "reasoning": "inclusionai/ring-1t",
+      "completion": "minimax/minimax-m2:free",
+      "value": "anthropic/claude-haiku-4.5"
     }
   }
 }

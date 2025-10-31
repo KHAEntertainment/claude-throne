@@ -233,6 +233,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Contributions are welcome. Please open issues and/or Pull Requests on the [GitHub repository](https://github.com/KHAEntertainment/thronekeeper).
 
+### Contribution Guidelines
+
+- **Do not commit VSIX files**: VSIX extension packages are build artifacts and should not be committed to git. They are automatically excluded via `.gitignore`.
+- **Do not commit large binaries**: Files larger than 1MB should not be committed. The CI pipeline will reject PRs containing `.vsix` files or large binaries.
+
 ---
 
 **Made with ❤️ for the AI development community**

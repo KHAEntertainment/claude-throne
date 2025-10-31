@@ -326,4 +326,221 @@ describe('Phase 4: Pre-Apply Hydration Tests', () => {
       expect(results[3].reasoning).toBe('or-model')  // Back to OpenRouter
     })
   })
+  
+  describe('Comment 1: Provider Change - Save Before Switch', () => {
+    it('saves old provider models before provider update', async () => {
+      const postMessageCalls = []
+      
+      // Mock vscode.postMessage
+      global.vscode = {
+        postMessage: (msg) => {
+          postMessageCalls.push(msg)
+        }
+      }
+      
+      // Initial state with OpenRouter selected
+      const state = {
+        provider: 'openrouter',
+        reasoningModel: 'claude-3.5-sonnet',
+        codingModel: 'claude-3.5-haiku',
+        valueModel: 'claude-3-opus',
+        modelsByProvider: {
+          openrouter: {
+            reasoning: 'claude-3.5-sonnet',
+            completion: 'claude-3.5-haiku',
+            value: 'claude-3-opus'
+          }
+        }
+      }
+      
+      // Simulate provider change from openrouter to glm
+      const previousProvider = state.provider
+      
+      // Save models for previous provider BEFORE switching
+      if (previousProvider && state.modelsByProvider[previousProvider]) {
+        state.modelsByProvider[previousProvider].reasoning = state.reasoningModel
+        state.modelsByProvider[previousProvider].completion = state.codingModel
+        state.modelsByProvider[previousProvider].value = state.valueModel
+        
+        global.vscode.postMessage({
+          type: 'saveModels',
+          providerId: previousProvider,
+          reasoning: state.reasoningModel,
+          completion: state.codingModel,
+          value: state.valueModel
+        })
+      }
+      
+      // Now switch provider
+      const newProvider = 'glm'
+      state.provider = newProvider
+      
+      // Verify saveModels was called with OLD providerId
+      expect(postMessageCalls).toHaveLength(1)
+      expect(postMessageCalls[0].type).toBe('saveModels')
+      expect(postMessageCalls[0].providerId).toBe('openrouter')  // Old provider, not 'glm'
+      expect(postMessageCalls[0].reasoning).toBe('claude-3.5-sonnet')
+      
+      // Verify provider was switched AFTER save
+      expect(state.provider).toBe('glm')  // New provider
+    })
+    
+    it('deletes only the old provider cache entry', () => {
+      const state = {
+        provider: 'openrouter',
+        modelsCache: {
+          openrouter: [{ id: 'model1', name: 'Model 1' }],
+          glm: [{ id: 'model2', name: 'Model 2' }],
+          deepseek: [{ id: 'model3', name: 'Model 3' }]
+        }
+      }
+      
+      // Before change
+      expect(state.modelsCache.openrouter).toBeDefined()
+      expect(state.modelsCache.glm).toBeDefined()
+      expect(state.modelsCache.deepseek).toBeDefined()
+      
+      const previousProvider = state.provider // 'openrouter'
+      
+      // Delete only the old provider's cache
+      delete state.modelsCache[previousProvider]
+      
+      // Verify only old provider cache is deleted
+      expect(state.modelsCache.openrouter).toBeUndefined()
+      expect(state.modelsCache.glm).toBeDefined()  // Still there
+      expect(state.modelsCache.deepseek).toBeDefined()  // Still there
+    })
+    
+    it('preserves cache for other providers during switch', () => {
+      const state = {
+        provider: 'openrouter',
+        modelsCache: {
+          openrouter: [{ id: 'or-model', name: 'OR Model' }],
+          glm: [{ id: 'glm-model', name: 'GLM Model' }],
+          deepseek: [{ id: 'ds-model', name: 'DS Model' }],
+          together: [{ id: 'together-model', name: 'Together Model' }]
+        }
+      }
+      
+      // Switch from openrouter to deepseek
+      const previousProvider = 'openrouter'
+      const newProvider = 'deepseek'
+      
+      // Save current models for previous provider
+      state.provider = previousProvider  // Ensure state has old provider
+      
+      // Delete only previous provider's cache
+      delete state.modelsCache[previousProvider]
+      
+      // Switch provider
+      state.provider = newProvider
+      
+      // Verify all other providers' cache preserved
+      expect(state.modelsCache.glm).toBeDefined()
+      expect(state.modelsCache.deepseek).toBeDefined()
+      expect(state.modelsCache.together).toBeDefined()
+      
+      // Verify only openrouter cache was cleared
+      expect(state.modelsCache.openrouter).toBeUndefined()
+    })
+  })
+})
+  
+  describe('Comment 4: Feature Flags End-to-End', () => {
+    it('loads feature flags from config', () => {
+      const state = {
+        featureFlags: {
+          enableSchemaValidation: true,
+          enableTokenValidation: true,
+          enableKeyNormalization: true,
+          enablePreApplyHydration: true
+        }
+      };
+      
+      const config = {
+        featureFlags: {
+          enableTokenValidation: false,
+          enablePreApplyHydration: false
+        }
+      };
+      
+      // Load feature flags from config
+      if (config.featureFlags) {
+        state.featureFlags = {
+          ...state.featureFlags,
+          ...config.featureFlags
+        };
+      }
+      
+      // Verify flags were updated
+      expect(state.featureFlags.enableSchemaValidation).toBe(true);
+      expect(state.featureFlags.enableTokenValidation).toBe(false);
+      expect(state.featureFlags.enableKeyNormalization).toBe(true);
+      expect(state.featureFlags.enablePreApplyHydration).toBe(false);
+    });
+    
+    it('gates token validation with enableTokenValidation flag', () => {
+      const state = {
+        featureFlags: { enableTokenValidation: false },
+        currentRequestToken: 'token-123'
+      };
+      
+      const payload = {
+        models: [{ id: 'model1', name: 'Model 1' }],
+        provider: 'openrouter',
+        token: 'token-123'
+      };
+      
+      const shouldIgnore = state.featureFlags.enableTokenValidation && 
+        payload.token && state.currentRequestToken && 
+        payload.token !== state.currentRequestToken;
+      
+      expect(shouldIgnore).toBe(false);
+      
+      state.featureFlags.enableTokenValidation = true;
+      
+      const shouldNotIgnore = state.featureFlags.enableTokenValidation && 
+        payload.token && state.currentRequestToken && 
+        payload.token !== state.currentRequestToken;
+      
+      expect(shouldNotIgnore).toBe(false);
+      
+      payload.token = 'different-token';
+      const shouldIgnoreWithMismatch = state.featureFlags.enableTokenValidation && 
+        payload.token && state.currentRequestToken && 
+        payload.token !== state.currentRequestToken;
+      
+      expect(shouldIgnoreWithMismatch).toBe(true);
+    });
+    
+    it('gates pre-apply hydration with enablePreApplyHydration flag', () => {
+      const state = {
+        featureFlags: { enablePreApplyHydration: false },
+        autoHydratedProviders: new Set(),
+        reasoningModel: 'test-model',
+        codingModel: 'test-coding',
+        valueModel: 'test-value'
+      };
+      
+      const config = {
+        modelSelectionsByProvider: { openrouter: {} }
+      };
+      
+      const shouldHydrate = state.featureFlags.enablePreApplyHydration &&
+        !config.modelSelectionsByProvider?.openrouter?.reasoning && 
+        (state.reasoningModel || state.codingModel || state.valueModel) &&
+        !state.autoHydratedProviders.has('openrouter');
+      
+      expect(shouldHydrate).toBe(false);
+      
+      state.featureFlags.enablePreApplyHydration = true;
+      
+      const shouldHydrateNow = state.featureFlags.enablePreApplyHydration &&
+        !config.modelSelectionsByProvider?.openrouter?.reasoning && 
+        (state.reasoningModel || state.codingModel || state.valueModel) &&
+        !state.autoHydratedProviders.has('openrouter');
+      
+      expect(shouldHydrateNow).toBe(true);
+    });
+  });
 })

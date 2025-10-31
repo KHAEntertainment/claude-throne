@@ -50,7 +50,7 @@ project based on the readme
 ⏺ Based on the README, here's a 1-paragraph
    summary of the Claude-Throne project:
 
-  Claude-Throne (formerly Thronekeeper) is
+  Thronekeeper (formerly Claude-Throne) is
   a sophisticated AI model routing
 
 > what MCP servers are currently installed?
@@ -77,7 +77,7 @@ project
   here's a 2-paragraph overview of the
   Claude-Throne project:
 
-  Claude-Throne (formerly Thronekeeper) is
+  Thronekeeper (formerly Claude-Throne) is
   a sophisticated evolution of the
   anthropic-proxy project that provides
   universal AI model routing through a
@@ -168,7 +168,6 @@ When a provoder is selected and the model list doesn't auto populate, the form t
 4) Custom Anthropic Providers may still be glitchy in Webview Panel. 
 I added another custom provider with an anthriopic style API Endpoint and while Moonshot/Kimi is working to list models, the new one, Minimax, is not. After I save the provider and set it up with a proper API key it displays "Failed to load models: Error: Model list failed (404): 404 page not found" which then leads to the manual models not being saved error mentioned above. 
 
-
   -------------------------------------
   Webview Panel:
 
@@ -200,6 +199,16 @@ New Functionality:
 
  - Under Model Selection, "Use separate models for different task types (Reasoning/Coding/Value)" let's add a new sub-function that shows up only when that is checked. 
     - The sub-function should be "Enable OpusPlan Mode" which automatically sets "ANTHROPIC_MODEL": "opusplan" which tells the system to automatically use Opus for planning and Sonnet for completion. But in our case, it'll automatically set the models we chose for Opus and Sonnet alternatives to operate in the same manner.
+
+--------------------------------------  
+Qualitative Improvements:
+
+ - These are additional CLAUDE ENV configs that can be included in settings.json that I have seen some providers specify to use when setting up claude-code with their models. 
+
+ '''
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+ '''   
 
 -------------------------------------
 

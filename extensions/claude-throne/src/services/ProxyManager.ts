@@ -47,7 +47,7 @@ export class ProxyManager {
           if (res.statusCode === 200) {
             try {
               const json = JSON.parse(data);
-              resolve(json && json.status === 'healthy');
+              resolve(json && json.status === 'ok');
             } catch {
               resolve(false);
             }
@@ -57,19 +57,24 @@ export class ProxyManager {
         });
       });
       req.on('error', () => resolve(false));
-      req.setTimeout(500, () => { // Reduced from 2000ms for faster response
+      const cfg = vscode.workspace.getConfiguration('claudeThrone')
+      const healthTimeoutMs = cfg.get<number>('proxy.healthTimeoutMs', 500)
+      req.setTimeout(healthTimeoutMs, () => {
         req.destroy();
         resolve(false);
       });
     });
   }
 
-  private async waitForPort(port: number, timeout: number = 3000): Promise<boolean> {
+  private async waitForPort(port: number, timeout?: number): Promise<boolean> {
+    // Use configured timeout or default
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const effectiveTimeout = timeout ?? cfg.get<number>('proxy.startupTimeoutMs', 3000)
     const startTime = Date.now();
     
-    while (Date.now() - startTime < timeout) {
+    while (Date.now() - startTime < effectiveTimeout) {
       const isListening = await new Promise<boolean>(resolve => {
-        const testReq = http.get(`http://127.0.0.1:${port}/healthz`, res => {
+        const testReq = http.get(`http://127.0.0.1:${port}/health`, res => {
           resolve(res.statusCode === 200);
         });
         testReq.on('error', () => resolve(false));
@@ -91,7 +96,7 @@ export class ProxyManager {
 
   private async checkStaleInstance(port: number): Promise<boolean> {
     return new Promise(resolve => {
-        const req = http.get(`http://127.0.0.1:${port}/healthz`, res => {
+        const req = http.get(`http://127.0.0.1:${port}/health`, res => {
             let data = '';
             res.on('data', chunk => { data += chunk; });
             res.on('end', () => {
@@ -179,6 +184,18 @@ export class ProxyManager {
     // Log environment variable keys (without exposing sensitive values)
     const envKeys = Object.keys(env).filter(k => k.includes('API_KEY') || k.includes('MODEL') || k.includes('BASE_URL'))
     this.log.appendLine(`[ProxyManager] - Environment variables set: ${envKeys.join(', ')}`)
+    
+    // Comment 1: Verify Anthropic-native provider keys are present before spawn
+    if (opts.provider === 'deepseek' && !env.DEEPSEEK_API_KEY) {
+      const errorMsg = 'Deepseek API key missing. Store key before starting proxy.'
+      this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+      throw new Error(errorMsg)
+    }
+    if (opts.provider === 'glm' && !env.ZAI_API_KEY && !env.GLM_API_KEY) {
+      const errorMsg = 'GLM API key missing. Store key before starting proxy.'
+      this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+      throw new Error(errorMsg)
+    }
 
     this.log.appendLine(`[proxy] starting via ${nodeBin} ${entry} on port ${opts.port}`)
     // Explicitly add ZAI_API_KEY to environment if it exists
@@ -196,9 +213,45 @@ export class ProxyManager {
     const pid = this.proc.pid
     this.log.appendLine(`[ProxyManager] Proxy process spawned with PID: ${pid}`)
 
+    // Comment 10: Redaction helper - matches patterns from shared utils/redaction.js
+    // Note: This is TypeScript, so keeping inline implementation that matches shared utility patterns
+    const redactSecrets = (text: string): string => {
+      if (!text || typeof text !== 'string') return text
+      
+      // Patterns that might indicate secrets (matches utils/redaction.js)
+      const secretPatterns = [
+        /(api[_-]?key|apikey)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+        /(authorization|bearer)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+        /(x-api-key)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+        /(token|secret|password)\s*[:=]\s*["']?([a-zA-Z0-9_-]{16,})["']?/gi,
+        // JSON body patterns
+        /"api[_-]?key"\s*:\s*"([^"]{20,})"/gi,
+        /"authorization"\s*:\s*"([^"]{20,})"/gi,
+        /"token"\s*:\s*"([^"]{16,})"/gi,
+      ]
+      
+      let redacted = text
+      for (const pattern of secretPatterns) {
+        redacted = redacted.replace(pattern, (match, key, value) => {
+          const secretValue = value || (match.match(/["']([^"']{16,})["']/) || [])[1]
+          if (secretValue && secretValue.length > 16) {
+            return match.replace(secretValue, '[REDACTED]')
+          }
+          return match
+        })
+      }
+      
+      return redacted
+    }
+    
+    const shouldRedact = opts.debug || vscode.workspace.getConfiguration('claudeThrone').get<boolean>('proxy.debug', false)
+    
     let firstOutput = true
     this.proc.stdout?.on('data', (b) => {
-      const output = b.toString().trimEnd()
+      let output = b.toString().trimEnd()
+      if (shouldRedact) {
+        output = redactSecrets(output)
+      }
       if (firstOutput) {
         const elapsed = Date.now() - startTime
         this.log.appendLine(`[ProxyManager] First stdout received after ${elapsed}ms`)
@@ -207,7 +260,13 @@ export class ProxyManager {
       this.log.appendLine(`[proxy] ${output}`)
     })
     
-    this.proc.stderr?.on('data', (b) => this.log.appendLine(`[proxy:err] ${b.toString().trimEnd()}`))
+    this.proc.stderr?.on('data', (b) => {
+      let output = b.toString().trimEnd()
+      if (shouldRedact) {
+        output = redactSecrets(output)
+      }
+      this.log.appendLine(`[proxy:err] ${output}`)
+    })
     
     this.proc.on('exit', (code, signal) => {
       this.log.appendLine(`[proxy] exited code=${code} signal=${signal}`)
@@ -303,6 +362,17 @@ export class ProxyManager {
     // Only set model env vars if they have actual values (don't override with empty strings)
     if (opts.reasoningModel) base.REASONING_MODEL = opts.reasoningModel
     if (opts.completionModel) base.COMPLETION_MODEL = opts.completionModel
+    
+    // Load custom endpoint overrides from extension settings
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const customEndpointOverrides = cfg.get<Record<string, string>>('customEndpointOverrides', {})
+    if (Object.keys(customEndpointOverrides).length > 0) {
+      try {
+        base.CUSTOM_ENDPOINT_OVERRIDES = JSON.stringify(customEndpointOverrides)
+      } catch (err) {
+        this.log.appendLine(`[ProxyManager] Failed to serialize customEndpointOverrides: ${err}`)
+      }
+    }
 
     const setBaseUrl = (url: string) => {
       base.ANTHROPIC_PROXY_BASE_URL = url
@@ -332,16 +402,27 @@ export class ProxyManager {
       }
       case 'deepseek': {
         const key = await this.secrets.getProviderKey('deepseek')
-        if (!key) throw new Error('Deepseek API key not set')
+        if (!key) {
+          const errorMsg = 'Deepseek API key not set. Run: Claude Throne: Store Deepseek API Key'
+          this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+          throw new Error(errorMsg)
+        }
         base.DEEPSEEK_API_KEY = key
         setBaseUrl('https://api.deepseek.com/anthropic')
+        this.log.appendLine(`[ProxyManager] Deepseek key found: DEEPSEEK_API_KEY set`)
         break
       }
       case 'glm': {
         const key = await this.secrets.getProviderKey('glm')
-        if (!key) throw new Error('GLM API key not set')
+        if (!key) {
+          const errorMsg = 'GLM API key not set. Run: Claude Throne: Store GLM API Key'
+          this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+          throw new Error(errorMsg)
+        }
         base.ZAI_API_KEY = key
+        base.GLM_API_KEY = key // Comment 2: Also set GLM_API_KEY for backward compatibility
         setBaseUrl('https://api.z.ai/api/anthropic')
+        this.log.appendLine(`[ProxyManager] GLM key found: ZAI_API_KEY and GLM_API_KEY set`)
         break
       }
       case 'custom': {
@@ -350,8 +431,15 @@ export class ProxyManager {
         setBaseUrl(baseUrl)
         // Use customProviderId if provided, otherwise fall back to 'custom'
         const providerId = opts.customProviderId || 'custom'
+        // Comment 3: Preflight check - verify secret key exists before starting proxy
+        this.log.appendLine(`[ProxyManager] Checking secret key for custom provider: ${providerId}`)
         const key = await this.secrets.getProviderKey(providerId)
-        if (!key) throw new Error(`API key not set for provider: ${providerId}`)
+        if (!key) {
+          const errorMsg = `API key not set for provider: ${providerId}. Store key before starting proxy.`
+          this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+          throw new Error(errorMsg)
+        }
+        this.log.appendLine(`[ProxyManager] Custom provider key found for: ${providerId}`)
         // The proxy resolves API key with CUSTOM_API_KEY / API_KEY first for custom URL
         base.API_KEY = key
         break
@@ -364,16 +452,30 @@ export class ProxyManager {
         if (customProvider) {
           // This is a saved custom provider
           setBaseUrl(customProvider.baseUrl)
+          // Comment 3: Preflight check - verify secret key exists
+          this.log.appendLine(`[ProxyManager] Checking secret key for custom provider: ${opts.provider}`)
           const key = await this.secrets.getProviderKey(opts.provider)
-          if (!key) throw new Error(`API key not set for provider: ${opts.provider}`)
+          if (!key) {
+            const errorMsg = `API key not set for provider: ${opts.provider}. Store key before starting proxy.`
+            this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+            throw new Error(errorMsg)
+          }
+          this.log.appendLine(`[ProxyManager] Custom provider key found for: ${opts.provider}`)
           base.API_KEY = key
         } else {
           // Fallback for unknown providers
           const baseUrl = (opts.customBaseUrl || '').trim()
           if (!baseUrl) throw new Error('Custom base URL is empty; set claudeThrone.customBaseUrl')
           setBaseUrl(baseUrl)
+          // Comment 3: Preflight check - verify secret key exists
+          this.log.appendLine(`[ProxyManager] Checking secret key for provider: ${opts.provider}`)
           const key = await this.secrets.getProviderKey(opts.provider)
-          if (!key) throw new Error(`API key not set for provider: ${opts.provider}`)
+          if (!key) {
+            const errorMsg = `API key not set for provider: ${opts.provider}. Store key before starting proxy.`
+            this.log.appendLine(`[ProxyManager] ERROR: ${errorMsg}`)
+            throw new Error(errorMsg)
+          }
+          this.log.appendLine(`[ProxyManager] Provider key found for: ${opts.provider}`)
           base.API_KEY = key
         }
         break

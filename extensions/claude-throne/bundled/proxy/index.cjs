@@ -33332,8 +33332,12 @@ var PROVIDERS = {
 };
 var ENDPOINT_KIND = {
   OPENAI_COMPATIBLE: "openai-compatible",
-  ANTHROPIC_NATIVE: "anthropic-native"
+  ANTHROPIC_NATIVE: "anthropic-native",
+  UNKNOWN: "unknown"
+  // Comment 1: Unknown state until negotiation completes
 };
+var endpointKindCache = /* @__PURE__ */ new Map();
+var CACHE_TTL_MS = 36e5;
 var PROVIDER_KEY_SOURCES = {
   [PROVIDERS.custom]: ["CUSTOM_API_KEY", "API_KEY"],
   [PROVIDERS.openrouter]: ["OPENROUTER_API_KEY"],
@@ -33341,19 +33345,33 @@ var PROVIDER_KEY_SOURCES = {
   [PROVIDERS.together]: ["TOGETHER_API_KEY"],
   [PROVIDERS.deepseek]: ["DEEPSEEK_API_KEY"],
   [PROVIDERS.glm]: ["GLM_API_KEY", "ZAI_API_KEY"],
+  // Comment 2: Support both names for backward compatibility
   [PROVIDERS.anthropic]: ["ANTHROPIC_API_KEY"],
   [PROVIDERS.grok]: ["GROK_API_KEY", "XAI_API_KEY"]
 };
+var ANTHROPIC_LIKE_PATTERNS = [
+  { host: "anthropic.com" },
+  { host: "anthropic.ai" },
+  { host: "deepseek.com", path: "anthropic" },
+  { host: "z.ai", path: "anthropic" },
+  { host: "moonshot.cn", path: "anthropic" },
+  // Comment 4: Known Anthropic-like provider
+  { host: "minimax.chat", path: "anthropic" },
+  // Comment 4: Known Anthropic-like provider
+  { path: "/anthropic" }
+  // Generic path pattern
+];
 function isAnthropicLikeUrl(baseUrl2) {
   try {
     const url = new URL(baseUrl2);
     const host = url.host.toLowerCase();
     const path2 = url.pathname.toLowerCase();
-    if (host.includes("anthropic.com")) return true;
-    if (host.includes("anthropic.ai")) return true;
-    if (host.includes("deepseek.com") && path2.includes("anthropic")) return true;
-    if (host.includes("z.ai") && path2.includes("anthropic")) return true;
-    if (path2.includes("/anthropic")) return true;
+    for (const pattern of ANTHROPIC_LIKE_PATTERNS) {
+      if (pattern.host && !host.includes(pattern.host)) continue;
+      if (pattern.path && !path2.includes(pattern.path)) continue;
+      if (!pattern.host && !pattern.path) continue;
+      return true;
+    }
     return false;
   } catch {
     return false;
@@ -33381,7 +33399,73 @@ function detectProvider(baseUrl2, env = process.env) {
     return PROVIDERS.custom;
   }
 }
-function inferEndpointKind(provider2, baseUrl2) {
+async function negotiateEndpointKind(baseUrl2, key2) {
+  const normalizedUrl = baseUrl2.replace(/\/+$/, "");
+  const now = Date.now();
+  const cached = endpointKindCache.get(normalizedUrl);
+  if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return { kind: cached.kind, lastProbedAt: cached.lastProbedAt };
+  }
+  const probeUrl = `${normalizedUrl}/v1/models`;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    const resp = await fetch(probeUrl, {
+      method: "GET",
+      headers: {
+        "x-api-key": key2 || "test-key",
+        "anthropic-version": "2023-06-01"
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (resp.status === 400 || resp.status === 404) {
+      try {
+        const openaiController = new AbortController();
+        const openaiTimeoutId = setTimeout(() => openaiController.abort(), 1500);
+        const openaiResp = await fetch(probeUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${key2 || "test-key"}`
+          },
+          signal: openaiController.signal
+        });
+        clearTimeout(openaiTimeoutId);
+        if (openaiResp.status === 401 || openaiResp.status === 403 || openaiResp.ok) {
+          const kind2 = ENDPOINT_KIND.OPENAI_COMPATIBLE;
+          endpointKindCache.set(normalizedUrl, { kind: kind2, timestamp: now, lastProbedAt: now });
+          return { kind: kind2, lastProbedAt: now };
+        }
+      } catch (openaiErr) {
+        console.warn(`[negotiateEndpointKind] OpenAI probe failed:`, openaiErr.message);
+      }
+    } else if (resp.status === 401 || resp.status === 403) {
+      const kind2 = ENDPOINT_KIND.ANTHROPIC_NATIVE;
+      endpointKindCache.set(normalizedUrl, { kind: kind2, timestamp: now, lastProbedAt: now });
+      return { kind: kind2, lastProbedAt: now };
+    } else if (resp.ok) {
+      const kind2 = ENDPOINT_KIND.ANTHROPIC_NATIVE;
+      endpointKindCache.set(normalizedUrl, { kind: kind2, timestamp: now, lastProbedAt: now });
+      return { kind: kind2, lastProbedAt: now };
+    }
+  } catch (err) {
+    console.warn(`[negotiateEndpointKind] Probe failed for ${normalizedUrl}:`, err.message);
+  }
+  const kind = isAnthropicLikeUrl(baseUrl2) ? ENDPOINT_KIND.ANTHROPIC_NATIVE : ENDPOINT_KIND.OPENAI_COMPATIBLE;
+  endpointKindCache.set(normalizedUrl, { kind, timestamp: now, lastProbedAt: now });
+  return { kind, lastProbedAt: now };
+}
+function inferEndpointKindSync(provider2, baseUrl2, overrides = {}) {
+  const normalizedUrl = baseUrl2.replace(/\/+$/, "");
+  if (overrides[normalizedUrl]) {
+    const override = overrides[normalizedUrl].toLowerCase();
+    if (override === "anthropic" || override === "anthropic-native") {
+      return ENDPOINT_KIND.ANTHROPIC_NATIVE;
+    }
+    if (override === "openai" || override === "openai-compatible") {
+      return ENDPOINT_KIND.OPENAI_COMPATIBLE;
+    }
+  }
   if (provider2 === PROVIDERS.deepseek || provider2 === PROVIDERS.glm || provider2 === PROVIDERS.anthropic) {
     return ENDPOINT_KIND.ANTHROPIC_NATIVE;
   }
@@ -33418,7 +33502,11 @@ function normalizeContent(content) {
   }
   return null;
 }
-function removeUriFormat(schema) {
+function removeUriFormat(schema, force = false) {
+  const shouldRemove = force || process.env.DISABLE_URI_FORMAT === "1";
+  if (!shouldRemove) {
+    return schema;
+  }
   if (!schema || typeof schema !== "object") return schema;
   if (schema.type === "string" && schema.format === "uri") {
     const { format, ...rest } = schema;
@@ -33448,13 +33536,12 @@ function removeUriFormat(schema) {
 }
 
 // ../../xml-tool-formatter.js
+var XML_TOOL_INSTRUCTIONS_SENTINEL = "====\n\nTOOL USE\n\n";
 function generateXMLToolInstructions(tools) {
   if (!tools || tools.length === 0) {
     return "";
   }
-  const toolInstructions = `====
-
-TOOL USE
+  const toolInstructions = `${XML_TOOL_INSTRUCTIONS_SENTINEL}
 
 You have access to a set of tools that are executed upon the user's approval. You must use exactly one tool per message, and every assistant message must include a tool call. You use tools step-by-step to accomplish a given task, with each tool use informed by the result of the previous tool use.
 
@@ -33497,10 +33584,20 @@ ${Object.keys(properties).map(
 </${name}>`;
   return doc;
 }
-function injectXMLToolInstructions(messages, tools) {
+function injectXMLToolInstructions(messages, tools, options = {}) {
+  if (process.env.DISABLE_XML_TOOL_INSTRUCTIONS === "1" || options.disabled) {
+    return messages;
+  }
   const xmlInstructions = generateXMLToolInstructions(tools);
   if (!xmlInstructions) {
     return messages;
+  }
+  for (const msg of messages) {
+    if (msg.role === "system" && typeof msg.content === "string") {
+      if (msg.content.includes(XML_TOOL_INSTRUCTIONS_SENTINEL)) {
+        return messages;
+      }
+    }
   }
   const systemMessage = {
     role: "system",
@@ -33528,7 +33625,7 @@ function injectXMLToolInstructions(messages, tools) {
 }
 
 // ../../xml-tool-parser.js
-var KNOWN_TOOLS = /* @__PURE__ */ new Set([
+var DEFAULT_KNOWN_TOOLS = /* @__PURE__ */ new Set([
   // File operations
   "Read",
   "Write",
@@ -33570,7 +33667,8 @@ var KNOWN_TOOLS = /* @__PURE__ */ new Set([
   "list_files",
   "ask_followup_question"
 ]);
-function parseAssistantMessage(content) {
+var toolRegistry = new Set(DEFAULT_KNOWN_TOOLS);
+function parseAssistantMessage(content, knownTools = null) {
   if (!content || typeof content !== "string") {
     console.warn("[XML Parser] Invalid content received:", content);
     return [{
@@ -33579,11 +33677,12 @@ function parseAssistantMessage(content) {
     }];
   }
   try {
+    const toolsToCheck = knownTools ? knownTools instanceof Set ? knownTools : new Set(knownTools) : toolRegistry;
     const contentBlocks = [];
     let currentTextStart = 0;
     let i = 0;
     while (i < content.length) {
-      const toolMatch = findToolTag(content, i);
+      const toolMatch = findToolTag(content, i, toolsToCheck);
       if (toolMatch) {
         if (i > currentTextStart) {
           const text = content.substring(currentTextStart, i).trim();
@@ -33635,7 +33734,7 @@ function parseAssistantMessage(content) {
     }];
   }
 }
-function findToolTag(content, startIndex) {
+function findToolTag(content, startIndex, knownTools) {
   if (content[startIndex] !== "<") {
     return null;
   }
@@ -33654,11 +33753,14 @@ function findToolTag(content, startIndex) {
   if (i >= content.length) {
     return null;
   }
-  if (KNOWN_TOOLS.has(tagName)) {
+  if (knownTools.has(tagName)) {
     return {
       toolName: tagName,
       tagEndIndex: i + 1
     };
+  }
+  if (tagName && /^[A-Z]/.test(tagName) && !tagName.includes(" ")) {
+    console.warn(`[XML Parser] Encountered unknown tool-like tag: <${tagName}>. Consider registering it.`);
   }
   return null;
 }
@@ -33709,8 +33811,37 @@ function parseToolParameters(toolContent) {
   }
   return params;
 }
+var toolIdCounter = 0;
 function generateToolId() {
-  return `toolu_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  toolIdCounter++;
+  const timestamp = Date.now();
+  return `toolu_${timestamp}_${toolIdCounter.toString(36)}`;
+}
+
+// ../../utils/redaction.js
+function redactSecrets(text) {
+  if (!text || typeof text !== "string") return text;
+  const secretPatterns = [
+    /(api[_-]?key|apikey)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+    /(authorization|bearer)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+    /(x-api-key)\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi,
+    /(token|secret|password)\s*[:=]\s*["']?([a-zA-Z0-9_-]{16,})["']?/gi,
+    // JSON body patterns
+    /"api[_-]?key"\s*:\s*"([^"]{20,})"/gi,
+    /"authorization"\s*:\s*"([^"]{20,})"/gi,
+    /"token"\s*:\s*"([^"]{16,})"/gi
+  ];
+  let redacted = text;
+  for (const pattern of secretPatterns) {
+    redacted = redacted.replace(pattern, (match, key2, value) => {
+      const secretValue = value || (match.match(/["']([^"']{16,})["']/) || [])[1];
+      if (secretValue && secretValue.length > 16) {
+        return match.replace(secretValue, "[REDACTED]");
+      }
+      return match;
+    });
+  }
+  return redacted;
 }
 
 // ../../index.js
@@ -33749,7 +33880,26 @@ if ((0, import_node_fs.existsSync)(capabilitiesPath)) {
 var baseUrl = process.env.ANTHROPIC_PROXY_BASE_URL || "https://openrouter.ai/api";
 var normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 var provider = detectProvider(baseUrl);
-var endpointKind = inferEndpointKind(provider, baseUrl);
+var endpointKindOverrides = {};
+if (process.env.CUSTOM_ENDPOINT_OVERRIDES) {
+  try {
+    endpointKindOverrides = JSON.parse(process.env.CUSTOM_ENDPOINT_OVERRIDES);
+  } catch (err) {
+    console.warn("[Startup] Failed to parse CUSTOM_ENDPOINT_OVERRIDES:", err?.message || err);
+  }
+}
+var endpointKind = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides);
+var detectionSource = "heuristic";
+var lastProbedAt = null;
+var negotiationPromise = null;
+if (endpointKindOverrides[normalizedBaseUrl]) {
+  detectionSource = "override";
+} else if (provider === "deepseek" || provider === "glm" || provider === "anthropic") {
+  detectionSource = "heuristic";
+} else if (provider === "custom") {
+  endpointKind = ENDPOINT_KIND.UNKNOWN;
+  detectionSource = "probe";
+}
 var { key, source: keySource } = resolveApiKey(provider);
 var model = "google/gemini-2.0-pro-exp-02-05:free";
 var models = {
@@ -33801,6 +33951,23 @@ function modelNeedsXMLTools(modelName, providerId) {
   }
   const lowerModel = modelName.toLowerCase();
   return FALLBACK_XML_MODELS.some((pattern) => lowerModel.includes(pattern.toLowerCase()));
+}
+function modelSupportsToolCalling(modelName, providerId) {
+  if (!modelName || !providerId) return true;
+  const config = modelCapabilities?.toolCallUnsupported || null;
+  if (config) {
+    const patterns = [
+      ...config[providerId] || [],
+      ...config["*"] || []
+    ];
+    for (const pattern of patterns) {
+      if (matchesPattern(modelName, pattern)) {
+        console.log(`[Tool Capability] Model ${modelName} does not support tool calling (matched pattern: ${pattern})`);
+        return false;
+      }
+    }
+  }
+  return true;
 }
 function parseNativeToolResponse(openaiMessage) {
   const blocks = [];
@@ -33872,7 +34039,21 @@ var fastify = (0, import_fastify.default)({
 });
 function debug(...args) {
   if (!process.env.DEBUG) return;
-  console.log(...args);
+  const redactedArgs = args.map((arg) => {
+    if (typeof arg === "string") {
+      return redactSecrets(arg);
+    }
+    if (typeof arg === "object" && arg !== null) {
+      try {
+        const str = JSON.stringify(arg);
+        return JSON.parse(redactSecrets(str));
+      } catch {
+        return arg;
+      }
+    }
+    return arg;
+  });
+  console.log(...redactedArgs);
 }
 var safeWords = (v) => typeof v === "string" ? v.split(/\s+/).filter(Boolean).length : 0;
 var sendSSE = (reply, event, data) => {
@@ -33936,29 +34117,55 @@ fastify.get("/v1/models", async (request, reply) => {
     reply.code(500).send({ error: String(err?.message || err) });
   }
 });
-fastify.get("/healthz", async (request, reply) => {
-  return {
-    status: "ok",
+async function healthCheckHandler(request, reply) {
+  const isReady = !!key;
+  const status = isReady ? "ok" : "unhealthy";
+  if (!isReady) {
+    reply.code(503);
+  }
+  const modelSelectionOrder = [
+    "1. Explicit model parameter in request (highest priority)",
+    "2. REASONING_MODEL env var (if thinking=true)",
+    "3. COMPLETION_MODEL env var (default)",
+    "4. Hardcoded default: google/gemini-2.0-pro-exp-02-05:free (fallback)"
+  ];
+  const healthResponse = {
+    status,
     version: packageVersion,
     provider,
     baseUrl,
-    models
-  };
-});
-fastify.get("/health", async (request, reply) => {
-  return {
-    status: "healthy",
-    provider,
-    baseUrl,
-    hasApiKey: true,
-    // Key is available from provider detection
+    endpointKind,
+    detectionSource,
+    // Comment 1 & 5: How endpoint kind was determined (override|probe|heuristic)
+    lastProbedAt,
+    // Comment 5: Timestamp of last probe (null if never probed)
     models: {
       reasoning: models.reasoning || "not set",
       completion: models.completion || "not set"
     },
+    modelSelection: {
+      order: modelSelectionOrder,
+      currentReasoning: models.reasoning || "not set",
+      currentCompletion: models.completion || "not set"
+    },
     timestamp: Date.now(),
     uptime: process.uptime()
   };
+  if (!isReady) {
+    healthResponse.missingKey = true;
+    healthResponse.keySourcesTried = KEY_ENV_HINT;
+    healthResponse.endpointKind = endpointKind;
+    if (baseUrl) healthResponse.baseUrl = baseUrl;
+    if (process.env.FORCE_PROVIDER) healthResponse.forcedProvider = process.env.FORCE_PROVIDER;
+  }
+  return healthResponse;
+}
+fastify.get("/health", healthCheckHandler);
+fastify.get("/healthz", async (request, reply) => {
+  if (process.env.DEBUG) {
+    console.warn("[Deprecation] /healthz endpoint is deprecated, use /health instead");
+  }
+  return healthCheckHandler(request, reply);
 });
 fastify.post("/v1/messages/count_tokens", async (request, reply) => {
   try {
@@ -34069,11 +34276,27 @@ fastify.post("/v1/debug/echo", async (request, reply) => {
       endpointKind,
       key: key ? "***REDACTED***" : null
     });
+    const modelSelectionOrder = [
+      "1. Explicit model parameter in request (highest priority)",
+      "2. REASONING_MODEL env var (if thinking=true)",
+      "3. COMPLETION_MODEL env var (default)",
+      "4. Hardcoded default: google/gemini-2.0-pro-exp-02-05:free (fallback)"
+    ];
+    let selectionReason = "explicit request";
+    if (!payload.model) {
+      if (payload.thinking) {
+        selectionReason = "REASONING_MODEL env var (thinking=true)";
+      } else {
+        selectionReason = "COMPLETION_MODEL env var (default)";
+      }
+    }
     return {
       debug: true,
       modelSelection: {
         requestedModel: payload.model || null,
         selectedModel,
+        selectionReason,
+        order: modelSelectionOrder,
         reasoningModel: models.reasoning,
         completionModel: models.completion,
         wasOverridden: !payload.model,
@@ -34123,11 +34346,50 @@ fastify.post("/v1/messages", async (request, reply) => {
     const requestStartMs = Date.now();
     let firstChunkLogged = false;
     let ttfbMs = null;
+    if (provider === "custom" && endpointKind === ENDPOINT_KIND.UNKNOWN) {
+      if (!negotiationPromise && key) {
+        negotiationPromise = negotiateEndpointKind(baseUrl, key).then((result) => {
+          endpointKind = result.kind;
+          detectionSource = "probe";
+          lastProbedAt = result.lastProbedAt;
+          if (process.env.DEBUG) {
+            console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`);
+          }
+          negotiationPromise = null;
+          return result;
+        }).catch((err) => {
+          console.warn(`[Negotiation] Failed:`, err.message);
+          const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides);
+          endpointKind = heuristicResult;
+          detectionSource = "heuristic";
+          negotiationPromise = null;
+          return { kind: endpointKind };
+        });
+      }
+      if (negotiationPromise) {
+        await negotiationPromise;
+      }
+      if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
+        reply.code(503);
+        return {
+          error: {
+            message: "Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.",
+            type: "negotiation_pending",
+            hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
+          }
+        };
+      }
+    }
     const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE;
     if (!key) {
       reply.code(400);
+      const hint = isAnthropicNative ? `Store the provider API key in the extension (Thronekeeper: Store ${provider === "deepseek" ? "Deepseek" : provider === "glm" ? "GLM" : provider} API Key) or set the correct env var (${provider === "deepseek" ? "DEEPSEEK_API_KEY" : provider === "glm" ? "ZAI_API_KEY or GLM_API_KEY" : "API_KEY"}), and confirm the provider switch in settings.` : `Use Authorization: Bearer <token> header or configure ${provider === "openrouter" ? "OpenRouter" : provider} API key in the extension settings.`;
       return {
-        error: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`
+        error: {
+          message: `No API key found for provider "${provider}". Checked ${KEY_ENV_HINT}.`,
+          type: "missing_api_key",
+          hint
+        }
       };
     }
     const requestUrl = isAnthropicNative ? `${normalizedBaseUrl}/v1/messages` : `${normalizedBaseUrl}/v1/chat/completions`;
@@ -34170,6 +34432,45 @@ fastify.post("/v1/messages", async (request, reply) => {
         return errorJson;
       }
       if (payload.stream === true) {
+        if (!upstreamResponse.ok) {
+          reply.raw.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          let errorBody = "";
+          try {
+            const reader2 = upstreamResponse.body?.getReader();
+            if (reader2) {
+              const decoder2 = new import_util.TextDecoder("utf-8");
+              let done2 = false;
+              let bodyLength = 0;
+              while (!done2 && bodyLength < 1e3) {
+                const { value, done: doneReading } = await reader2.read();
+                done2 = doneReading;
+                if (value) {
+                  const chunk = decoder2.decode(value, { stream: true });
+                  errorBody += chunk;
+                  bodyLength += chunk.length;
+                  if (bodyLength >= 1e3) break;
+                }
+              }
+            }
+          } catch (err) {
+            errorBody = upstreamResponse.statusText || "Unknown error";
+          }
+          const truncatedBody = errorBody.length > 1e3 ? errorBody.substring(0, 1e3) + "..." : errorBody;
+          sendSSE(reply, "error", {
+            type: "error",
+            error: {
+              type: "upstream_error",
+              message: `Upstream returned ${upstreamResponse.status}: ${truncatedBody}`,
+              status: upstreamResponse.status
+            }
+          });
+          reply.raw.end();
+          return;
+        }
         reply.raw.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -34203,16 +34504,13 @@ fastify.post("/v1/messages", async (request, reply) => {
           console.error("[Error] Anthropic stream relay failed:", streamErr);
           if (!reply.raw.writableEnded) {
             try {
-              reply.raw.write(`event: error
-data: ${JSON.stringify({
+              sendSSE(reply, "error", {
                 type: "error",
                 error: {
                   type: "internal_error",
                   message: streamErr.message
                 }
-              })}
-
-`);
+              });
             } catch {
             }
             reply.raw.end();
@@ -34230,6 +34528,11 @@ data: ${JSON.stringify({
         reply.type("application/json").send({ error: text });
       }
       return;
+    }
+    if (endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE) {
+      console.error("[Guard Violation] Anthropic-native endpoint reached OpenAI conversion path - this should not happen");
+      reply.code(500);
+      return { error: { message: "Internal error: endpoint kind mismatch", type: "internal_error" } };
     }
     const messages = [];
     if (payload.system && Array.isArray(payload.system)) {
@@ -34284,6 +34587,7 @@ data: ${JSON.stringify({
       }
     }));
     const selectedModel = payload.model || (payload.thinking ? models.reasoning : models.completion);
+    console.log(`[Model Selection] Incoming payload.model: ${payload.model || "none"}, payload.thinking: ${payload.thinking || false}`);
     const modelSource = payload.model ? "explicit request" : payload.thinking ? "REASONING_MODEL env var" : "COMPLETION_MODEL env var";
     debug("Model selection:", {
       requestedModel: payload.model || "none",
@@ -34299,7 +34603,13 @@ data: ${JSON.stringify({
     } else {
       console.log(`[Model] Using requested model: ${selectedModel}`);
     }
-    const needsXMLTools = tools.length > 0 && modelNeedsXMLTools(selectedModel, provider);
+    const supportsToolCalling = modelSupportsToolCalling(selectedModel, provider);
+    let shouldDropTools = false;
+    if (provider === "openrouter" && tools.length > 0 && !supportsToolCalling) {
+      console.warn(`[Tool Capability] Model ${selectedModel} does not support tool calling. Stripping tools and tool_choice.`);
+      shouldDropTools = true;
+    }
+    const needsXMLTools = !shouldDropTools && tools.length > 0 && modelNeedsXMLTools(selectedModel, provider);
     const messagesWithXML = needsXMLTools ? injectXMLToolInstructions(messages, tools) : messages;
     const openaiPayload = {
       model: selectedModel,
@@ -34308,8 +34618,23 @@ data: ${JSON.stringify({
       temperature: payload.temperature !== void 0 ? payload.temperature : 1,
       stream: payload.stream === true
     };
-    if (!needsXMLTools && tools.length > 0) {
+    if (!shouldDropTools && !needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools;
+      if (payload.tool_choice) {
+        openaiPayload.tool_choice = payload.tool_choice;
+      }
+    } else if (shouldDropTools && tools.length > 0) {
+      const toolInstructions = tools.map((t) => `- ${t.function.name}: ${t.function.description || "No description"}`).join("\n");
+      const instructionText = `The following tools are available. Describe which tool you would use and with what parameters:
+
+${toolInstructions}`;
+      if (messagesWithXML.length > 0 && messagesWithXML[messagesWithXML.length - 1].role === "user") {
+        messagesWithXML[messagesWithXML.length - 1].content += "\n\n" + instructionText;
+      } else {
+        messagesWithXML.push({ role: "user", content: instructionText });
+      }
+      openaiPayload.messages = messagesWithXML;
+      console.log(`[Tool Capability] Injected text-based tool instructions for ${selectedModel}`);
     }
     debug("OpenAI payload:", openaiPayload);
     if (tools.length > 0) {
@@ -34337,6 +34662,45 @@ data: ${JSON.stringify({
     const elapsedMs = Date.now() - requestStartMs;
     console.log(`[Timing] Response received in ${elapsedMs}ms (HTTP ${openaiResponse.status})`);
     if (!openaiResponse.ok) {
+      if (openaiPayload.stream) {
+        reply.raw.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive"
+        });
+        let errorBody = "";
+        try {
+          const reader2 = openaiResponse.body?.getReader();
+          if (reader2) {
+            const decoder2 = new import_util.TextDecoder("utf-8");
+            let done2 = false;
+            let bodyLength = 0;
+            while (!done2 && bodyLength < 1e3) {
+              const { value, done: doneReading } = await reader2.read();
+              done2 = doneReading;
+              if (value) {
+                const chunk = decoder2.decode(value, { stream: true });
+                errorBody += chunk;
+                bodyLength += chunk.length;
+                if (bodyLength >= 1e3) break;
+              }
+            }
+          }
+        } catch (err) {
+          errorBody = openaiResponse.statusText || "Unknown error";
+        }
+        const truncatedBody = errorBody.length > 1e3 ? errorBody.substring(0, 1e3) + "..." : errorBody;
+        sendSSE(reply, "error", {
+          type: "error",
+          error: {
+            type: "upstream_error",
+            message: `Upstream returned ${openaiResponse.status}: ${truncatedBody}`,
+            status: openaiResponse.status
+          }
+        });
+        reply.raw.end();
+        return;
+      }
       const errorDetails = await openaiResponse.text();
       let errorJson;
       try {

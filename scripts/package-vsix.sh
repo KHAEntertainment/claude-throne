@@ -51,11 +51,8 @@ fi
 echo "Installing dependencies..."
 npm install --prefix "$EXT_DIR" >/dev/null
 
-echo "Bundling proxy..."
-npm run --prefix "$EXT_DIR" bundle:proxy
-
-echo "Compiling TypeScript..."
-npm run --prefix "$EXT_DIR" compile
+echo "Running prepublish script (bundles proxy and compiles TypeScript)..."
+npm run --prefix "$EXT_DIR" vscode:prepublish
 
 echo "Packaging VSIX..."
 npm run --prefix "$EXT_DIR" package

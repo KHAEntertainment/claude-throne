@@ -20,10 +20,24 @@ export function normalizeContent(content) {
 
 /**
  * Recursively traverse JSON schema and remove format: 'uri'
+ * 
+ * This is used to strip URI format constraints from tool schemas for providers
+ * that don't support them (e.g., some OpenAI-compatible endpoints).
+ * 
+ * Controlled by DISABLE_URI_FORMAT env var (set to '1' to enable removal).
+ * When disabled (default), URI formats are preserved.
+ * 
  * @param {*} schema - The schema to process
+ * @param {boolean} [force=false] - Force removal regardless of env setting
  * @returns {*} - The cleaned schema
  */
-export function removeUriFormat(schema) {
+export function removeUriFormat(schema, force = false) {
+  // Check if URI format removal is enabled
+  const shouldRemove = force || process.env.DISABLE_URI_FORMAT === '1'
+  
+  if (!shouldRemove) {
+    return schema // Return unchanged if removal is disabled
+  }
   if (!schema || typeof schema !== 'object') return schema;
 
   // If this is a string type with uri format, remove the format
