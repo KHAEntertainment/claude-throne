@@ -324,11 +324,12 @@
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "tsc": "./node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {
     "undici": "^6.22.0",
-    "zod": "^4.1.12"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
