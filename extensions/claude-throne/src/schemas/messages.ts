@@ -443,12 +443,25 @@ export type SimpleRequestMessage = z.infer<typeof SimpleRequestMessageSchema>
 /**
  * Update messages with simple payloads
  */
-export const SimpleUpdateMessageSchema = z.object({
-  type: z.enum(['updateCustomBaseUrl', 'updatePort', 'updateDebug']),
-  url: z.string().optional(),
-  port: z.number().optional(),
-  enabled: z.boolean().optional()
-})
+export const SimpleUpdateMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('updateCustomBaseUrl'),
+    url: z.string()
+  }),
+  z.object({
+    type: z.literal('updatePort'),
+    port: z.number()
+  }),
+  z.object({
+    type: z.literal('updateDebug'),
+    enabled: z.boolean()
+  }),
+  z.object({
+    type: z.literal('updateEndpointKind'),
+    baseUrl: z.string(),
+    endpointKind: z.enum(['auto', 'openai', 'anthropic'])
+  })
+])
 
 export type SimpleUpdateMessage = z.infer<typeof SimpleUpdateMessageSchema>
 

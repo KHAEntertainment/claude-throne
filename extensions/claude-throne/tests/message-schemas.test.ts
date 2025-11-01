@@ -255,6 +255,16 @@ describe('Message Schema Validation', () => {
         expect(() => validateWebviewMessage(msg)).not.toThrow()
       })
     })
+
+    it('should validate updateEndpointKind message', () => {
+      const message = {
+        type: 'updateEndpointKind',
+        baseUrl: 'https://api.example.com',
+        endpointKind: 'openai'
+      } as const
+
+      expect(() => validateWebviewMessage(message)).not.toThrow()
+    })
   })
   
   describe('Legacy Message Type Normalization', () => {

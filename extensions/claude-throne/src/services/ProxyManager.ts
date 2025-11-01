@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import * as cp from 'node:child_process'
 import * as path from 'node:path'
 import { SecretsService } from './Secrets'
-import { redactSecrets } from '../../../../utils/redaction.js'
+import { redactSecrets } from '../utils/redaction'
 
 export interface ProxyStartOptions {
   provider: 'openrouter' | 'openai' | 'together' | 'deepseek' | 'glm' | 'custom' | string
