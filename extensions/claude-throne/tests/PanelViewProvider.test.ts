@@ -1,4 +1,50 @@
 import { describe, it, beforeEach, expect, vi } from 'vitest'
+
+// Mock VS Code API before importing modules
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: vi.fn(),
+    onDidChangeConfiguration: vi.fn(),
+    workspaceFolders: []
+  },
+  window: {
+    showInformationMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
+    showErrorMessage: vi.fn(),
+    createOutputChannel: vi.fn(() => ({
+      name: 'Test',
+      append: vi.fn(),
+      appendLine: vi.fn(),
+      clear: vi.fn(),
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+      replace: vi.fn()
+    }))
+  },
+  commands: {
+    executeCommand: vi.fn()
+  },
+  Uri: {
+    parse: vi.fn((uri) => ({ toString: () => uri })),
+    joinPath: vi.fn((...parts) => ({ fsPath: parts.join('/') }))
+  },
+  ConfigurationTarget: {
+    Global: 1,
+    Workspace: 2
+  },
+  ExtensionMode: {
+    Production: 1,
+    Development: 2,
+    Test: 3
+  },
+  EventEmitter: class {
+    event = vi.fn()
+    fire = vi.fn()
+    dispose = vi.fn()
+  }
+}), { virtual: true })
+
 import * as vscode from 'vscode'
 import { PanelViewProvider } from '../src/views/PanelViewProvider'
 import { SecretsService } from '../src/services/Secrets'

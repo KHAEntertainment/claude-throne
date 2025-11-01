@@ -260,19 +260,51 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register the sidebar/activity bar panel view
   log.appendLine('📋 Registering webview view providers...')
-  const panelProvider = new PanelViewProvider(context, secrets, proxy, log)
-  log.appendLine('✅ Panel provider created')
   
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
-  )
-  log.appendLine('✅ Webview providers registered')
+  let panelProvider: PanelViewProvider | null = null
+  
+  try {
+    panelProvider = new PanelViewProvider(context, secrets, proxy, log)
+    log.appendLine('✅ Panel provider created')
+    
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
+    )
+    log.appendLine('✅ Webview providers registered')
+  } catch (err: any) {
+    log.appendLine(`❌ FATAL: Failed to initialize webview panel: ${err?.stack || err}`)
+    log.show() // Show output channel on fatal error
+    
+    vscode.window.showErrorMessage(
+      'Thronekeeper failed to initialize. Check the Output panel for details.',
+      'Show Output',
+      'Enable Debug Logging',
+      'Reload Window'
+    ).then(async (action) => {
+      if (action === 'Show Output') {
+        log.show()
+      } else if (action === 'Enable Debug Logging') {
+        const cfg = vscode.workspace.getConfiguration('claudeThrone')
+        await cfg.update('proxy.debug', true, vscode.ConfigurationTarget.Global)
+        log.show()
+        vscode.window.showInformationMessage('Debug logging enabled. Reload window to apply changes.')
+      } else if (action === 'Reload Window') {
+        vscode.commands.executeCommand('workbench.action.reloadWindow')
+      }
+    })
+    
+    // Continue with extension activation even if panel fails to load
+    // This allows commands to still work for troubleshooting
+  }
 
   // Commands
   const openPanel = vscode.commands.registerCommand('claudeThrone.openPanel', async () => {
     // Open Activity Bar view
-    if (!(await tryOpenView('claudeThrone.activity'))) {
+    if (panelProvider && !(await tryOpenView('claudeThrone.activity'))) {
       await panelProvider.reveal()
+    } else if (!panelProvider) {
+      vscode.window.showErrorMessage('Thronekeeper panel failed to initialize. Check the Output panel for details.')
+      log.show()
     }
   })
 

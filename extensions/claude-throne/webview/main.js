@@ -307,7 +307,6 @@
         break;
         
       // Other message types - basic validation only
-      case 'keys':
       case 'keysLoaded':
       case 'keyStored':  // Unified message, check payload.provider to distinguish
       case 'combosLoaded':  // Uses payload.deletedId to signal deletion
@@ -578,14 +577,8 @@
         state.customCombos = message.payload.savedCombos || [];
         handlePopularModels(message.payload);
         break;
-      case 'keys':
-        handleKeysLoaded(message.payload);
-        break;
       case 'keysLoaded':
         handleKeysLoaded(message.payload.keyStatus || message.payload);
-        break;
-      case 'keyStored':
-        handleKeyStored(message.payload);
         break;
       case 'keyStored':
         // Check payload.provider to distinguish Anthropic vs others
@@ -1062,7 +1055,7 @@
    * Sends the Anthropic API key from the UI to the extension and clears the input field.
    *
    * If the input is empty or only whitespace, the function does nothing. Otherwise it posts a
-   * `storeAnthropicKey` message containing the key to the extension host and then clears the
+   * canonical `storeKey` message with provider 'anthropic' to the extension host and then clears the
    * Anthropic key input field.
    */
   function storeAnthropicKey() {
@@ -1076,10 +1069,11 @@
       return;
     }
     
-    console.log('[storeAnthropicKey] Sending storeAnthropicKey message');
+    console.log('[storeAnthropicKey] Sending storeKey message with provider=anthropic');
     try {
       vscode.postMessage({
-        type: 'storeAnthropicKey',
+        type: 'storeKey',
+        provider: 'anthropic',
         key: key
       });
       console.log('[storeAnthropicKey] Message sent successfully');

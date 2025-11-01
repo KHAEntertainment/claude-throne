@@ -96,6 +96,30 @@ Optimize performance by using different models for different tasks:
 - **Reasoning Model**: Complex analysis, planning, debugging (e.g., GPT-4, Claude Opus)
 - **Execution Model**: Fast completions, simple tasks (e.g., GPT-3.5, Claude Haiku)
 
+### Feature Flags
+
+Thronekeeper includes internal feature flags that control advanced behavior. These are enabled by default and generally should not need modification:
+
+- `enableSchemaValidation` (default: `true`) - Validates messages between webview and extension to ensure data integrity
+- `enableTokenValidation` (default: `true`) - Prevents race conditions by validating request/response sequence tokens
+- `enableKeyNormalization` (default: `true`) - Normalizes provider map keys to canonical format
+- `enablePreApplyHydration` (default: `true`) - Ensures global model settings are synchronized before proxy starts
+
+These flags are primarily for debugging and development. In normal usage, they should remain at their default values. To modify them, add the following to your VS Code settings:
+
+```json
+{
+  "claudeThrone.featureFlags": {
+    "enableSchemaValidation": true,
+    "enableTokenValidation": true,
+    "enableKeyNormalization": true,
+    "enablePreApplyHydration": true
+  }
+}
+```
+
+**Note**: Disabling these flags may result in unexpected behavior and is not recommended for production use.
+
 ## 🔧 Advanced Features
 
 ### Provider-Specific Model Persistence

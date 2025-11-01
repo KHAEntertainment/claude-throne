@@ -9,30 +9,17 @@ import { SecretsService } from '../src/services/Secrets'
 import { ProxyManager } from '../src/services/ProxyManager'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// Mock implementations (simplified from integration.test.ts)
+// Use centralized config backing from setup.ts
+const configBacking = (globalThis as any).__vscodeConfigBacking || new Map<string, any>()
+
+// Mock implementations with proper backing store (no recursion)
 const mockConfig = {
   get: vi.fn((key: string, defaultValue?: any) => {
-    const configMap: Record<string, any> = {
-      'provider': 'openrouter',
-      'selectedCustomProviderId': '',
-      'twoModelMode': false,
-      'proxy.port': 3000,
-      'proxy.debug': false,
-      'customBaseUrl': '',
-      'modelSelectionsByProvider': {},
-      'reasoningModel': '',
-      'completionModel': '',
-      'valueModel': '',
-      'featureFlags': {
-        enableSchemaValidation: true,
-        enableTokenValidation: true,
-        enableKeyNormalization: true,
-        enablePreApplyHydration: true
-      }
-    }
-    return configMap[key] ?? defaultValue
+    return configBacking.has(key) ? configBacking.get(key) : defaultValue
   }),
-  update: vi.fn(),
+  update: vi.fn(async (key: string, value: any) => {
+    configBacking.set(key, value)
+  }),
   inspect: vi.fn(() => ({ defaultValue: {} }))
 }
 
@@ -111,22 +98,18 @@ describe('Provider Isolation', () => {
   })
 
   it('should isolate model caches per provider', async () => {
-    // Set up initial provider models
-    mockConfig.get.mockImplementation((key: string) => {
-      if (key === 'modelSelectionsByProvider') {
-        return {
-          openrouter: { reasoning: 'openrouter-model-1', completion: 'openrouter-model-2', value: 'openrouter-model-3' },
-          openai: { reasoning: 'openai-model-1', completion: 'openai-model-2', value: 'openai-model-3' }
-        }
-      }
-      return mockConfig.get(key)
+    // Set up initial provider models in backing store
+    configBacking.set('modelSelectionsByProvider', {
+      openrouter: { reasoning: 'openrouter-model-1', completion: 'openrouter-model-2', value: 'openrouter-model-3' },
+      openai: { reasoning: 'openai-model-1', completion: 'openai-model-2', value: 'openai-model-3' }
     })
 
     // Verify that switching providers reads different models
     // This test verifies cache isolation by checking that different providers
     // maintain separate model selections
-    const openrouterModels = mockConfig.get('modelSelectionsByProvider')['openrouter']
-    const openaiModels = mockConfig.get('modelSelectionsByProvider')['openai']
+    const allModels = configBacking.get('modelSelectionsByProvider')
+    const openrouterModels = allModels['openrouter']
+    const openaiModels = allModels['openai']
     
     expect(openrouterModels.reasoning).toBe('openrouter-model-1')
     expect(openaiModels.reasoning).toBe('openai-model-1')

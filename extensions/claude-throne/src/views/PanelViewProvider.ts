@@ -4,7 +4,7 @@ import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
 import { isAnthropicEndpoint, type CustomEndpointKind } from '../services/endpoints'
 // Comment 2: Import schema validation for runtime message validation
-import { safeValidateMessage, type ExtensionToWebviewMessage } from '../schemas/messages'
+import { safeValidateMessage, normalizeMessageType, type ExtensionToWebviewMessage } from '../schemas/messages'
 
 export class PanelViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView
@@ -246,7 +246,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const enableValidation = (featureFlags.enableSchemaValidation !== false && featureFlags.enableSchemaValidation !== undefined) ? true : false
       
       if (enableValidation) {
-        const validated = safeValidateMessage(msg, 'toExtension', (validationMsg) => {
+        // Comment 3: Normalize legacy message types before validation
+        const normalized = normalizeMessageType(msg)
+        
+        const validated = safeValidateMessage(normalized, 'toExtension', (validationMsg) => {
           this.log.appendLine(`[Schema Validation] ${validationMsg}`)
         })
         
@@ -286,12 +289,6 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             // Phase 2: Pass through token for race protection
             await this.handleListModels(false, msg.token)
             break
-          case 'listPublicModels':
-            await this.handleListModels(false, msg.token)
-            break
-          case 'listFreeModels':
-            await this.handleListModels(true, msg.token)
-            break
           case 'requestPopularModels':
             await this.postPopularModels()
             break
@@ -309,10 +306,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             }
             break
           case 'storeKey':
-            await this.handleStoreKey(msg.provider, msg.key)
-            // Comment 1: After storing keys, refresh keys status and re-run model list
-            await this.postKeys()
-            await this.handleListModels(false)
+            // Route Anthropic keys to dedicated handler, other providers to generic handler
+            if (msg.provider === 'anthropic') {
+              await this.handleStoreAnthropicKey(msg.key)
+            } else {
+              await this.handleStoreKey(msg.provider, msg.key)
+              // Comment 1: After storing keys, refresh keys status and re-run model list
+              await this.postKeys()
+              await this.handleListModels(false)
+            }
             break
           case 'startProxy':
             await this.handleStartProxy()
@@ -364,9 +366,6 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'updateEndpointKind':
             // Comment 3: Handle endpoint kind update for custom provider
             await this.handleUpdateEndpointKind(msg.baseUrl, msg.endpointKind)
-            break
-          case 'storeAnthropicKey':
-            await this.handleStoreAnthropicKey(msg.key)
             break
           case 'refreshAnthropicDefaults':
             try {
@@ -465,16 +464,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       this.log.appendLine(`[postKeys] keyStatus for providers: ${JSON.stringify(keyStatus)}`)
       this.log.appendLine(`[postKeys] runtimeProvider=${this.runtimeProvider}, configProvider=${this.configProvider}`)
       
-      // Send keysLoaded message for consistency
+      // Send keysLoaded message (canonical format)
       this.post({ 
         type: 'keysLoaded', 
         payload: { keyStatus } 
-      })
-      
-      // Also send legacy 'keys' message for backward compatibility
-      this.post({ 
-        type: 'keys', 
-        payload: keyStatus 
       })
       
     } catch (err) {
