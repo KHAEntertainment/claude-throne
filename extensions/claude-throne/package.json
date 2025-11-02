@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.57",
+  "version": "1.5.58",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -22,10 +22,17 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "*"
+    "*",
+    "onView:claudeThrone.panel"
   ],
   "contributes": {
     "viewsContainers": {
+      "panel": [
+        {
+          "id": "claudeThronePanel",
+          "title": "Thronekeeper"
+        }
+      ],
       "activitybar": [
         {
           "id": "claudeThrone",
@@ -35,6 +42,13 @@
       ]
     },
     "views": {
+      "claudeThronePanel": [
+        {
+          "id": "claudeThrone.panel",
+          "name": "Thronekeeper",
+          "type": "webview"
+        }
+      ],
       "claudeThrone": [
         {
           "id": "claudeThrone.activity",

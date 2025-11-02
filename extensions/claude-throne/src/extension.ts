@@ -268,9 +268,10 @@ export function activate(context: vscode.ExtensionContext) {
     log.appendLine('✅ Panel provider created')
     
     context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('claudeThrone.panel', panelProvider),
       vscode.window.registerWebviewViewProvider('claudeThrone.activity', panelProvider)
     )
-    log.appendLine('✅ Webview providers registered')
+    log.appendLine('✅ Webview providers registered (panel + activity bar)')
   } catch (err: any) {
     log.appendLine(`❌ FATAL: Failed to initialize webview panel: ${err?.stack || err}`)
     log.show() // Show output channel on fatal error
@@ -299,10 +300,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Commands
   const openPanel = vscode.commands.registerCommand('claudeThrone.openPanel', async () => {
-    // Open Activity Bar view
-    if (panelProvider && !(await tryOpenView('claudeThrone.activity'))) {
-      await panelProvider.reveal()
-    } else if (!panelProvider) {
+    // Try bottom panel first, fallback to Activity Bar view
+    if (panelProvider) {
+      const panelOpened = await tryOpenView('claudeThrone.panel')
+      if (!panelOpened) {
+        const activityBarOpened = await tryOpenView('claudeThrone.activity')
+        if (!activityBarOpened) {
+          await panelProvider.reveal()
+        }
+      }
+    } else {
       vscode.window.showErrorMessage('Thronekeeper panel failed to initialize. Check the Output panel for details.')
       log.show()
     }
@@ -686,6 +693,7 @@ export function activate(context: vscode.ExtensionContext) {
     const scope = scopeStr === 'global' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
 
     const twoModelMode = cfg.get<boolean>('twoModelMode', false);
+    const opusPlanMode = cfg.get<boolean>('opusPlanMode', false);
     const env: Record<string, any> = { ANTHROPIC_BASE_URL: baseUrl };
 
     // Add optional Claude Code environment variables
@@ -700,7 +708,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     log.appendLine(`[applyToClaudeCode] Scope: ${scopeStr}`);
-    log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}`);
+    log.appendLine(`[applyToClaudeCode] Applying config: twoModelMode=${twoModelMode}, opusPlanMode=${opusPlanMode}`);
     log.appendLine(`[applyToClaudeCode] Input models: reasoning='${reasoningModel || 'EMPTY'}', coding='${completionModel || 'EMPTY'}', value='${valueModel || 'EMPTY'}'`);
     // Comment 7: Log model configuration to verify propagation
     log.appendLine(`[applyToClaudeCode] Model configuration - reasoningModel: ${reasoningModel || 'NOT SET'}, completionModel: ${completionModel || 'NOT SET'}, valueModel: ${valueModel || 'NOT SET'}`);
@@ -718,11 +726,14 @@ export function activate(context: vscode.ExtensionContext) {
     
     if (twoModelMode && effectiveReasoningModel && effectiveCompletionModel && effectiveValueModel) {
         // Three-model mode: use specific models for each task type
-        log.appendLine(`[applyToClaudeCode] Three-model mode enabled`);
+        // OpusPlan mode: Use 'opusplan' model identifier while respecting user's tier mappings
+        const modelIdentifier = (opusPlanMode && twoModelMode) ? 'opusplan' : effectiveReasoningModel;
+        log.appendLine(`[applyToClaudeCode] Three-model mode enabled${opusPlanMode ? ' with OpusPlan mode' : ''}`);
+        log.appendLine(`[applyToClaudeCode] - Model identifier: ${modelIdentifier}`);
         log.appendLine(`[applyToClaudeCode] - OPUS (complex reasoning): ${effectiveReasoningModel}`);
         log.appendLine(`[applyToClaudeCode] - SONNET (balanced coding): ${effectiveCompletionModel}`);
         log.appendLine(`[applyToClaudeCode] - HAIKU (fast value): ${effectiveValueModel}`);
-        env.ANTHROPIC_MODEL = effectiveReasoningModel;
+        env.ANTHROPIC_MODEL = modelIdentifier;
         env.ANTHROPIC_DEFAULT_OPUS_MODEL = effectiveReasoningModel;
         env.ANTHROPIC_DEFAULT_SONNET_MODEL = effectiveCompletionModel;
         env.ANTHROPIC_DEFAULT_HAIKU_MODEL = effectiveValueModel;
