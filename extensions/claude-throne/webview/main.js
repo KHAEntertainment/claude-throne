@@ -2207,7 +2207,7 @@
       const warningHtml = warnings.length > 0 ? `<div class="model-warning">${escapeHtml(warnings[0])}</div>` : '';
       
       let itemClass = 'model-item';
-      if (isReasoning) itemClass += ' selected-reasoning';
+      if (isReasoning) itemClass += ' selected-reasoning selected-primary';
       if (isCoding) itemClass += ' selected-coding';
       if (isValue) itemClass += ' selected-value';
 
