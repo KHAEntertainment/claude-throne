@@ -9,7 +9,7 @@ Thronekeeper is a powerful VS Code extension that acts as an intelligent proxy, 
 ### 🎯 Universal Model Access
 - **Multi-Provider Support**: Connect to OpenRouter (400+ models), OpenAI, Together AI, Groq, or custom endpoints
 - **Smart Routing**: Automatically translates between Anthropic and OpenAI API formats
-- **Two-Model Mode**: Use different models for reasoning (complex tasks) and execution (fast responses)
+- **Three-Model Mode**: Use different models for reasoning (complex tasks), completion (coding), and value (efficiency)
 - **Provider Memory**: Model selections persist per provider - switch seamlessly between services
 
 ### 🔐 Security First
@@ -30,8 +30,8 @@ Thronekeeper is a powerful VS Code extension that acts as an intelligent proxy, 
 ![Model Selection](images/model-selection.png)
 *Browse and search hundreds of available models with real-time loading*
 
-![Two-Model Mode](images/two-model-mode.png)
-*Configure separate models for reasoning and execution tasks*
+![Three-Model Mode](images/two-model-mode.png)
+*Configure separate models for reasoning, completion, and value tasks*
 
 ## 🚀 Quick Start
 
@@ -82,19 +82,21 @@ Access these commands via the Command Palette (`Cmd/Ctrl + Shift + P`):
 ### Extension Settings
 
 - `claudeThrone.provider` - Default AI provider (openrouter, openai, together, grok, custom)
-- `claudeThrone.twoModelMode` - Enable separate reasoning/execution models
+- `claudeThrone.twoModelMode` - Enable three-model mode with separate models for reasoning, completion, and value tasks
 - `claudeThrone.reasoningModel` - Primary model for complex reasoning tasks
-- `claudeThrone.completionModel` - Fast model for code completion
+- `claudeThrone.completionModel` - Model for code generation and balanced tasks
+- `claudeThrone.valueModel` - Model for fast operations and simple tasks
 - `claudeThrone.proxy.port` - Proxy server port (default: 3000)
 - `claudeThrone.autoApply` - Auto-configure Claude Code on proxy start
 - `claudeThrone.applyScope` - Settings scope (workspace or global)
 - `claudeThrone.customBaseUrl` - Custom provider endpoint URL
 
-### Two-Model Mode
+### Three-Model Mode
 
-Optimize performance by using different models for different tasks:
+Optimize performance by using three specialized models:
 - **Reasoning Model**: Complex analysis, planning, debugging (e.g., GPT-4, Claude Opus)
-- **Execution Model**: Fast completions, simple tasks (e.g., GPT-3.5, Claude Haiku)
+- **Completion Model**: Code generation, balanced tasks (e.g., GPT-4o, Claude Sonnet)
+- **Value Model**: Fast operations, simple tasks (e.g., GPT-3.5, Claude Haiku)
 
 ### Feature Flags
 

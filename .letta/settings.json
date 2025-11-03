@@ -1,0 +1,11 @@
+{
+  "localSharedBlockIds": {
+    "project": "block-e985e0f0-0145-43c4-9454-6e7dffc3ae99"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/Users/bbrenner/Documents/Scripting Projects/claude-throne\" && find . -name \"*.test.js\" -o -name \"*.test.ts\" | head -20)",
+      "Bash(cd \"/Users/bbrenner/Documents/Scripting Projects/claude-throne\" && bd ready --json 2>&1 | head -50)"
+    ]
+  }
+}

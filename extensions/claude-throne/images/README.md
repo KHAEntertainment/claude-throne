@@ -22,11 +22,12 @@ This directory should contain the following screenshots for the VS Code extensio
   - Model metadata (tokens, pricing if available)
 
 ### 3. `two-model-mode.png`
-- Two-model mode configuration
+- Three-model mode configuration
 - Should show:
-  - Toggle switch for two-model mode
+  - Toggle switch for three-model mode
   - Separate reasoning model selection
   - Separate completion model selection
+  - Separate value model selection
   - Clear indication of which model is used for what
 
 ## Screenshot Guidelines

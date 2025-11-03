@@ -45,6 +45,11 @@ vi.mock('vscode', () => ({
   }
 }), { virtual: true })
 
+const mockListModels = vi.fn()
+vi.mock('../src/services/Models', () => ({
+  listModels: mockListModels
+}))
+
 import * as vscode from 'vscode'
 import { PanelViewProvider } from '../src/views/PanelViewProvider'
 import { SecretsService } from '../src/services/Secrets'
@@ -344,6 +349,122 @@ describe('PanelViewProvider Configuration Tests', () => {
           vscode.ConfigurationTarget.Global
         )
       } finally {
+        (vscode.workspace as any).getConfiguration = originalGetConfiguration
+      }
+    })
+  })
+
+  describe('handleListModels', () => {
+    beforeEach(() => {
+      mockListModels.mockReset()
+    })
+
+    it('bypasses model loading for deepseek and glm providers', async () => {
+      const mockCfg = {
+        get: vi.fn((key: string, defaultValue?: any) => {
+          if (key === 'proxy.debug') return false
+          if (key === 'customProviders') return []
+          return defaultValue
+        })
+      }
+
+      const originalGetConfiguration = vscode.workspace.getConfiguration
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
+
+      try {
+        panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
+        const postSpy = vi.spyOn(panelViewProvider as any, 'post').mockReturnValue(true)
+
+        for (const provider of ['deepseek', 'glm']) {
+          mockListModels.mockClear()
+          postSpy.mockClear()
+          ;(panelViewProvider as any).currentProvider = provider
+
+          await (panelViewProvider as any).handleListModels(false)
+
+          expect(mockListModels).not.toHaveBeenCalled()
+          expect(postSpy).toHaveBeenCalledTimes(1)
+          const payload = postSpy.mock.calls[0][0]
+          expect(payload.type).toBe('models')
+          expect(payload.payload.provider).toBe(provider)
+          expect(payload.payload.models[0].id).toBe('claude-3-5-sonnet-20241022')
+        }
+      } finally {
+        (vscode.workspace as any).getConfiguration = originalGetConfiguration
+      }
+    })
+
+    it('fetches models for saved custom providers with Anthropic-style base URLs', async () => {
+      const mockCfg = {
+        get: vi.fn((key: string, defaultValue?: any) => {
+          if (key === 'customProviders') {
+            return [{ id: 'minimax', baseUrl: 'https://api.minimax.io/anthropic', name: 'Minimax' }]
+          }
+          if (key === 'proxy.debug') return false
+          return defaultValue
+        })
+      }
+
+      const originalGetConfiguration = vscode.workspace.getConfiguration
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
+
+      const keySpy = vi.spyOn(mockSecrets, 'getProviderKey').mockResolvedValue('test-key')
+
+      try {
+        panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
+        const postSpy = vi.spyOn(panelViewProvider as any, 'post').mockReturnValue(true)
+
+        mockListModels.mockResolvedValue(['minimax-model'])
+        ;(panelViewProvider as any).currentProvider = 'minimax'
+
+        await (panelViewProvider as any).handleListModels(false)
+
+        expect(mockListModels).toHaveBeenCalledTimes(1)
+        expect(mockListModels).toHaveBeenCalledWith('minimax', 'https://api.minimax.io/anthropic', 'test-key')
+
+        const payload = postSpy.mock.calls[0][0]
+        const returnedIds = payload.payload.models.map((m: any) => m.id)
+        expect(returnedIds).toContain('minimax-model')
+        expect(returnedIds).not.toContain('claude-3-5-sonnet-20241022')
+      } finally {
+        keySpy.mockRestore()
+        (vscode.workspace as any).getConfiguration = originalGetConfiguration
+      }
+    })
+
+    it('fetches models for generic custom providers with OpenAI-style base URLs', async () => {
+      const mockCfg = {
+        get: vi.fn((key: string, defaultValue?: any) => {
+          if (key === 'customBaseUrl') return 'https://api.custom-provider.com'
+          if (key === 'customProviders') return []
+          if (key === 'proxy.debug') return false
+          return defaultValue
+        })
+      }
+
+      const originalGetConfiguration = vscode.workspace.getConfiguration
+      ;(vscode.workspace as any).getConfiguration = vi.fn().mockReturnValue(mockCfg)
+
+      const keySpy = vi.spyOn(mockSecrets, 'getProviderKey').mockResolvedValue('openai-key')
+
+      try {
+        panelViewProvider = new PanelViewProvider(mockContext, mockSecrets, mockProxy, mockLog)
+        const postSpy = vi.spyOn(panelViewProvider as any, 'post').mockReturnValue(true)
+
+        mockListModels.mockResolvedValue(['custom-model'])
+        ;(panelViewProvider as any).currentProvider = 'custom'
+
+        await (panelViewProvider as any).handleListModels(false)
+
+        expect(mockListModels).toHaveBeenCalledTimes(1)
+        expect(mockListModels).toHaveBeenCalledWith('custom', 'https://api.custom-provider.com', 'openai-key')
+
+        const payload = postSpy.mock.calls[0][0]
+        const returnedIds = payload.payload.models.map((m: any) => m.id)
+        expect(returnedIds).toContain('custom-model')
+        expect(returnedIds).not.toContain('claude-3-5-sonnet-20241022')
+      } finally {
+        keySpy.mockRestore()
         (vscode.workspace as any).getConfiguration = originalGetConfiguration
       }
     })

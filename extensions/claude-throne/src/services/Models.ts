@@ -260,6 +260,7 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
   const startTime = Date.now()
   // Comment 3: Overall budget (50 seconds) - can be adjusted between 45-60s
   const overallBudgetMs = 50000
+  const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
@@ -285,6 +286,9 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
     url = 'https://api.together.xyz/v1/models'
   }
 
+  if (DEBUG) {
+    console.log(`[Models] Resolved models endpoint: ${url} (from baseUrl: ${baseUrl})`)
+  }
   console.log(`[Models] Fetching models from: ${url}`)
   console.log(`[Models] Authorization header: ${headers.Authorization ? 'PRESENT' : 'MISSING'}`)
 
@@ -308,6 +312,13 @@ export async function listModels(provider: ProviderId, baseUrl: string, apiKey: 
     const arr = Array.isArray(data) ? data : []
     return arr.map((m: any) => m?.id).filter((id: any) => typeof id === 'string')
   } catch (err: any) {
+    console.error(`[Models] Failed to fetch from ${url} (provider: ${provider}, baseUrl: ${baseUrl}): ${err?.message || err}`)
+    console.error(err)
+    if (err && typeof err === 'object') {
+      ;(err as any).modelsEndpointUrl = url
+      ;(err as any).attemptedUrl = (err as any).attemptedUrl || url
+      ;(err as any).baseUrl = (err as any).baseUrl || baseUrl
+    }
     // Comment 3: Preserve timeout classification when rethrowing
     if ((err as any).errorType === 'timeout') {
       ;(err as any).errorType = 'timeout'

@@ -113,14 +113,14 @@ The system supports multiple AI providers with intelligent detection:
 ### Environment Variables
 - `ANTHROPIC_PROXY_BASE_URL` - Base URL for the upstream provider
 - `CUSTOM_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, etc. - Provider-specific API keys
-- `REASONING_MODEL`, `COMPLETION_MODEL` - Model selection for two-model mode
+- `REASONING_MODEL`, `COMPLETION_MODEL`, `VALUE_MODEL` - Model selection for three-model mode
 - `DEBUG` - Enable debug logging
 
 ### VS Code Settings
 - `claudeThrone.proxy.port` - Proxy server port (default: 3000)
 - `claudeThrone.proxy.debug` - Enable debug logging
 - `claudeThrone.autoApply` - Auto-configure Claude Code
-- `claudeThrone.twoModelMode` - Enable separate reasoning/execution models
+- `claudeThrone.twoModelMode` - Enable separate reasoning, completion, and value models (three-model mode)
 - `claudeThrone.applyScope` - Workspace vs global configuration scope
 
 ## Testing
@@ -178,7 +178,7 @@ npx vitest tests/messages.nonstream.test.js
 - Anthropic-native endpoints bypass proxy for direct connection
 
 ### Model Selection
-- Two-model mode for reasoning vs execution optimization
+- Three-model mode for reasoning, completion, and value optimization
 - Automatic model selection based on request context
 - Fallback logic for missing model specifications
 

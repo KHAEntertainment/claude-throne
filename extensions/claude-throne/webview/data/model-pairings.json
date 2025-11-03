@@ -1,1 +1,31 @@
-{"featured_pairings": [{"name": "The Free Genius Combo", "reasoning": "deepseek/deepseek-chat-v3.1:free", "completion": "qwen/qwen3-coder:free", "value": "qwen/qwen3-coder:free", "description": "World-class reasoning + specialized coding"}]}
+{
+  "featured_pairings": [
+    {
+      "name": "The Free Genius Combo",
+      "reasoning": "deepseek/deepseek-chat-v3.1:free",
+      "completion": "qwen/qwen3-coder:free",
+      "value": "qwen/qwen3-coder:free",
+      "description": "World-class reasoning + specialized coding"
+    }
+  ],
+  "provider_combos": {
+    "openrouter": [
+      {
+        "name": "OpenRouter Power Combo",
+        "reasoning": "anthropic/claude-3.5-sonnet",
+        "completion": "anthropic/claude-3.5-haiku",
+        "value": "anthropic/claude-3-opus",
+        "description": "Best reasoning with fast completion"
+      }
+    ],
+    "custom": [
+      {
+        "name": "Custom Provider Combo",
+        "reasoning": "gpt-4",
+        "completion": "gpt-3.5-turbo",
+        "value": "gpt-3.5-turbo",
+        "description": "Example combo for custom providers"
+      }
+    ]
+  }
+}

@@ -10,6 +10,7 @@ node_modules/
 extensions/claude-throne/out/
 extensions/claude-throne/webview/dist/
 extensions/claude-throne/*.vsix
+.vscode/
 
 # Archive and compiled artifacts
 .archive/

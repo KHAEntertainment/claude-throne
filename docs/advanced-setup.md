@@ -17,10 +17,11 @@ ANTHROPIC_PROXY_BASE_URL=https://api.together.xyz/v1 \
 TOGETHER_API_KEY=your-key \
 npm start
 
-# With two-model mode
+# With three-model mode
 OPENROUTER_API_KEY=your-key \
 REASONING_MODEL=deepseek/deepseek-chat-v3.1:free \
 COMPLETION_MODEL=qwen/qwen3-coder:free \
+VALUE_MODEL=google/gemini-2.0-flash-exp:free \
 npm start
 ```
 
@@ -47,6 +48,7 @@ The extension will automatically detect and use the Python backend if available.
 - `PORT`: The port the proxy server should listen on (default: 3000)
 - `REASONING_MODEL`: The reasoning model to use (default: `google/gemini-2.0-pro-exp-02-05:free`)
 - `COMPLETION_MODEL`: The completion model to use (default: `google/gemini-2.0-pro-exp-02-05:free`)
+- `VALUE_MODEL`: The value model to use for cost-effective operations (default: `google/gemini-2.0-flash-exp:free`)
 - `DEBUG`: Set to `1` to enable debug logging
 
 ### Key Resolution Order
