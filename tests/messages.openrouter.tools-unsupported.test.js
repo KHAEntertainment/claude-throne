@@ -1,17 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import request from 'supertest'
-import { startUpstreamMock, spawnProxyProcess, stopChild } from './utils.js'
+import { startUpstreamMock, spawnProxyProcess, stopChild, findAvailablePort } from './utils.js'
 
 describe('POST /v1/messages (OpenRouter tool unsupported fallback)', () => {
   it('strips tools and injects text instructions when model does not support tool calling', async () => {
     const upstream = await startUpstreamMock({ mode: 'json' })
-    const proxyPort = 3116
+    const proxyPort = await findAvailablePort()
     const child = await spawnProxyProcess({
       port: proxyPort,
       baseUrl: `http://127.0.0.1:${upstream.port}`,
       env: { 
         OPENROUTER_API_KEY: 'testkey',
-        COMPLETION_MODEL: 'google/gemini-2.0-pro-exp-02-05:free' // Model in toolCallUnsupported list
+        COMPLETION_MODEL: 'google/gemini-2.0-pro-exp-02-05:free', // Model in toolCallUnsupported list
+        FORCE_PROVIDER: 'openrouter'
       },
     })
 
@@ -62,53 +63,101 @@ describe('POST /v1/messages (OpenRouter tool unsupported fallback)', () => {
     }
   })
 
-  it('returns structured 400 with hint when feature flag forces error instead of fallback', async () => {
-    const upstream = await startUpstreamMock({ mode: 'json', status: 404 })
-    const proxyPort = 3117
+})
+
+describe('POST /v1/messages (OpenRouter tool style + fallback behavior)', () => {
+  it('enables JSON tool calling for models flagged for json tool style', async () => {
+    const upstream = await startUpstreamMock({ mode: 'json' })
+    const proxyPort = await findAvailablePort()
     const child = await spawnProxyProcess({
       port: proxyPort,
       baseUrl: `http://127.0.0.1:${upstream.port}`,
-      env: { 
+      env: {
         OPENROUTER_API_KEY: 'testkey',
-        COMPLETION_MODEL: 'google/gemini-2.0-pro-exp-02-05:free',
-        FORCE_TOOL_ERROR: '1' // Feature flag to force error instead of fallback
+        COMPLETION_MODEL: 'deepseek/deepseek-r1',
+        FORCE_PROVIDER: 'openrouter'
       },
     })
 
     try {
       const payload = {
         messages: [
-          { role: 'user', content: 'Use the weather tool' }
+          { role: 'user', content: 'Call the calculator tool.' }
         ],
         tools: [
           {
-            name: 'get_weather',
-            description: 'Get weather',
-            input_schema: { type: 'object' }
+            name: 'calculator',
+            description: 'Performs arithmetic.',
+            input_schema: {
+              type: 'object',
+              properties: {
+                expression: { type: 'string' }
+              }
+            }
           }
         ],
         stream: false,
       }
 
-      // Mock upstream returning 404 for tool requests
-      upstream.responseBody = JSON.stringify({
-        error: {
-          message: 'No endpoints found that support tool use',
-          type: 'invalid_request_error'
-        }
-      })
+      const response = await request(`http://127.0.0.1:${proxyPort}`)
+        .post('/v1/messages')
+        .set('content-type', 'application/json')
+        .send(payload)
+        .expect(200)
+
+      const forwarded = JSON.parse(upstream.received.body)
+      expect(forwarded).toBeTruthy()
+      expect(forwarded.parallel_tool_calls).toBe(false)
+      expect(Array.isArray(forwarded.tools)).toBe(true)
+      expect(forwarded.tool_choice).toEqual({ type: 'auto' })
+      expect(response.body.warnings).toBeUndefined()
+    } finally {
+      await stopChild(child)
+      upstream.server.close()
+    }
+  })
+
+  it('injects fallback text and warning when upstream response is empty', async () => {
+    const upstream = await startUpstreamMock({
+      mode: 'json',
+      jsonResponse: {
+        id: 'chatcmpl-empty',
+        choices: [
+          { message: { role: 'assistant', content: '' }, finish_reason: 'stop' }
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 0 }
+      }
+    })
+    const proxyPort = await findAvailablePort()
+    const child = await spawnProxyProcess({
+      port: proxyPort,
+      baseUrl: `http://127.0.0.1:${upstream.port}`,
+      env: {
+        OPENROUTER_API_KEY: 'testkey',
+        COMPLETION_MODEL: 'anthropic/claude-3.7-sonnet:thinking',
+        FORCE_PROVIDER: 'openrouter'
+      },
+    })
+
+    try {
+      const payload = {
+        messages: [
+          { role: 'user', content: 'Say hello' }
+        ],
+        stream: false,
+      }
 
       const response = await request(`http://127.0.0.1:${proxyPort}`)
         .post('/v1/messages')
         .set('content-type', 'application/json')
         .send(payload)
-        .expect(400)
+        .expect(200)
 
-      // Should return structured error with hint
-      expect(response.body.error).toBeTruthy()
-      expect(response.body.error.type).toBe('tool_unsupported')
-      expect(response.body.error.hint).toContain('does not support tool calling')
-      
+      expect(Array.isArray(response.body.content)).toBe(true)
+      const textBlock = response.body.content.find(block => block.type === 'text')
+      expect(textBlock).toBeTruthy()
+      expect(textBlock.text).toContain('Model response was empty')
+      expect(response.body.warnings).toContain('Model response was empty and a placeholder message was inserted.')
     } finally {
       await stopChild(child)
       upstream.server.close()
