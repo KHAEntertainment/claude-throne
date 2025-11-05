@@ -45,9 +45,11 @@ vi.mock('vscode', () => ({
   }
 }), { virtual: true })
 
-const mockListModels = vi.fn()
+const { mockListModels } = vi.hoisted(() => ({
+  mockListModels: vi.fn(),
+}))
 vi.mock('../src/services/Models', () => ({
-  listModels: mockListModels
+  listModels: mockListModels,
 }))
 
 import * as vscode from 'vscode'
