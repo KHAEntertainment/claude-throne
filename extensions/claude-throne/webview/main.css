@@ -755,8 +755,7 @@ body {
   display: block;
 }
 
-/* Popular Combos Card */
-/* Comment 4: Renamed from popular-combos-card to quick-combos-card for consistency */
+/* Quick Combos Card - renamed from popular-combos-card to match UI terminology and avoid confusion with general "popular" models */
 .quick-combos-card {
   display: none;
 }
