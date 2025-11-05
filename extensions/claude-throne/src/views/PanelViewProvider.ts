@@ -598,24 +598,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const debugMode = cfg.get<boolean>('proxy.debug', false)
 
-    if (provider === 'deepseek' || provider === 'glm') {
-      // Deepseek and GLM use native Anthropic connections where models are managed by Claude Code.
-      // Custom providers with Anthropic-style APIs should still fetch their own model lists.
-      this.post({
-        type: 'models',
-        payload: {
-          models: [{
-            id: 'claude-3-5-sonnet-20241022',
-            name: 'Claude 3.5 Sonnet (Native)',
-            description: 'Anthropic native endpoint - models managed by Claude',
-            provider
-          }],
-          provider,
-          token: sequenceToken
-        }
-      })
-      return
-    }
+    // Removed bypass for Deepseek/GLM to allow dynamic model fetching
 
     let manualCustomBaseUrl: string | undefined
 
@@ -730,6 +713,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       
       // Comment 3: If errorType already set (e.g., from Models.ts timeout), use it; otherwise classify
       if (errorType === 'generic') {
+        // Handle missing/invalid authorization keys with a friendly prompt
+        if (
+          errorStr.includes('401') ||
+          errorStr.includes('403') ||
+          errorStr.includes('unauthorized') ||
+          errorStr.includes('forbidden') ||
+          errorStr.includes('authorization token missing')
+        ) {
+          errorType = 'unauthorized'
+          errorMessage = 'Enter an API key to see models.'
+        } else 
         if (errorStr.includes('timed out') || errorStr.includes('timeout') || err.name === 'AbortError') {
           errorType = 'timeout'
           errorMessage = 'Model list request timed out. You can enter model IDs manually.'
@@ -2045,7 +2039,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
               <input type="checkbox" id="opusPlanCheckbox">
               <label for="opusPlanCheckbox">Enable OpusPlan Mode</label>
               <div style="margin-left: 20px; margin-top: 4px; font-size: 11px; color: var(--vscode-descriptionForeground);">
-                Use the 'opusplan' model identifier in Claude Code while respecting your three-model selections. Your reasoning model maps to Opus tier, completion to Sonnet, and value to Haiku.
+                Automatically assigns your selected reasoning model for planning tasks and your completion model for coding/execution
               </div>
             </div>
             

@@ -150,6 +150,13 @@ I added another custom provider with an anthropic style API Endpoint and while M
 
 _RESOLVED (v1.5.23.1): The bypass logic in `PanelViewProvider.handleListModels` treated every Anthropic-style endpoint as native and returned the hardcoded Claude 3.5 Sonnet model. The bypass now only applies to built-in Deepseek/GLM providers, so custom providers like Minimax fetch their own model lists. Added logging to surface the resolved models endpoint and improved 404 messaging._
 
+_RESOLVED (v1.5.62): Removed Deepseek/GLM bypass entirely. Both providers now fetch actual model lists dynamically via their OpenAI-compatible endpoints:_
+
+- Deepseek models: `https://api.deepseek.com/v1/models` (e.g., `deepseek-chat`, `deepseek-coder`, `deepseek-reasoner`)
+- GLM models: `https://api.z.ai/api/paas/v4/models` (e.g., `glm-4`, `glm-4-plus`, `glm-4-air`)
+
+This aligns them with other providers and allows users to select specific models instead of a hardcoded entry.
+
 5) "Two-Model" function is still listed in several areas but we switched from two model to three-model many versions ago, so that older terminology is confusing and should be updated. 
 
   -------------------------------------
@@ -213,3 +220,11 @@ Roadmap
   - Letta API Support - Use Letta Agents inside Claude-Code
   - Abacus.AI/ChatLLM Support - Use ChatLLM's "RouteLLM" model to automatically route your messages/tasks to the most relevant SOTA model to fulfill it for a single monthly fee instead of traditional API credits.
   - oAuth Authentication for OpenAI Codex, Gemini and Qwen Code, allowing you to leverage your monthly subscription plans for those agents instead of traditional API credits.
+
+
+-------------------------------------
+New Notes: 11/04/2025
+
+  why is it asking me for Deepseek and GLM API Keys again?
+    Seems every time we make a change to a provider it 
+   makes me re-enter the API key. Is this expected?

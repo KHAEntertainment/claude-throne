@@ -363,7 +363,7 @@ describe('PanelViewProvider Configuration Tests', () => {
       mockListModels.mockReset()
     })
 
-    it('bypasses model loading for deepseek and glm providers', async () => {
+    it('fetches models for deepseek and glm providers', async () => {
       const mockCfg = {
         get: vi.fn((key: string, defaultValue?: any) => {
           if (key === 'proxy.debug') return false
@@ -383,15 +383,23 @@ describe('PanelViewProvider Configuration Tests', () => {
           mockListModels.mockClear()
           postSpy.mockClear()
           ;(panelViewProvider as any).currentProvider = provider
+          // Provide mock model ids per provider
+          if (provider === 'deepseek') {
+            mockListModels.mockResolvedValue(['deepseek-chat'])
+          } else {
+            mockListModels.mockResolvedValue(['glm-4'])
+          }
 
           await (panelViewProvider as any).handleListModels(false)
 
-          expect(mockListModels).not.toHaveBeenCalled()
-          expect(postSpy).toHaveBeenCalledTimes(1)
+          expect(mockListModels).toHaveBeenCalled()
+          expect(postSpy).toHaveBeenCalled()
           const payload = postSpy.mock.calls[0][0]
           expect(payload.type).toBe('models')
           expect(payload.payload.provider).toBe(provider)
-          expect(payload.payload.models[0].id).toBe('claude-3-5-sonnet-20241022')
+          // dynamic list: ensure no hardcoded native entry
+          const ids = (payload.payload.models || []).map((m: any) => m.id)
+          expect(ids).not.toContain('claude-3-5-sonnet-20241022')
         }
       } finally {
         (vscode.workspace as any).getConfiguration = originalGetConfiguration
