@@ -382,7 +382,7 @@ async function ensureEndpointKindReady() {
     return null
   }
 
-  if (!negotiationPromise && key) {
+  if (!negotiationPromise) {
     negotiationPromise = negotiateEndpointKind(baseUrl, key)
       .then(result => {
         endpointKind = result.kind
