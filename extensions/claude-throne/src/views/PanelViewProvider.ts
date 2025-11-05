@@ -735,7 +735,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           errorMessage = 'Model list request timed out. You can enter model IDs manually.'
         } else if (errorStr.includes('404')) {
           errorType = 'not_found'
-          const attemptedUrl = err?.attemptedUrl || err?.modelsEndpointUrl || baseUrl
+          const attemptedUrl = err?.attemptedUrl || err?.modelsEndpointUrl || baseUrl || 'the configured endpoint'
           errorMessage = `Model list endpoint returned 404 for ${attemptedUrl}. The provider may not support model listing at this URL. Please verify your base URL is correct or enter model IDs manually.`
         } else if (errorStr.includes('429') || errorStr.includes('rate limit')) {
           errorType = 'rate_limited'
