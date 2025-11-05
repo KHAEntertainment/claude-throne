@@ -387,7 +387,8 @@ export const SaveComboMessageSchema = z.object({
   name: z.string().optional(),
   reasoningModel: z.string().optional(),
   codingModel: z.string().optional(),
-  valueModel: z.string().optional()
+  valueModel: z.string().optional(),
+  providerId: z.string().optional()  // Provider ID to avoid race conditions with currentProvider
 })
 
 /**

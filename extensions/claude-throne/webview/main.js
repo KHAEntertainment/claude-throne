@@ -1374,7 +1374,8 @@
       name: name.trim(),
       reasoningModel: state.reasoningModel,
       codingModel: state.codingModel,
-      valueModel: state.valueModel
+      valueModel: state.valueModel,
+      providerId: state.provider
     });
   }
 
