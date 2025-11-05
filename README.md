@@ -2,7 +2,7 @@
 
 **Universal AI Model Routing for Claude Code** — Use any AI provider (OpenRouter, OpenAI, Together, Deepseek, GLM) with Claude Code and Anthropic-compatible clients.
 
-> **🎉 v1.5.61 — Webview schema guardrails restored + endpoint overrides!** ✨
+> **🎉 v1.5.62 — Enable dynamic model fetching for Deepseek/GLM providers!** ✨
 
 <p align="center">
   <img src="docs/images/thronekeeper-hero.png" alt="Thronekeeper - Universal AI Model Routing" width="800">
