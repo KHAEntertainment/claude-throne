@@ -154,7 +154,7 @@ When modifying files in guarded areas, follow this checklist:
 
 ### Implementation Checks
 - [ ] Provider map uses canonical keys: `{ reasoning, completion, value }`
-- [ ] Storage operations use 'completion' key (never 'coding')
+- [ ] Storage operations use 'completion' key (Note: 'coding' was deprecated in favor of 'completion')
 - [ ] Model loading includes sequence token validation
 - [ ] Event listeners are not duplicated (check cleanup)
 - [ ] Filter input is throttled/debounced
