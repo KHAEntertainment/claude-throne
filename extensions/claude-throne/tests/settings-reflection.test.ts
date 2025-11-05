@@ -13,7 +13,7 @@ const mockConfigValues: Record<string, any> = {
   'provider': 'openrouter',
   'selectedCustomProviderId': '',
   'twoModelMode': false,
-  'threeModelMode': false, // Comment 7: Add threeModelMode to mock config
+  'threeModelMode': false, // Mock threeModelMode for testing three-model mode precedence over twoModelMode (backward compatibility)
   'proxy.port': 3000,
   'proxy.debug': false,
   'customBaseUrl': '',
