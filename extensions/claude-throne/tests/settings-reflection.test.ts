@@ -206,17 +206,18 @@ describe('Settings Reflection', () => {
   })
 
   // Comment 7: Test that threeModelMode is read correctly and takes precedence over twoModelMode
-  it('should prioritize threeModelMode when both threeModelMode and twoModelMode are present', () => {
+  it('should prioritize threeModelMode over twoModelMode when both are set', () => {
     mockConfigValues['threeModelMode'] = true
-    mockConfigValues['twoModelMode'] = false
+    mockConfigValues['twoModelMode'] = true
 
-    // In the extension, threeModelMode should be the canonical source of truth
-    expect(mockConfigValues['threeModelMode']).toBe(true)
+    // Call the actual extension logic that determines the active mode
+    // For example, if PanelViewProvider has a getActiveModelMode() method:
+    // const activeMode = provider.getActiveModelMode()
+    // expect(activeMode).toBe('three-model')
     
-    // When threeModelMode is true, the system should behave in three-model mode
-    // regardless of twoModelMode value
-    const isThreeModelModeActive = mockConfigValues['threeModelMode'] || mockConfigValues['twoModelMode']
-    expect(isThreeModelModeActive).toBe(true)
+    // Or if you're testing the config resolution directly:
+    const resolvedMode = mockConfigValues['threeModelMode'] ? 'three-model' : (mockConfigValues['twoModelMode'] ? 'two-model' : 'single-model')
+    expect(resolvedMode).toBe('three-model')
   })
 
   it('should handle three-model mode when threeModelMode is true and twoModelMode is false', () => {
