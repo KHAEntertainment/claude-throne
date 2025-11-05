@@ -12,9 +12,9 @@
     "openrouter": [
       {
         "name": "OpenRouter Power Combo",
-        "reasoning": "anthropic/claude-3.5-sonnet",
-        "completion": "anthropic/claude-3.5-haiku",
-        "value": "anthropic/claude-3-opus",
+        "reasoning": "deepseek-v3.1-terminus:exacto",
+        "completion": "minimax-m2",
+        "value": "glm-4.6:exacto",
         "description": "Best reasoning with fast completion"
       }
     ],
