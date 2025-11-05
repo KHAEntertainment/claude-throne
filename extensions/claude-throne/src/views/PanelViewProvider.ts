@@ -357,7 +357,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             await this.handleUpdatePort(msg.port)
             break
           case 'saveCombo':
-            await this.handleSaveCombo(msg.name, msg.reasoningModel, msg.codingModel, msg.valueModel)
+            await this.handleSaveCombo(msg.name, msg.reasoningModel, msg.codingModel, msg.valueModel, msg.providerId)
             break
           case 'deleteCombo':
             await this.handleDeleteCombo(msg.index)
@@ -943,8 +943,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.postConfig()
   }
 
-  private async handleSaveCombo(name: string, reasoningModel: string, codingModel: string, valueModel: string) {
+  private async handleSaveCombo(name: string, reasoningModel: string, codingModel: string, valueModel: string, providerId?: string) {
     try {
+      // Use providerId from message to avoid race conditions with this.currentProvider
+      const effectiveProviderId = providerId || this.currentProvider
+      
+      // Log for debugging if providerId doesn't match current provider (potential race condition detected)
+      if (providerId && providerId !== this.currentProvider) {
+        this.log.appendLine(`[handleSaveCombo] Provider mismatch detected: message providerId=${providerId}, currentProvider=${this.currentProvider}. Using providerId from message.`)
+      }
+      
       const config = vscode.workspace.getConfiguration('claudeThrone')
       const savedCombosByProvider = config.get<Record<string, any[]>>('savedCombosByProvider', {})
       const providerCombos = savedCombosByProvider[this.currentProvider] || []
@@ -968,6 +976,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const target = vscode.ConfigurationTarget.Global
       await config.update('savedCombosByProvider', updatedCombosByProvider, target)
       
+      this.log.appendLine(`✅ Saved combo "${name}" for provider: ${effectiveProviderId}`)
       vscode.window.showInformationMessage('Model combo saved successfully')
       this.post({ 
         type: 'combosLoaded', 
