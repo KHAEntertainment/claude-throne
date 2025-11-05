@@ -107,4 +107,4 @@ npm run ext:package  # Creates .vsix in extensions/claude-throne/
 Thronekeeper evolved from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by Max Nowack. While the architecture has been rebuilt, we’re grateful for the inspiration.
 
 **License:** MIT  
-**Version:** 1.5.61
+**Version:** 1.5.62
