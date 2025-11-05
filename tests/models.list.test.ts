@@ -19,6 +19,8 @@ describe('Models.list: normalization and error handling', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.resetModules()
+    vi.doUnmock('undici')
   })
 
   it('normalizes OpenAI-style data[] for Deepseek', async () => {
