@@ -755,8 +755,7 @@ body {
   display: block;
 }
 
-/* Popular Combos Card */
-/* Comment 4: Renamed from popular-combos-card to quick-combos-card for consistency */
+/* Quick Combos Card - renamed from popular-combos-card to align with UI label */
 .quick-combos-card {
   display: none;
 }
