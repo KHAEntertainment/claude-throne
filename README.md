@@ -23,7 +23,7 @@
 2) Install in VS Code
 ```bash
 # Command line
-code --install-extension thronekeeper-1.5.61.vsix
+code --install-extension thronekeeper-1.5.62.vsix
 ```
 
 Or via UI: Extensions (Cmd/Ctrl+Shift+X) → "…" → Install from VSIX…
@@ -107,4 +107,4 @@ npm run ext:package  # Creates .vsix in extensions/claude-throne/
 Thronekeeper evolved from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by Max Nowack. While the architecture has been rebuilt, we’re grateful for the inspiration.
 
 **License:** MIT  
-**Version:** 1.5.61
+**Version:** 1.5.62
