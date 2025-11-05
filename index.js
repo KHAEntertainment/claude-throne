@@ -1033,12 +1033,18 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (!shouldDropTools && !needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools
       if (payload.tool_choice) {
-        openaiPayload.tool_choice = payload.tool_choice
+        // Comment 1: Normalize tool_choice for OpenRouter - use string 'auto' instead of object
+        if (provider === 'openrouter' && typeof payload.tool_choice === 'object' && payload.tool_choice.type === 'auto') {
+          openaiPayload.tool_choice = 'auto'
+        } else {
+          openaiPayload.tool_choice = payload.tool_choice
+        }
       }
       if (enableJsonTools) {
         openaiPayload.parallel_tool_calls = false
         if (!openaiPayload.tool_choice) {
-          openaiPayload.tool_choice = { type: 'auto' }
+          // Comment 1: For OpenRouter, use string 'auto' instead of object format
+          openaiPayload.tool_choice = provider === 'openrouter' ? 'auto' : { type: 'auto' }
         }
       }
     } else if (shouldDropTools && tools.length > 0) {

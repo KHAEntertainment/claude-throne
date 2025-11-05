@@ -335,7 +335,13 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
             break
+          case 'toggleThreeModelMode':
+            // Comment 3: Handle canonical toggleThreeModelMode message
+            await this.handleToggleTwoModelMode(msg.enabled)
+            break
           case 'toggleTwoModelMode':
+            // Comment 3: Handle legacy toggleTwoModelMode message for backward compatibility
+            this.log.appendLine('[Deprecation] toggleTwoModelMode is deprecated, use toggleThreeModelMode')
             await this.handleToggleTwoModelMode(msg.enabled)
             break
           case 'toggleOpusPlan':
@@ -2022,8 +2028,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             <label class="form-label">Model Selection</label>
             
             <div class="two-model-toggle">
-              <input type="checkbox" id="twoModelToggle">
-              <label for="twoModelToggle">Use three models for different task types (Reasoning/Completion/Value)</label>
+              <input type="checkbox" id="threeModelToggle">
+              <label for="threeModelToggle">Use three models for different task types (Reasoning/Completion/Value)</label>
             </div>
             
             <div class="two-model-toggle" style="margin-left: 20px; margin-top: 8px;">

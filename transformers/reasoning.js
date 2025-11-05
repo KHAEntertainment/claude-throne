@@ -29,25 +29,30 @@ async function reverseTransform(response, options = {}) {
   if (response.type === 'content_block_delta') {
     // Check for reasoning in delta
     if (response.delta?.reasoning) {
-      // Convert to thinking_delta format
+      // Comment 4: Omit deprecated 'reasoning' field instead of setting to undefined
+      const { reasoning, ...restDelta } = response.delta;
       return {
         type: 'content_block_delta',
         index: response.index,
         delta: {
+          ...restDelta,
           type: 'thinking_delta',
-          thinking: response.delta.reasoning
+          thinking: reasoning
         }
       };
     }
     
     // Check for reasoning_content in delta (alternative format)
     if (response.delta?.reasoning_content) {
+      // Comment 4: Omit deprecated 'reasoning_content' field instead of setting to undefined
+      const { reasoning_content, ...restDelta } = response.delta;
       return {
         type: 'content_block_delta',
         index: response.index,
         delta: {
+          ...restDelta,
           type: 'thinking_delta',
-          thinking: response.delta.reasoning_content
+          thinking: reasoning_content
         }
       };
     }
@@ -56,23 +61,29 @@ async function reverseTransform(response, options = {}) {
   // Handle content_block_start with reasoning
   if (response.type === 'content_block_start') {
     if (response.content_block?.reasoning) {
+      // Comment 4: Omit deprecated 'reasoning' field instead of setting to undefined
+      const { reasoning, ...restBlock } = response.content_block;
       return {
         type: 'content_block_start',
         index: response.index,
         content_block: {
+          ...restBlock,
           type: 'thinking',
-          thinking: response.content_block.reasoning
+          thinking: reasoning
         }
       };
     }
     
     if (response.content_block?.reasoning_content) {
+      // Comment 4: Omit deprecated 'reasoning_content' field instead of setting to undefined
+      const { reasoning_content, ...restBlock } = response.content_block;
       return {
         type: 'content_block_start',
         index: response.index,
         content_block: {
+          ...restBlock,
           type: 'thinking',
-          thinking: response.content_block.reasoning_content
+          thinking: reasoning_content
         }
       };
     }
@@ -83,16 +94,22 @@ async function reverseTransform(response, options = {}) {
     response.content = response.content.map(block => {
       // Convert reasoning blocks to thinking blocks
       if (block.reasoning) {
+        // Comment 4: Omit deprecated 'reasoning' field instead of setting to undefined
+        const { reasoning, ...rest } = block;
         return {
+          ...rest,
           type: 'thinking',
-          thinking: block.reasoning
+          thinking: reasoning
         };
       }
       
       if (block.reasoning_content) {
+        // Comment 4: Omit deprecated 'reasoning_content' field instead of setting to undefined
+        const { reasoning_content, ...rest } = block;
         return {
+          ...rest,
           type: 'thinking',
-          thinking: block.reasoning_content
+          thinking: reasoning_content
         };
       }
       

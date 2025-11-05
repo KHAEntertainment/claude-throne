@@ -109,8 +109,60 @@ describe('POST /v1/messages (OpenRouter tool style + fallback behavior)', () => 
       expect(forwarded).toBeTruthy()
       expect(forwarded.parallel_tool_calls).toBe(false)
       expect(Array.isArray(forwarded.tools)).toBe(true)
-      expect(forwarded.tool_choice).toEqual({ type: 'auto' })
+      // Comment 1: OpenRouter should receive string 'auto', not object { type: 'auto' }
+      expect(forwarded.tool_choice).toBe('auto')
       expect(response.body.warnings).toBeUndefined()
+    } finally {
+      await stopChild(child)
+      upstream.server.close()
+    }
+  })
+
+  it('normalizes tool_choice object { type: "auto" } to string "auto" for OpenRouter', async () => {
+    const upstream = await startUpstreamMock({ mode: 'json' })
+    const proxyPort = await findAvailablePort()
+    const child = await spawnProxyProcess({
+      port: proxyPort,
+      baseUrl: `http://127.0.0.1:${upstream.port}`,
+      env: {
+        OPENROUTER_API_KEY: 'testkey',
+        COMPLETION_MODEL: 'anthropic/claude-3-5-sonnet',
+        FORCE_PROVIDER: 'openrouter'
+      },
+    })
+
+    try {
+      const payload = {
+        messages: [
+          { role: 'user', content: 'Call a tool.' }
+        ],
+        tools: [
+          {
+            name: 'test_tool',
+            description: 'Test tool',
+            input_schema: {
+              type: 'object',
+              properties: {
+                param: { type: 'string' }
+              }
+            }
+          }
+        ],
+        tool_choice: { type: 'auto' }, // Send object format
+        stream: false,
+      }
+
+      const response = await request(`http://127.0.0.1:${proxyPort}`)
+        .post('/v1/messages')
+        .set('content-type', 'application/json')
+        .send(payload)
+        .expect(200)
+
+      const forwarded = JSON.parse(upstream.received.body)
+      expect(forwarded).toBeTruthy()
+      // Comment 6: OpenRouter should receive string 'auto', not object { type: 'auto' }
+      expect(forwarded.tool_choice).toBe('auto')
+      expect(typeof forwarded.tool_choice).toBe('string')
     } finally {
       await stopChild(child)
       upstream.server.close()

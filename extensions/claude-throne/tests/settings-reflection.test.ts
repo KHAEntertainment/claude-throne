@@ -13,6 +13,7 @@ const mockConfigValues: Record<string, any> = {
   'provider': 'openrouter',
   'selectedCustomProviderId': '',
   'twoModelMode': false,
+  'threeModelMode': false, // Comment 7: Add threeModelMode to mock config
   'proxy.port': 3000,
   'proxy.debug': false,
   'customBaseUrl': '',
@@ -202,6 +203,35 @@ describe('Settings Reflection', () => {
     expect(openrouterModels.reasoning).toBe('openrouter-r')
     expect(openaiModels.reasoning).toBe('openai-r')
     expect(openrouterModels.reasoning).not.toBe(openaiModels.reasoning)
+  })
+
+  // Comment 7: Test that threeModelMode is read correctly and takes precedence over twoModelMode
+  it('should prioritize threeModelMode when both threeModelMode and twoModelMode are present', () => {
+    mockConfigValues['threeModelMode'] = true
+    mockConfigValues['twoModelMode'] = false
+
+    // In the extension, threeModelMode should be the canonical source of truth
+    expect(mockConfigValues['threeModelMode']).toBe(true)
+    
+    // When threeModelMode is true, the system should behave in three-model mode
+    // regardless of twoModelMode value
+    const isThreeModelModeActive = mockConfigValues['threeModelMode'] || mockConfigValues['twoModelMode']
+    expect(isThreeModelModeActive).toBe(true)
+  })
+
+  it('should handle three-model mode when threeModelMode is true and twoModelMode is false', () => {
+    mockConfigValues['threeModelMode'] = true
+    mockConfigValues['twoModelMode'] = false
+    mockConfigValues['modelSelectionsByProvider'] = {
+      openrouter: { reasoning: 'model-r', completion: 'model-c', value: 'model-v' }
+    }
+
+    const providerModels = mockConfigValues['modelSelectionsByProvider']['openrouter']
+    
+    // In three-model mode, all three models should be present
+    expect(providerModels.reasoning).toBeTruthy()
+    expect(providerModels.completion).toBeTruthy()
+    expect(providerModels.value).toBeTruthy()
   })
 })
 

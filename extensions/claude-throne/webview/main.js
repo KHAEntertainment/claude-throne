@@ -515,9 +515,9 @@
       if (e.key === 'Enter') storeAnthropicKey();
     });
 
-    // Two Model Toggle
-    const twoModelToggle = document.getElementById('twoModelToggle');
-    twoModelToggle?.addEventListener('change', onTwoModelToggle);
+    // Three Model Toggle
+    const threeModelToggle = document.getElementById('threeModelToggle');
+    threeModelToggle?.addEventListener('change', onTwoModelToggle);
 
     // OpusPlan Mode Checkbox
     const opusPlanCheckbox = document.getElementById('opusPlanCheckbox');
@@ -720,7 +720,7 @@
       state = { ...state, ...saved };
       
       // Restore UI - provider dropdown will be populated after custom providers load
-      document.getElementById('twoModelToggle').checked = state.twoModelMode;
+      document.getElementById('threeModelToggle').checked = state.twoModelMode;
       updateTwoModelUI();
     }
   }
@@ -1800,7 +1800,10 @@
     saveState();
     
     // Notify backend to update twoModelMode config
-    console.log('[onTwoModelToggle] Sending toggleTwoModelMode message:', state.twoModelMode);
+    console.log('[onTwoModelToggle] Sending toggleThreeModelMode message:', state.twoModelMode);
+    // Comment 2: Post canonical toggleThreeModelMode message
+    vscode.postMessage({ type: 'toggleThreeModelMode', enabled: state.twoModelMode });
+    // Comment 2: Also post legacy toggleTwoModelMode for backward compatibility during transition
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: state.twoModelMode });
   }
 
@@ -2392,7 +2395,7 @@
   function applyCombo(reasoning, coding, value) {
     // Enable three-model mode
     state.twoModelMode = true;
-    document.getElementById('twoModelToggle').checked = true;
+    document.getElementById('threeModelToggle').checked = true;
     updateTwoModelUI();
 
     // Set models
@@ -2412,6 +2415,9 @@
     renderModelList();
 
     // Notify backend that three-model mode is enabled
+    // Comment 2: Post canonical toggleThreeModelMode message
+    vscode.postMessage({ type: 'toggleThreeModelMode', enabled: true });
+    // Comment 2: Also post legacy toggleTwoModelMode for backward compatibility
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: true });
 
     // Comment 5: Send 'completion' instead of 'coding' (canonical storage)
@@ -2823,7 +2829,7 @@
     const previousTwoModelMode = state.twoModelMode;
     if (config.twoModelMode !== undefined) {
       state.twoModelMode = config.twoModelMode;
-      document.getElementById('twoModelToggle').checked = config.twoModelMode;
+      document.getElementById('threeModelToggle').checked = config.twoModelMode;
       if (state.twoModelMode !== previousTwoModelMode) {
         console.log(`[handleConfigLoaded] Two-model mode changed from ${previousTwoModelMode} to ${state.twoModelMode}`);
         updateTwoModelUI();
@@ -2837,7 +2843,7 @@
     } else if (config.reasoningModel && config.completionModel && 
         config.reasoningModel !== config.completionModel) {
       state.twoModelMode = true;
-      document.getElementById('twoModelToggle').checked = true;
+    document.getElementById('threeModelToggle').checked = true;
       if (state.twoModelMode !== previousTwoModelMode) {
         console.log(`[handleConfigLoaded] Two-model mode auto-enabled (was ${previousTwoModelMode})`);
         updateTwoModelUI();

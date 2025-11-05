@@ -30,7 +30,7 @@ Thronekeeper is a powerful VS Code extension that acts as an intelligent proxy, 
 ![Model Selection](images/model-selection.png)
 *Browse and search hundreds of available models with real-time loading*
 
-![Three-Model Mode](images/two-model-mode.png)
+![Three-Model Mode](images/three-model-mode.png)
 *Configure separate models for reasoning, completion, and value tasks*
 
 ## 🚀 Quick Start
