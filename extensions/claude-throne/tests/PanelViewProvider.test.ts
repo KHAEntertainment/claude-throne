@@ -1,4 +1,6 @@
-import { describe, it, beforeEach, expect, vi } from 'vitest'
+import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest'
+
+afterEach(() => vi.restoreAllMocks())
 
 // Mock VS Code API before importing modules
 vi.mock('vscode', () => ({
@@ -429,7 +431,6 @@ describe('PanelViewProvider Configuration Tests', () => {
         expect(returnedIds).toContain('minimax-model')
         expect(returnedIds).not.toContain('claude-3-5-sonnet-20241022')
       } finally {
-        keySpy.mockRestore()
         (vscode.workspace as any).getConfiguration = originalGetConfiguration
       }
     })
@@ -466,7 +467,6 @@ describe('PanelViewProvider Configuration Tests', () => {
         expect(returnedIds).toContain('custom-model')
         expect(returnedIds).not.toContain('claude-3-5-sonnet-20241022')
       } finally {
-        keySpy.mockRestore()
         (vscode.workspace as any).getConfiguration = originalGetConfiguration
       }
     })

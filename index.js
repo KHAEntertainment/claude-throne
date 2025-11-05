@@ -377,8 +377,61 @@ function buildUpstreamHeaders({ provider: providerId, endpointKind: upstreamKind
   return headers
 }
 
+async function ensureEndpointKindReady() {
+  if (provider !== 'custom' || endpointKind !== ENDPOINT_KIND.UNKNOWN) {
+    return null
+  }
+
+  if (!negotiationPromise && key) {
+    negotiationPromise = negotiateEndpointKind(baseUrl, key)
+      .then(result => {
+        endpointKind = result.kind
+        detectionSource = 'probe'
+        lastProbedAt = result.lastProbedAt
+        if (process.env.DEBUG) {
+          console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`)
+        }
+        negotiationPromise = null
+        return result
+      })
+      .catch(err => {
+        console.warn(`[Negotiation] Failed:`, err.message)
+        const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
+        endpointKind = heuristicResult
+        detectionSource = 'heuristic'
+        negotiationPromise = null
+        return { kind: endpointKind }
+      })
+  }
+
+  if (negotiationPromise) {
+    await negotiationPromise
+  }
+
+  if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
+    return {
+      statusCode: 503,
+      body: {
+        error: {
+          message: 'Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.',
+          type: 'negotiation_pending',
+          hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 fastify.get('/v1/models', async (request, reply) => {
   try {
+    const negotiationError = await ensureEndpointKindReady()
+    if (negotiationError) {
+      reply.code(negotiationError.statusCode)
+      return negotiationError.body
+    }
+
     const headers = buildUpstreamHeaders({ provider, endpointKind, key })
 
     const resp = await fetch(`${baseUrl}/v1/models`, { 
@@ -675,47 +728,10 @@ fastify.post('/v1/messages', async (request, reply) => {
     let ttfbMs = null
     
     // Comment 1: Gate requests until endpoint kind is determined for custom providers
-    if (provider === 'custom' && endpointKind === ENDPOINT_KIND.UNKNOWN) {
-      // Start negotiation if not already in progress
-      if (!negotiationPromise && key) {
-        negotiationPromise = negotiateEndpointKind(baseUrl, key)
-          .then(result => {
-            endpointKind = result.kind
-            detectionSource = 'probe'
-            lastProbedAt = result.lastProbedAt
-            if (process.env.DEBUG) {
-              console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`)
-            }
-            negotiationPromise = null
-            return result
-          })
-          .catch(err => {
-            console.warn(`[Negotiation] Failed:`, err.message)
-            // Fallback to heuristic - use sync inference
-            const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
-            endpointKind = heuristicResult
-            detectionSource = 'heuristic'
-            negotiationPromise = null
-            return { kind: endpointKind }
-          })
-      }
-      
-      // Wait for negotiation to complete
-      if (negotiationPromise) {
-        await negotiationPromise
-      }
-      
-      // If still unknown after negotiation attempt, block request
-      if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
-        reply.code(503)
-        return {
-          error: {
-            message: 'Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.',
-            type: 'negotiation_pending',
-            hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
-          }
-        }
-      }
+    const negotiationError = await ensureEndpointKindReady()
+    if (negotiationError) {
+      reply.code(negotiationError.statusCode)
+      return negotiationError.body
     }
     
     const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE
@@ -1632,6 +1648,7 @@ const start = async () => {
     const port = portArg > -1 ? parseInt(process.argv[portArg + 1], 10) : (process.env.PORT || 3000);
     await fastify.listen({ port });
   } catch (err) {
+    console.error('[Startup] fastify.listen failed:', err);
     process.exit(1);
   }
 }
