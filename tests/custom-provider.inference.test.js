@@ -154,6 +154,31 @@ describe('Custom provider endpoint kind inference', () => {
     }
   })
 
+  it('fetches models list for custom Anthropic-style providers (Minimax pattern)', async () => {
+    const proxyPort = 3122
+    const child = await spawnProxyProcess({
+      port: proxyPort,
+      baseUrl: `http://127.0.0.1:${anthropicMockPort}/anthropic`,
+      env: {
+        FORCE_PROVIDER: 'custom',
+        CUSTOM_API_KEY: 'test-key'
+      }
+    })
+
+    try {
+      const res = await request(`http://127.0.0.1:${proxyPort}`)
+        .get('/v1/models')
+        .expect(200)
+
+      expect(Array.isArray(res.body?.data)).toBe(true)
+      const modelIds = (res.body?.data || []).map((m) => m.id)
+      expect(modelIds).toContain('test-model')
+      expect(modelIds).not.toContain('claude-3-5-sonnet-20241022')
+    } finally {
+      await stopChild(child)
+    }
+  })
+
   it('caches probe results', async () => {
     const proxyPort = 3120
     const child = await spawnProxyProcess({

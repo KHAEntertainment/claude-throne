@@ -3,7 +3,7 @@
   "displayName": "Thronekeeper",
   "publisher": "thehive",
   "description": "Configure and run Thronekeeper proxy with secure credential storage and model routing.",
-  "version": "1.5.55",
+  "version": "1.5.61",
   "icon": "images/thronekeeper-logo.jpg",
   "license": "MIT",
   "repository": {
@@ -22,10 +22,17 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "*"
+    "*",
+    "onView:claudeThrone.panel"
   ],
   "contributes": {
     "viewsContainers": {
+      "panel": [
+        {
+          "id": "claudeThronePanel",
+          "title": "Thronekeeper"
+        }
+      ],
       "activitybar": [
         {
           "id": "claudeThrone",
@@ -35,6 +42,13 @@
       ]
     },
     "views": {
+      "claudeThronePanel": [
+        {
+          "id": "claudeThrone.panel",
+          "name": "Thronekeeper",
+          "type": "webview"
+        }
+      ],
       "claudeThrone": [
         {
           "id": "claudeThrone.activity",
@@ -105,217 +119,246 @@
         "title": "Thronekeeper: Check Configuration Health"
       }
     ],
-    "configuration": {
-      "title": "Thronekeeper",
-      "properties": {
-        "claudeThrone.proxy.port": {
-          "type": "number",
-          "default": 3000,
-          "minimum": 1,
-          "maximum": 65535,
-          "markdownDescription": "Port for the bundled proxy server."
-        },
-        "claudeThrone.proxy.debug": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Enable debug logging for the proxy server."
-        },
-        "claudeThrone.proxy.skipHealthCheck": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Skip health check during proxy startup for instant initialization. Enable if experiencing startup delays."
-        },
-        "claudeThrone.proxy.startupTimeoutMs": {
-          "type": "number",
-          "default": 3000,
-          "minimum": 1000,
-          "maximum": 30000,
-          "markdownDescription": "Timeout in milliseconds for waiting for proxy to start listening on port. Default: 3000ms (3 seconds)."
-        },
-        "claudeThrone.proxy.healthTimeoutMs": {
-          "type": "number",
-          "default": 500,
-          "minimum": 100,
-          "maximum": 5000,
-          "markdownDescription": "Timeout in milliseconds for individual health check requests. Default: 500ms."
-        },
-        "claudeThrone.autoApply": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "## Auto-Apply Settings\n\nControl how Thronekeeper applies configuration to Claude Code when the proxy starts.\n\nWhen enabled, the extension writes the proxy URL and model configuration to `.claude/settings.json`."
-        },
-        "claudeThrone.applyToExtensions": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Apply proxy configuration to other known Claude/Anthropic extension settings (e.g., `anthropic.baseUrl`, `claude.baseUrl`). Most users should leave this disabled to avoid polluting VS Code settings. Only enable if you use other Claude extensions that require the base URL to be set in extension settings."
-        },
-        "claudeThrone.applyToTerminal": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Apply ANTHROPIC_BASE_URL to VS Code integrated terminal environment variables (for CLI usage with `claude` or `claude-code` commands). Not needed for the Claude Code extension. Only enable if you use Anthropic's CLI tools in VS Code's integrated terminal."
-        },
-        "claudeThrone.applyScope": {
-          "type": "string",
-          "default": "workspace",
-          "enum": [
-            "workspace",
-            "global"
-          ],
-          "markdownDescription": "Scope at which to apply settings changes (workspace or global)."
-        },
-        "claudeThrone.customEndpointKind": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "openai",
-            "anthropic"
-          ],
-          "markdownDescription": "## Advanced Settings\n\nDetection/override for custom endpoint type. 'openai' uses the proxy. 'anthropic' offers bypass to apply the URL directly to Claude Code."
-        },
-        "claudeThrone.twoModelMode": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "## Model Configuration\n\nEnable three-model mode to use separate models for reasoning, coding, and value tasks.\n\n**Note:** Model selection is now managed through the Thronekeeper panel (View → Thronekeeper)."
-        },
-        "claudeThrone.reasoningModel": {
-          "type": "string",
-          "default": "",
-          "scope": "window",
-          "markdownDescription": "The reasoning model for complex problem-solving tasks (maps to Opus tier in Claude Code)."
-        },
-        "claudeThrone.completionModel": {
-          "type": "string",
-          "default": "",
-          "scope": "window",
-          "markdownDescription": "The coding model for balanced development tasks (maps to Sonnet tier in Claude Code)."
-        },
-        "claudeThrone.valueModel": {
-          "type": "string",
-          "default": "",
-          "scope": "window",
-          "markdownDescription": "The value/efficiency model to use (typically Haiku-tier for fast, cost-effective operations)."
-        },
-        "claudeThrone.savedCombos": {
-          "type": "array",
-          "default": [],
-          "items": {
+    "configuration": [
+      {
+        "title": "Thronekeeper — Proxy Configuration",
+        "properties": {
+          "claudeThrone.proxy.port": {
+            "type": "number",
+            "default": 3000,
+            "minimum": 1,
+            "maximum": 65535,
+            "markdownDescription": "Port for the bundled proxy server. This setting is also managed through the Thronekeeper panel for convenience."
+          },
+          "claudeThrone.proxy.debug": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Enable debug logging for the proxy server. Useful for troubleshooting connection issues."
+          },
+          "claudeThrone.proxy.skipHealthCheck": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Skip health check during proxy startup for instant initialization. Enable if experiencing startup delays or working offline."
+          },
+          "claudeThrone.proxy.startupTimeoutMs": {
+            "type": "number",
+            "default": 3000,
+            "minimum": 1000,
+            "maximum": 30000,
+            "markdownDescription": "Timeout in milliseconds for waiting for proxy to start listening on port. Increase if you see startup timeout errors. Default: 3000ms (3 seconds)."
+          },
+          "claudeThrone.proxy.healthTimeoutMs": {
+            "type": "number",
+            "default": 500,
+            "minimum": 100,
+            "maximum": 5000,
+            "markdownDescription": "Timeout in milliseconds for individual health check requests. Increase if health checks fail on slow networks. Default: 500ms."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Provider Selection",
+        "properties": {
+          "claudeThrone.provider": {
+            "type": "string",
+            "default": "openrouter",
+            "enum": [
+              "openrouter",
+              "openai",
+              "together",
+              "deepseek",
+              "glm",
+              "custom"
+            ],
+            "enumDescriptions": [
+              "OpenRouter: Access to 200+ models from multiple providers",
+              "OpenAI: Direct access to GPT models",
+              "Together AI: Fast inference for open-source models",
+              "Deepseek: Native Anthropic-compatible connection",
+              "GLM: Native Anthropic-compatible connection (Zhipu AI)",
+              "Custom: Configure your own OpenAI-compatible endpoint"
+            ],
+            "scope": "window",
+            "markdownDescription": "Select your AI provider. This is the primary setting you'll configure.\n\n**Recommended:** Use the Thronekeeper panel (View → Thronekeeper) for a visual interface to manage providers and API keys.\n\nCustom providers configured through the panel will appear in this dropdown automatically."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Model Configuration",
+        "properties": {
+          "claudeThrone.twoModelMode": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Enable three-model mode to use separate models for reasoning, completion, and value tasks.\n\n**Recommended:** Manage model selection through the Thronekeeper panel for a better experience."
+          },
+          "claudeThrone.opusPlanMode": {
+            "type": "boolean",
+            "default": false,
+            "scope": "window",
+            "markdownDescription": "Enable OpusPlan mode to use the 'opusplan' model identifier in Claude Code while respecting your three-model selections for tier mappings. This mode sets `ANTHROPIC_MODEL: 'opusplan'` and maps your reasoning model to OPUS tier, completion model to SONNET tier, and value model to HAIKU tier. Only available when three-model mode is enabled."
+          },
+          "claudeThrone.reasoningModel": {
+            "type": "string",
+            "default": "",
+            "scope": "window",
+            "markdownDescription": "Internal: The reasoning model for complex problem-solving tasks (maps to Opus tier in Claude Code). Managed through the Thronekeeper panel. Used for configuration hydration when starting the proxy."
+          },
+          "claudeThrone.completionModel": {
+            "type": "string",
+            "default": "",
+            "scope": "window",
+            "markdownDescription": "Internal: The completion model for balanced development tasks (maps to Sonnet tier in Claude Code). Managed through the Thronekeeper panel. Used for configuration hydration when starting the proxy."
+          },
+          "claudeThrone.valueModel": {
+            "type": "string",
+            "default": "",
+            "scope": "window",
+            "markdownDescription": "Internal: The value/efficiency model for fast operations (maps to Haiku tier in Claude Code). Managed through the Thronekeeper panel. Used for configuration hydration when starting the proxy."
+          },
+          "claudeThrone.savedCombosByProvider": {
             "type": "object",
+            "default": {},
+            "scope": "application",
+            "markdownDescription": "Internal: Saved model combos organized by provider. Managed through the Thronekeeper panel's 'Save Model Combo' feature. Do not edit manually."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Auto-Apply Settings",
+        "properties": {
+          "claudeThrone.autoApply": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Control how Thronekeeper applies configuration to Claude Code when the proxy starts.\n\nWhen enabled, the extension writes the proxy URL and model configuration to `.claude/settings.json` automatically."
+          },
+          "claudeThrone.applyToExtensions": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Apply proxy configuration to other known Claude/Anthropic extension settings (e.g., `anthropic.baseUrl`, `claude.baseUrl`).\n\n**Recommendation:** Most users should leave this disabled to avoid polluting VS Code settings. Only enable if you use other Claude extensions that require the base URL to be set in extension settings."
+          },
+          "claudeThrone.applyToTerminal": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Apply ANTHROPIC_BASE_URL to VS Code integrated terminal environment variables (for CLI usage with `claude` or `claude-code` commands).\n\n**Note:** Not needed for the Claude Code extension. Only enable if you use Anthropic's CLI tools in VS Code's integrated terminal."
+          },
+          "claudeThrone.applyScope": {
+            "type": "string",
+            "default": "workspace",
+            "enum": [
+              "workspace",
+              "global"
+            ],
+            "markdownDescription": "Scope at which to apply settings changes (workspace or global)."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Claude Code Environment",
+        "properties": {
+          "claudeThrone.claudeCode.apiTimeoutMs": {
+            "type": "number",
+            "default": 3000000,
+            "markdownDescription": "API timeout in milliseconds for Claude Code requests. Increase if you experience timeout errors with long-running operations. Default: 3000000 (50 minutes)."
+          },
+          "claudeThrone.claudeCode.disableNonessentialTraffic": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Disable non-essential traffic in Claude Code (telemetry, analytics, etc.). When enabled, sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in `.claude/settings.json`. Useful for privacy or bandwidth conservation."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Advanced Settings",
+        "properties": {
+          "claudeThrone.customEndpointKind": {
+            "type": "string",
+            "default": "auto",
+            "enum": [
+              "auto",
+              "openai",
+              "anthropic"
+            ],
+            "markdownDescription": "⚠️ **Warning:** These settings are for advanced users only. Incorrect configuration may break provider connectivity.\n\nEndpoint type detection/override for custom providers. 'auto' detects automatically, 'openai' uses the proxy, 'anthropic' offers direct bypass to Claude Code. Most users should leave this on 'auto'."
+          },
+          "claudeThrone.customEndpointOverrides": {
+            "type": "object",
+            "default": {},
+            "markdownDescription": "Internal: Manual endpoint type overrides per URL. Used for providers that don't auto-detect correctly. Managed through the Thronekeeper panel. Do not edit manually."
+          }
+        }
+      },
+      {
+        "title": "Thronekeeper — Internal State",
+        "properties": {
+          "claudeThrone.customProviders": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "baseUrl": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "baseUrl",
+                "id"
+              ]
+            },
+            "scope": "window",
+            "markdownDescription": "Internal: Saved custom provider configurations. Each provider can have its own name, base URL, and API key. Managed automatically by the Thronekeeper panel. Do not edit manually."
+          },
+          "claudeThrone.selectedCustomProviderId": {
+            "type": "string",
+            "default": "",
+            "scope": "window",
+            "markdownDescription": "Internal: Selected custom provider ID when provider is set to 'custom'. Managed automatically by the Thronekeeper panel. Do not edit manually."
+          },
+          "claudeThrone.customBaseUrl": {
+            "type": "string",
+            "default": "",
+            "scope": "window",
+            "markdownDescription": "Internal: Custom endpoint URL for custom provider (OpenAI-compatible API). Managed automatically by the Thronekeeper panel. Do not edit manually."
+          },
+          "claudeThrone.anthropicDefaults": {
+            "type": "object",
+            "default": {},
             "properties": {
-              "name": {
+              "opus": {
                 "type": "string"
               },
-              "reasoning": {
+              "sonnet": {
                 "type": "string"
               },
-              "completion": {
-                "type": "string"
-              },
-              "value": {
+              "haiku": {
                 "type": "string"
               }
-            }
+            },
+            "scope": "application",
+            "markdownDescription": "Internal: Cached Anthropic default models. Updated automatically when you store an Anthropic API key. Used for fallback model suggestions. Do not edit manually."
           },
-          "scope": "window",
-          "markdownDescription": "## Saved Configurations\n\nManage your saved model combos and custom providers through the Thronekeeper panel.\n\nThese are automatically saved when you use the 'Save Model Combo' feature."
-        },
-        "claudeThrone.customProviders": {
-          "type": "array",
-          "default": [],
-          "items": {
+          "claudeThrone.anthropicDefaultsTimestamp": {
+            "type": "number",
+            "default": 0,
+            "scope": "application",
+            "markdownDescription": "Internal: Timestamp when Anthropic defaults were last refreshed. Used to determine when to re-fetch default models. Do not edit manually."
+          },
+          "claudeThrone.modelSelectionsByProvider": {
             "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "baseUrl": {
-                "type": "string"
-              },
-              "id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "baseUrl",
-              "id"
-            ]
-          },
-          "scope": "window",
-          "markdownDescription": "Saved custom provider configurations. Each provider can have its own name, base URL, and API key. Manage these through the Thronekeeper panel."
-        },
-        "claudeThrone.provider": {
-          "type": "string",
-          "default": "openrouter",
-          "enum": [
-            "openrouter",
-            "openai",
-            "together",
-            "deepseek",
-            "glm",
-            "custom"
-          ],
-          "scope": "window",
-          "markdownDescription": "## Provider Configuration\n\nSelect your AI provider from the dropdown. Saved custom providers will appear here automatically.\n\n**Note:** Provider selection and API keys are now managed through the Thronekeeper panel (View → Thronekeeper)."
-        },
-        "claudeThrone.selectedCustomProviderId": {
-          "type": "string",
-          "default": "",
-          "scope": "window",
-          "markdownDescription": "Selected custom provider ID when provider is set to 'custom'."
-        },
-        "claudeThrone.customBaseUrl": {
-          "type": "string",
-          "default": "",
-          "scope": "window",
-          "markdownDescription": "Custom endpoint URL for custom provider (OpenAI-compatible API)."
-        },
-        "claudeThrone.anthropicDefaults": {
-          "type": "object",
-          "default": {},
-          "properties": {
-            "opus": {
-              "type": "string"
-            },
-            "sonnet": {
-              "type": "string"
-            },
-            "haiku": {
-              "type": "string"
-            }
-          },
-          "scope": "application",
-          "markdownDescription": "## Advanced Settings\n\nCached Anthropic default models (internal use). Updated when you store an Anthropic API key."
-        },
-        "claudeThrone.anthropicDefaultsTimestamp": {
-          "type": "number",
-          "default": 0,
-          "scope": "application",
-          "markdownDescription": "Timestamp when Anthropic defaults were last refreshed (internal use)."
-        },
-        "claudeThrone.modelSelectionsByProvider": {
-          "type": "object",
-          "default": {},
-          "scope": "window",
-          "markdownDescription": "Provider-specific model selections (internal use). Maps provider IDs to selected reasoning, completion, and value models."
-        },
-        "claudeThrone.customEndpointOverrides": {
-          "type": "object",
-          "default": {},
-          "markdownDescription": "Manual endpoint type overrides per URL (internal use)."
-        },
-        "claudeThrone.claudeCode.apiTimeoutMs": {
-          "type": "number",
-          "default": 3000000,
-          "markdownDescription": "## Claude Code Environment Variables\n\nAPI timeout in milliseconds for Claude Code requests. Default: 3000000 (50 minutes)."
-        },
-        "claudeThrone.claudeCode.disableNonessentialTraffic": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Disable non-essential traffic in Claude Code. When enabled, sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 in `.claude/settings.json`."
+            "default": {},
+            "scope": "window",
+            "markdownDescription": "Internal: Provider-specific model selections. Maps provider IDs to selected reasoning, completion, and value models. Managed automatically by the Thronekeeper panel. Do not edit manually."
+          }
         }
       }
-    }
+    ]
   },
   "scripts": {
     "bundle:proxy": "node ./scripts/bundle-proxy.mjs",

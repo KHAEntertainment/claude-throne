@@ -13,6 +13,8 @@ import * as path from 'path'
  *    - Runtime config for Claude Code extension/CLI
  *    - Always managed when autoApply: true (default)
  *    - Purpose: Configure Claude Code to use the proxy
+ *    - Supports OpusPlan mode: writes ANTHROPIC_MODEL='opusplan' when enabled
+ *      via claudeThrone.opusPlanMode configuration
  * 
  * Terminal env vars in .vscode/settings.json are OPTIONAL and disabled by default.
  * Most users should NOT have terminal env vars - they're only for CLI usage in integrated terminal.

@@ -2,10 +2,10 @@
 
 Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provides universal AI model routing for Claude Code and other Anthropic-compatible clients. It maintains the Anthropic-style API surface while intelligently routing to OpenAI-compatible providers, with a focus on enhanced authentication, provider ergonomics, and developer experience.
 
-> **🎉 v1.5.55 - Webview schema guardrails restored + endpoint overrides!** ✨  
+> **🎉 v1.5.61 - Webview schema guardrails restored + endpoint overrides!** ✨  
 > Fixes the Thronekeeper panel regression introduced by development guardrails and adds bundled endpoint override validation.
 
-**Version 1.5.55 - Production Ready** ✅
+**Version 1.5.61 - Production Ready** ✅
 
 <p align="center">
   <img src="docs/images/thronekeeper-hero.png" alt="Thronekeeper - Universal AI Model Routing" width="800">
@@ -18,7 +18,7 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
 - **Multi-Provider Support**: Configure OpenRouter, OpenAI, Together, Deepseek, GLM, and custom providers
 - **Anthropic-Native Providers**: Deepseek and GLM bypass proxy and connect directly as Anthropic-compatible endpoints
 - **Secure Credential Storage**: Integration with VS Code secrets API and optional Python backend
-- **Two-Model Mode**: Separate reasoning and execution models for optimal performance
+- **Three-Model Mode**: Separate reasoning, completion, and value models for optimal performance
 - **Model Management**: Search, filter, and save custom model combinations
 - **Proxy Lifecycle**: Start, stop, and monitor proxy status from the extension
 - **Claude Code Integration**: Automatic configuration management with workspace/global scope
@@ -27,7 +27,7 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
 - **Smart Provider Detection**: Automatically detects OpenRouter, OpenAI, Together AI, and custom endpoints
 - **Anthropic-Native Direct Connect**: Deepseek and GLM connect directly without the proxy
 - **Intelligent API Key Resolution**: Context-aware key selection with provider-specific fallbacks
-- **Model Selection Logic**: Support for separate reasoning and execution models
+- **Model Selection Logic**: Support for separate reasoning, completion, and value models
 - **Debug Endpoint**: `/v1/debug/echo` for request inspection and troubleshooting
 - **Comprehensive Testing**: Full test suite covering all functionality
 
@@ -38,13 +38,117 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
 - **FastAPI Service**: RESTful API for credential management and proxy control
 - **Health Monitoring**: Provider status checking and validation
 
+### 🔄 Transformer System
+- **Model-Specific Adaptations**: Intelligent request/response transformations per model
+- **Tool Calling Optimization**: Automatic tool_choice configuration for better tool usage
+- **Reasoning Processing**: Handles chain-of-thought reasoning output from models like Deepseek R1
+- **Error Tolerance**: Repairs malformed tool calls and validates schemas
+- **Token Management**: Enforces max_tokens limits to prevent truncated responses
+- **Pipeline Architecture**: Inspired by [claude-code-router](https://github.com/anthropics/claude-code-router), with bidirectional transformers
+
+#### Built-in Transformers
+
+**`tooluse`** - Tool Calling Optimizer
+- Automatically sets `tool_choice: 'auto'` when tools are available
+- Helps models that support tool calling but need explicit guidance
+- Applied to models like `inclusionai/ring-1t` for improved MCP tool visibility
+
+**`enhancetool`** - Error Tolerance
+- Validates and adds default values for tool schemas
+- Repairs malformed JSON in tool call arguments
+- Provides fallback structures when tool calls are invalid
+- Essential for models with inconsistent tool call formatting
+
+**`reasoning`** - Reasoning Content Processor
+- Processes `reasoning_content` and `delta.reasoning` fields
+- Converts various reasoning formats to Anthropic's `thinking_delta` events
+- Handles chain-of-thought output from models like Deepseek R1, Qwen QwQ
+- Works in both streaming and non-streaming modes
+
+**`maxtoken`** - Token Limit Enforcer
+- Sets default `max_tokens` when not specified
+- Caps token limits to prevent truncation
+- Useful for models with non-standard token limits
+- Example: Deepseek Reasoner uses `max_tokens: 65536`
+
+#### Configuring Transformers
+
+Transformers are configured per model in `models-capabilities.json`:
+
+```json
+{
+  "transformers": {
+    "openrouter": {
+      "inclusionai/ring-1t": ["tooluse", "enhancetool"],
+      "/deepseek[-_]?reasoner/i": ["reasoning", "tooluse"],
+      "/.*thinking.*/i": ["reasoning"]
+    },
+    "deepseek": {
+      "/^deepseek[-_]?reasoner/i": ["reasoning", ["maxtoken", {"max_tokens": 65536}]]
+    }
+  }
+}
+```
+
+**Pattern Matching:**
+- Exact model names: `"inclusionai/ring-1t"`
+- Regex patterns: `"/deepseek[-_]?reasoner/i"`
+- Wildcards: `"*"` matches all providers
+- Provider-specific rules override wildcards
+
+**Transformer Options:**
+- String form: `"tooluse"` (no options)
+- Tuple form: `["maxtoken", {"max_tokens": 65536}]` (with options)
+
+#### Pipeline Execution
+
+Transformers are applied in two stages:
+
+1. **Request Pipeline** (before sending to provider):
+   - Transformers applied in the order specified
+   - Modifies request payload (tools, max_tokens, etc.)
+   - Example: `tooluse` sets tool_choice, `maxtoken` enforces limits
+
+2. **Response Pipeline** (before returning to client):
+   - Transformers applied in **reverse order**
+   - Modifies response content (reasoning blocks, tool calls, etc.)
+   - Example: `reasoning` converts delta.reasoning to thinking_delta
+
+**Debug Logging:**
+```bash
+DEBUG=1 npm start
+# Logs transformer application and results
+```
+
+#### Troubleshooting with Transformers
+
+**Problem: MCP tools not being used**
+- Check if model needs `tooluse` transformer
+- Verify tool definitions in request
+- Enable DEBUG logging to see tool_choice being set
+
+**Problem: Reasoning output not showing**
+- Add `reasoning` transformer for your model pattern
+- Check if model uses `reasoning_content` vs `delta.reasoning`
+- Verify streaming vs non-streaming response handling
+
+**Problem: Truncated responses**
+- Add `maxtoken` transformer with appropriate limit
+- Check provider's max token support
+- Verify request includes sufficient max_tokens
+
+**Problem: Malformed tool calls**
+- Add `enhancetool` transformer
+- Check tool schema definitions
+- Review DEBUG logs for parsing errors
+
 ## Installation & Usage
 
 ### 🚀 VS Code Extension (Recommended)
 
 1. **Install the extension** from the VS Code marketplace or install the `.vsix` file:
    ```bash
-   code --install-extension thronekeeper-1.5.55.vsix
+   code --install-extension thronekeeper-1.5.61.vsix
    ```
 
 2. **Open the Thronekeeper panel**:
@@ -61,9 +165,9 @@ Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provi
    - Click "Start Your AI Throne" in the panel
    - The extension will automatically configure Claude Code if enabled
 
-5. **Two-Model Mode** (Advanced):
+5. **Three-Model Mode** (Advanced):
    - Enable in extension settings (`claudeThrone.twoModelMode`)
-   - Set separate reasoning and execution models for optimal performance
+   - Set separate reasoning, completion, and value models for optimal performance
 
 ### Quick Setup Examples
 
@@ -89,6 +193,13 @@ Connect to any OpenAI-compatible endpoint:
 4. Enter model IDs manually or load from endpoint
 5. Start proxy
 
+### Troubleshooting Anthropic-Compatible Custom Providers
+
+- **Supported providers:** Anthropic-compatible APIs like Moonshot/Kimi (`https://api.moonshot.ai/anthropic/v1/messages`) and Minimax (`https://api.minimax.io/anthropic`) now load models automatically. Configure them as saved custom providers or via the generic `custom` slot.
+- **Automatic models endpoint resolution:** The extension rewrites Anthropic-style bases to the correct models list URL. Example: `https://api.minimax.io/anthropic` → `https://api.minimax.io/v1/models` before fetching.
+- **When a 404 appears:** Check the exact base URL and ensure it matches the provider documentation. If the upstream does not expose a models list, you can still enter model IDs manually in the panel.
+- **Native Anthropic providers:** Deepseek and GLM remain native connections handled by Claude Code; they intentionally bypass remote model fetching and surface the built-in Claude model entry.
+
 ## Origins & Attribution
 
 Thronekeeper was initially forked from [anthropic-proxy](https://github.com/maxnowack/anthropic-proxy) by [Max Nowack](https://github.com/maxnowack) — a clean, focused CLI tool for proxying Anthropic API requests to OpenRouter. We're deeply grateful for Max's foundational work, which inspired this project.
@@ -101,7 +212,7 @@ Thronekeeper was initially forked from [anthropic-proxy](https://github.com/maxn
 | **Providers** | OpenRouter only | OpenRouter, OpenAI, Together, Deepseek, GLM, custom endpoints |
 | **Security** | Environment variables only | VS Code SecretStorage + optional Python keyring backend |
 | **UI** | Command-line only | Modern webview panel with real-time model loading |
-| **Model Support** | Single model | Two-model mode (reasoning + execution) |
+| **Model Support** | Single model | Three-model mode (reasoning + completion + value) |
 | **Testing** | None | Comprehensive test suite |
 | **Configuration** | Environment variables | Workspace/global settings, saved combinations |
 
@@ -115,12 +226,95 @@ Thank you, Max! 🙏
 
 ## Current Status
 
-- **Version:** 1.5.55 (Production Ready)
+- **Version:** 1.5.61 (Production Ready)
 - **VS Code Extension:** ✅ Fully functional with modern React webview
 - **Python Backend:** ✅ Complete ct_secretsd service with secure storage
 - **Core Proxy:** ✅ Enhanced with smart key resolution and debugging
 - **Testing:** ✅ Comprehensive test suite
 - **Documentation:** ✅ User guides and API documentation
+
+## 🗺️ Roadmap
+
+Thronekeeper is actively evolving with community-driven features and enhancements. The following features are planned additions to expand functionality and improve the developer experience. These are aspirational goals without specific release timelines, and we welcome feedback and contributions from the community.
+
+### Multiple Provider Support (Per-Model)
+
+**Description:** Enable using different providers for each model role, allowing you to mix and match providers based on your specific needs.
+
+**Benefits:**
+- Optimize for cost by using free models where appropriate
+- Minimize latency by selecting geographically closer providers
+- Maximize quality by choosing the best provider for each task type
+
+**Status:** Coming Soon
+
+### Letta API Support
+
+**Description:** Integration with Letta (formerly MemGPT) for memory-augmented AI agents with persistent context across sessions.
+
+**Benefits:**
+- Long-term memory retention beyond context window limits
+- Seamless continuation of conversations across multiple sessions
+- Enhanced agent capabilities with stateful interactions
+
+**Status:** Coming Soon
+
+### Abacus.AI / ChatLLM Support
+
+**Description:** Native support for Abacus.AI and ChatLLM Team endpoints, providing access to enterprise-grade models.
+
+**Benefits:**
+- Access to specialized enterprise models
+- Team collaboration features and shared configurations
+- Advanced model training and fine-tuning capabilities
+
+**Status:** Coming Soon
+
+### OAuth Authentication
+
+**Description:** OAuth 2.0 authentication flow support for providers that require browser-based authorization.
+
+**Supported Providers:**
+- OpenAI Codex
+- Google Gemini
+- Alibaba Qwen Code
+
+**Benefits:**
+- Seamless authentication without manual API key management
+- Automatic token refresh and session management
+- Enhanced security with time-limited access tokens
+
+**Status:** Coming Soon
+
+### Example: Multi-Provider Configuration
+
+Here's a preview of how multi-provider configuration might look when implemented:
+
+```json
+{
+  "claudeThrone.multiProviderMode": true,
+  "claudeThrone.modelProviders": {
+    "reasoning": {
+      "provider": "openrouter",
+      "model": "deepseek/deepseek-r1"
+    },
+    "completion": {
+      "provider": "openai",
+      "model": "gpt-4o"
+    },
+    "value": {
+      "provider": "together",
+      "model": "meta-llama/llama-3.1-8b-instruct"
+    }
+  }
+}
+```
+
+> **Note:** This configuration format is subject to change during implementation.
+
+### Community Feedback Welcome
+
+The roadmap is shaped by user needs and community contributions. If you have feature requests, use cases, or feedback on these planned enhancements, please open an issue on our [GitHub repository](https://github.com/KHAEntertainment/thronekeeper/issues). We're committed to building features that solve real problems for developers working with AI models.
 
 ## Configuration Reference
 
@@ -172,10 +366,11 @@ Reasoning: deepseek/deepseek-r1
 Completion: deepseek/deepseek-r1
 ```
 
-#### Balanced Two-Model Setup (Recommended)
+#### Balanced Three-Model Setup (Recommended)
 ```text
 Reasoning: deepseek/deepseek-r1
 Completion: qwen/qwen-2.5-coder-32b-instruct
+Value: google/gemini-2.0-flash-exp:free
 ```
 
 #### Budget-Friendly Setup

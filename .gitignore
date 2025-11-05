@@ -10,6 +10,12 @@ node_modules/
 extensions/claude-throne/out/
 extensions/claude-throne/webview/dist/
 extensions/claude-throne/*.vsix
+.vscode/
+.claude/
+.letta/
+claude-throne.code-workspace
+opencodetmp/
+.traycer/
 
 # Archive and compiled artifacts
 .archive/

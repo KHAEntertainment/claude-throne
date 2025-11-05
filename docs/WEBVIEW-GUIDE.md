@@ -50,18 +50,19 @@ When "Custom Provider" is selected, an additional field appears:
 
 ### 3. Model Configuration
 
-#### Two-Model Mode
+#### Three-Model Mode
 **Location**: Toggle switch in model section  
-**Purpose**: Use different models for reasoning vs execution
+**Purpose**: Use different models for reasoning, completion, and value tasks
 
 **When Disabled**: Single model handles all requests  
-**When Enabled**: Separate models for:
+**When Enabled**: Three specialized models for:
 - **Reasoning Model**: Complex analysis, thinking tasks
-- **Execution Model**: Fast completion, code generation
+- **Completion Model**: Code generation, balanced development tasks
+- **Value Model**: Fast operations, cost-effective tasks
 
 #### Model Selection
 **Primary Model Dropdown**: Main model for most operations  
-**Secondary Model Dropdown**: Appears when two-model mode is enabled
+**Completion and Value Model Dropdowns**: Appear when three-model mode is enabled
 
 **Features**:
 - **Real-time Loading**: Fetches latest models from provider
@@ -106,8 +107,8 @@ When "Custom Provider" is selected, an additional field appears:
 **Purpose**: Save and reuse your favorite model pairings
 
 **How to Use**:
-1. Configure your preferred reasoning and execution models
-2. Click "Save Combination" (appears when two models are selected)
+1. Configure your preferred reasoning, completion, and value models
+2. Click "Save Combination" (appears when three models are selected)
 3. Enter a name for your combination
 4. Access saved combinations from the dropdown
 
@@ -116,8 +117,8 @@ When "Custom Provider" is selected, an additional field appears:
 
 **Featured Pairings**:
 - **The Free Genius Combo**: DeepSeek reasoning + Qwen coding
-- **Gemini Lightning**: 2M token context with fast execution
-- **Premium Powerhouse**: OpenAI o1 reasoning + GPT-4o execution
+- **Gemini Lightning**: 2M token context with fast operations
+- **Premium Powerhouse**: OpenAI o1 reasoning + GPT-4o completion
 
 ### Claude Code Integration
 **Automatic Configuration**: When enabled, the extension automatically updates your Claude Code configuration
@@ -186,7 +187,7 @@ Access via: File → Preferences → Settings → Extensions → Claude Throne
 - `claudeThrone.proxy.port`: Proxy server port (default: 3000)
 - `claudeThrone.proxy.debug`: Enable debug logging
 - `claudeThrone.autoApply`: Auto-configure Claude Code
-- `claudeThrone.twoModelMode`: Enable two-model mode by default
+- `claudeThrone.twoModelMode`: Enable three-model mode by default (separate reasoning, completion, and value models)
 
 **Advanced Settings**:
 - `claudeThrone.applyScope`: Workspace vs global configuration
@@ -203,7 +204,7 @@ Access via: File → Preferences → Settings → Extensions → Claude Throne
 
 ### 2. Model Selection
 - Start with free models to test configurations
-- Use two-model mode for optimal performance
+- Use three-model mode for optimal performance
 - Consider context window size for your use case
 - Check model availability and pricing
 

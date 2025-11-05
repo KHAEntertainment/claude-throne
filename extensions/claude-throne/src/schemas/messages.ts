@@ -370,7 +370,17 @@ export const RevertApplyMessageSchema = z.object({
 export type ProxyControlMessage = z.infer<typeof ProxyControlMessageSchema>
 
 /**
- * Toggle two-model mode message
+ * Toggle three-model mode message (canonical)
+ */
+export const ToggleThreeModelModeMessageSchema = z.object({
+  type: z.literal('toggleThreeModelMode'),
+  enabled: z.boolean()
+})
+
+export type ToggleThreeModelModeMessage = z.infer<typeof ToggleThreeModelModeMessageSchema>
+
+/**
+ * Toggle two-model mode message (legacy alias)
  */
 export const ToggleTwoModelModeMessageSchema = z.object({
   type: z.literal('toggleTwoModelMode'),
@@ -378,6 +388,16 @@ export const ToggleTwoModelModeMessageSchema = z.object({
 })
 
 export type ToggleTwoModelModeMessage = z.infer<typeof ToggleTwoModelModeMessageSchema>
+
+/**
+ * Toggle OpusPlan mode message
+ */
+export const ToggleOpusPlanMessageSchema = z.object({
+  type: z.literal('toggleOpusPlan'),
+  enabled: z.boolean()
+})
+
+export type ToggleOpusPlanMessage = z.infer<typeof ToggleOpusPlanMessageSchema>
 
 /**
  * Save combo message
@@ -485,7 +505,9 @@ export const WebviewToExtensionMessageSchema = z.union([
   ProxyControlMessageSchema,
   StopProxyMessageSchema,
   RevertApplyMessageSchema,
+  ToggleThreeModelModeMessageSchema,
   ToggleTwoModelModeMessageSchema,
+  ToggleOpusPlanMessageSchema,
   SaveComboMessageSchema,
   DeleteComboMessageSchema,
   SaveCustomProviderMessageSchema,

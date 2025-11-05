@@ -1,29 +1,9 @@
-Notes - v1.5.23 - 1.5.24
+Notes - v1.5.23 - 1.5.55
 --------------------------------
 Debug Issues - High Priority:
 
-1) OpenAI Models still have issues with max_tokens parameter. They need to be changed to max_completion_tokens: 
-
-'''
-bbrenner@MacBookPro claude-throne % claude
-
- ▐▛███▜▌   Claude Code v2.0.28
-▝▜█████▛▘  gpt-5 · Claude Max
-  ▘▘ ▝▝    /…/claude-throne
-
-> what is todays date? 
-  ⎿ ⧉ Selected 9 lines from 
-    .claude/settings.json in Cursor
-  ⎿ API Error: 400 
-    {"error":{"message":"Unsupported parameter:
-     'max_tokens' is not supported with this 
-    model. Use 'max_completion_tokens' instead.
-    ","type":"invalid_request_error","param":"m
-    ax_tokens","code":"unsupported_parameter"}}
-'''
-Once this change is made, we need to test OpenAI models in general to ensure other functions work as expected.
-
-2) Openrouter Models still have inconsistent performance. Some models manage to show full output. Others show truncated output or portions of their reasoning/chain-of-thought instead of the true reply. Tool usage varies by model as well. Even models that generally excel at tool usage have trouble here. 
+1) Openrouter Models still have inconsistent performance. Some models manage to show full output. Others show truncated output or portions of their reasoning/chain-of-thought instead of the true reply. Tool usage varies by model as well. Even models that generally excel at tool usage have trouble here. 
+2) 
 Short example session
 '''
  /model opusplan 
@@ -166,14 +146,16 @@ This proxy project which is specifically intended for use with openrouter in cla
 When a provider is selected and the model list doesn't auto populate, the form to manually create models is shown. When you do this, you get a "model saved successfully" message but the model does not show up in the list or anywhere else to actually select for that provider. 
 
 4) Custom Anthropic Providers may still be glitchy in Webview Panel. 
-I added another custom provider with an anthropic style API Endpoint and while Moonshot/Kimi is working to list models, the new one, Minimax, is not. After I save the provider and set it up with a proper API key it displays "Failed to load models: Error: Model list failed (404): 404 page not found" which then leads to the manual models not being saved error mentioned above. 
+I added another custom provider with an anthropic style API Endpoint and while Moonshot/Kimi is working to list models, the new one, Minimax, is not. After I save the provider and set it up with a proper API key it displays "Failed to load models: Error: Model list failed (404): 404 page not found" which then leads to the manual models not being saved error mentioned above. BE VERY CAREFUL WITH THESE MODIFICATIONS! These are the types of refactors we did in the past that broke long-standing, working functions in the process of resolving the issue at hand. That cannot happen again. Be meticulous. Be surgical. Follow all guardrails and consitution. 
+
+_RESOLVED (v1.5.23.1): The bypass logic in `PanelViewProvider.handleListModels` treated every Anthropic-style endpoint as native and returned the hardcoded Claude 3.5 Sonnet model. The bypass now only applies to built-in Deepseek/GLM providers, so custom providers like Minimax fetch their own model lists. Added logging to surface the resolved models endpoint and improved 404 messaging._
+
+5) "Two-Model" function is still listed in several areas but we switched from two model to three-model many versions ago, so that older terminology is confusing and should be updated. 
 
   -------------------------------------
   Webview Panel:
 
-  - Save Model Combo is still not working the way it's intended. It seems to still be a SINGLE global setting. It needs to act like this:
-    - First off, it needs to save combos by provider, not just globally. I saved a set of models for Moonshot AI thinking it was tied to that provider, then switched to Openrouter, and the Moonshot saved models carried over, so of course, the proxy did not work until I noticed this and reset it. 
-    - Second, Each Provider should be able to save MORE THAN ONE combo! As you save model combos, they should show up in the Popular Combos section, and be selectable from there. We can rename that section to "Quick Combos" to better reflect its purpose. That section can update itself as you switch providers OR be provider agnostic in terms of displaying them all together, BUT when you select a combo it will switch the system to the correct provider from which the combo was saved. 
+  - Save Model Combo is still not working the way it's intended. Each Provider should be able to save MORE THAN ONE combo! As you save model combos, they should show up in the Popular Combos section, and be selectable from there. We can rename that section to "Quick Combos" to better reflect its purpose. That section can update itself as you switch providers OR be provider agnostic in terms of displaying them all together, BUT when you select a combo it will switch the system to the correct provider from which the combo was saved. 
     - The current "Popular Combos" section gives a name to the Combo, like "The Free Genius Combo", so our save function should also allow us to NAME the saved combos we create. Hovering over a combo shows you the provider and the models in the combo.
 
   - Filter Models List
@@ -192,7 +174,7 @@ I added another custom provider with an anthropic style API Endpoint and while M
  - Many of these settings are redundant as they now exist in the webview panel. We should remove the ones that are not needed here anymore. 
    - For Example: In the webview panel, I have the port set to 3615 which is what it's using. In this old settings page it's still set to 3000. Confusing and redundant. Also refers to "Two Model Mode" which we changed many versions ago to Three model mode. 
  - Whatever DOES remain on this page should be grouped together accordingly, it's currently very sporadic as it was likely just thrown together piecemeal over time and then left to fester as we moved things to the webview panel. 
- - 
+  
 -------------------------------------
 
 New Functionality:

@@ -10,6 +10,7 @@
   let state = {
     provider: 'openrouter',
     twoModelMode: false,
+    opusPlanMode: false,
     reasoningModel: '',
     codingModel: '',
     valueModel: '',
@@ -32,6 +33,7 @@
     proxyRunning: false,
     port: 3000,
     customCombos: [],
+    customCombosByProvider: {}, // Per-provider combo storage
     workspaceCombos: [],
     inSaveOperation: false, // Track when we're in the middle of a save to prevent unnecessary reloads
     inSaveProvider: null, // Comment 12: Track which provider is being saved to prevent mismatched reload prevention
@@ -54,6 +56,48 @@
   lastTwoModelMode: false, // Track last twoModelMode to detect UI changes
   lastSelectedModels: { reasoning: '', coding: '', value: '' } // Track last selected models to detect selection changes
 };
+
+  const OPENROUTER_MODEL_WARNING_RULES = [
+    {
+      id: 'gemini-free',
+      regex: /google\/gemini-2\.0-(?:pro|flash)-exp-02-05:free/i,
+      message: 'This Gemini experimental free model cannot reliably execute tools. The proxy will convert tools into plain instructions.'
+    },
+    {
+      id: 'deepseek-r1',
+      regex: /deepseek[-_]?r1/i,
+      message: 'DeepSeek R1 variants often emit long reasoning segments and limited actions. Expect minimal tool calling.'
+    },
+    {
+      id: 'claude-thinking',
+      regex: /anthropic\/claude-3\.7-sonnet:thinking/i,
+      message: 'Claude thinking variants may return only reasoning traces without a final answer.'
+    },
+    {
+      id: 'grok-code',
+      regex: /x-ai\/grok-code[-\w]*/i,
+      message: 'Grok Code models can surface reasoning-only replies. Verify outputs when tools are required.'
+    }
+  ];
+
+  const openRouterWarningSeen = new Set();
+
+  function getOpenRouterModelWarnings(modelId) {
+    if (state.provider !== 'openrouter' || !modelId) return [];
+    return OPENROUTER_MODEL_WARNING_RULES
+      .filter(rule => rule.regex.test(modelId))
+      .map(rule => rule.message);
+  }
+
+  function maybeWarnOpenRouterModel(modelId) {
+    if (state.provider !== 'openrouter' || !modelId) return;
+    OPENROUTER_MODEL_WARNING_RULES.forEach(rule => {
+      if (rule.regex.test(modelId) && !openRouterWarningSeen.has(rule.id)) {
+        openRouterWarningSeen.add(rule.id);
+        showNotification(rule.message, 'warning', 6000);
+      }
+    });
+  }
 
   /**
    * Appends a timestamped error entry to the in-memory telemetry buffer and enforces the buffer size limit.
@@ -471,9 +515,13 @@
       if (e.key === 'Enter') storeAnthropicKey();
     });
 
-    // Two Model Toggle
-    const twoModelToggle = document.getElementById('twoModelToggle');
-    twoModelToggle?.addEventListener('change', onTwoModelToggle);
+    // Three Model Toggle
+    const threeModelToggle = document.getElementById('threeModelToggle');
+    threeModelToggle?.addEventListener('change', onTwoModelToggle);
+
+    // OpusPlan Mode Checkbox
+    const opusPlanCheckbox = document.getElementById('opusPlanCheckbox');
+    opusPlanCheckbox?.addEventListener('change', toggleOpusPlanMode);
 
     // Debug Checkbox
     const debugCheckbox = document.getElementById('debugCheckbox');
@@ -661,10 +709,10 @@
   }
 
   /**
-   * Restore persisted webview state into the current in-memory state and refresh the two-model UI.
+   * Restore persisted webview state into the current in-memory state and refresh the three-model UI.
    *
    * Loads saved state from the VS Code webview (via vscode.getState()), merges it into the top-level
-   * state when present, sets the two-model toggle to match the restored state, and updates related UI.
+   * state when present, sets the three-model toggle to match the restored state, and updates related UI.
    */
   function restoreState() {
     const saved = vscode.getState();
@@ -672,7 +720,7 @@
       state = { ...state, ...saved };
       
       // Restore UI - provider dropdown will be populated after custom providers load
-      document.getElementById('twoModelToggle').checked = state.twoModelMode;
+      document.getElementById('threeModelToggle').checked = state.twoModelMode;
       updateTwoModelUI();
     }
   }
@@ -830,7 +878,7 @@
    */
   function updateProviderUI() {
     const customSection = document.getElementById('customUrlSection');
-    const combosCard = document.getElementById('popularCombosCard');
+    const combosCard = document.getElementById('quickCombosCard');
     const helpDiv = document.getElementById('providerHelp');
     const deleteBtn = document.getElementById('deleteCustomProviderBtn');
     const nameSection = document.getElementById('customProviderNameSection');
@@ -899,13 +947,16 @@
       if (keyInput) keyInput.value = '';
     }
 
-    // Show/hide popular combos (OpenRouter only)
-    if (state.provider === 'openrouter') {
-      combosCard?.classList.add('visible');
+    // Comment 2: Show Quick Combos card for all providers (was OpenRouter-only)
+    // Always display the card when panel is active
+    if (combosCard) {
+      combosCard.classList.add('visible');
+      // Request featured + provider-specific + saved combos for active provider
       vscode.postMessage({ type: 'requestPopularModels' });
-    } else {
-      combosCard?.classList.remove('visible');
     }
+
+    // Update model list title with provider name
+    updateModelListTitle();
 
     // Show/hide delete button for custom providers
     if (deleteBtn) {
@@ -1333,9 +1384,10 @@
    * so success handlers can clear it.
    */
   function requestSaveCombo() {
-    // Check if we've reached the 4-combo limit
-    if (state.customCombos && state.customCombos.length >= 4) {
-      showNotification('Maximum of 4 saved combos reached. Delete an existing combo to save a new one.', 'error');
+    // Check if we've reached the 4-combo limit for current provider
+    const currentProviderCombos = state.customCombosByProvider[state.provider] || [];
+    if (currentProviderCombos.length >= 4) {
+      showNotification(`Maximum of 4 saved combos reached for ${state.provider}. Delete an existing combo to save a new one.`, 'error');
       return;
     }
     
@@ -1603,8 +1655,15 @@
       }, 3000);
     }
     
-    // Store the combos for later display
+    // Store the combos for later display - both provider-specific and backward compatible
     if (payload.combos) {
+      // Store in provider-specific structure
+      if (!state.customCombosByProvider) {
+        state.customCombosByProvider = {};
+      }
+      state.customCombosByProvider[state.provider] = payload.combos;
+      
+      // Keep backward compatibility with state.customCombos
       state.customCombos = payload.combos;
       
       // Re-render combo display with saved combos included
@@ -1638,8 +1697,15 @@
     // Clear any existing notifications
     clearNotifications();
     
-    // Update state with new combos
+    // Update state with new combos - both provider-specific and backward compatible
     if (payload.combos) {
+      // Update provider-specific storage
+      if (!state.customCombosByProvider) {
+        state.customCombosByProvider = {};
+      }
+      state.customCombosByProvider[state.provider] = payload.combos;
+      
+      // Keep backward compatibility with state.customCombos
       state.customCombos = payload.combos;
       
       // Re-render combo display
@@ -1723,25 +1789,28 @@
   }
 
   /**
-   * Toggles two-model mode from a checkbox, updates UI and persisted state, and notifies the extension backend.
-   * @param {Event} e - Change event from the two-model toggle checkbox; the handler reads `e.target.checked` to determine the new value.
+   * Toggles three-model mode from a checkbox, updates UI and persisted state, and notifies the extension backend.
+   * @param {Event} e - Change event from the three-model toggle checkbox; the handler reads `e.target.checked` to determine the new value.
    */
   function onTwoModelToggle(e) {
     const newValue = e.target.checked;
-    console.log('[onTwoModelToggle] Toggling two-model mode from', state.twoModelMode, 'to', newValue);
+    console.log('[onTwoModelToggle] Toggling three-model mode from', state.twoModelMode, 'to', newValue);
     state.twoModelMode = newValue;
     updateTwoModelUI();
     saveState();
     
     // Notify backend to update twoModelMode config
-    console.log('[onTwoModelToggle] Sending toggleTwoModelMode message:', state.twoModelMode);
+    console.log('[onTwoModelToggle] Sending toggleThreeModelMode message:', state.twoModelMode);
+    // Comment 2: Post canonical toggleThreeModelMode message
+    vscode.postMessage({ type: 'toggleThreeModelMode', enabled: state.twoModelMode });
+    // Comment 2: Also post legacy toggleTwoModelMode for backward compatibility during transition
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: state.twoModelMode });
   }
 
   /**
-   * Update the UI to reflect the current two-model mode and re-render model controls.
+   * Update the UI to reflect the current three-model mode and re-render model controls.
    *
-   * Recomputes the Save Combo button visibility and refreshes the model list so secondary (coding) controls are shown or hidden based on state.twoModelMode.
+   * Recomputes the Save Combo button visibility and refreshes the model list so secondary (completion) and value controls are shown or hidden based on state.twoModelMode.
    */
   function updateTwoModelUI() {
     console.log('[updateTwoModelUI] Updating UI, twoModelMode:', state.twoModelMode);
@@ -1754,17 +1823,62 @@
     // Re-render model list to show/hide secondary buttons
     console.log('[updateTwoModelUI] Calling renderModelList()');
     renderModelList();
+    
+    // Update OpusPlan UI when three-model mode changes
+    updateOpusPlanUI();
   }
 
   function updateSaveComboButton() {
     const saveComboBtn = document.getElementById('saveComboBtn');
     if (!saveComboBtn) return;
 
-    // Show button only if two-model mode is on and all three models are selected
+    // Show button only if three-model mode is on and all three models are selected
     if (state.twoModelMode && state.reasoningModel && state.codingModel && state.valueModel) {
       saveComboBtn.classList.remove('hidden');
         } else {
       saveComboBtn.classList.add('hidden');
+    }
+  }
+
+  /**
+   * Toggle OpusPlan mode on/off based on checkbox state.
+   */
+  function toggleOpusPlanMode() {
+    const checkbox = document.getElementById('opusPlanCheckbox');
+    if (!checkbox) return;
+    
+    const newValue = checkbox.checked;
+    console.log('[toggleOpusPlanMode] Toggling OpusPlan mode from', state.opusPlanMode, 'to', newValue);
+    state.opusPlanMode = newValue;
+    saveState();
+    
+    // Notify backend to update opusPlanMode config
+    vscode.postMessage({ type: 'toggleOpusPlan', enabled: state.opusPlanMode });
+  }
+
+  /**
+   * Update OpusPlan checkbox UI to reflect current state.
+   * Disables the checkbox when three-model mode is off.
+   */
+  function updateOpusPlanUI() {
+    const checkbox = document.getElementById('opusPlanCheckbox');
+    if (!checkbox) return;
+    
+    checkbox.checked = state.opusPlanMode;
+    
+    // Enable/disable based on three-model mode
+    if (state.twoModelMode) {
+      checkbox.disabled = false;
+      checkbox.style.opacity = '1';
+    } else {
+      checkbox.disabled = true;
+      checkbox.style.opacity = '0.5';
+      // Auto-disable OpusPlan mode if three-model mode is turned off
+      if (state.opusPlanMode) {
+        state.opusPlanMode = false;
+        checkbox.checked = false;
+        vscode.postMessage({ type: 'toggleOpusPlan', enabled: false });
+      }
     }
   }
 
@@ -1818,6 +1932,8 @@
       completion: state.codingModel,
       value: state.valueModel
     });
+
+    maybeWarnOpenRouterModel(modelId);
     
     updateSaveComboButton();
     updateSelectedModelsDisplay();
@@ -1833,8 +1949,8 @@
    * Updates the elements with IDs `reasoningModelDisplay`, `codingModelDisplay`, and
    * `valueModelDisplay` to reflect the active selections from `state`. Shows the
    * model's short name (last path segment) and escapes it for safe HTML rendering.
-   * When two-model mode is enabled, displays placeholders when coding/value models
-   * are not selected; hides coding/value displays when two-model mode is disabled.
+   * When three-model mode is enabled, displays placeholders when completion/value models
+   * are not selected; hides completion/value displays when three-model mode is disabled.
    */
   function updateSelectedModelsDisplay() {
     const reasoningDisplay = document.getElementById('reasoningModelDisplay');
@@ -1929,6 +2045,9 @@
                 // Add to state.models
                 state.models = [...state.models, ...newModels];
                 
+                // Persist to cache so models survive provider switches
+                state.modelsCache[state.provider] = state.models;
+                
                 // Render the updated list
                 renderModelList();
                 
@@ -2009,14 +2128,21 @@
       return;
     }
 
-    // Filter models
-    let filtered = state.models;
+    // Comment 3: Make shallow copy before filtering/sorting to avoid mutating state.models
+    let filtered = [...state.models];
     if (searchTerm) {
-      filtered = state.models.filter(m => 
+      filtered = filtered.filter(m => 
         m.name.toLowerCase().includes(searchTerm) ||
         m.id.toLowerCase().includes(searchTerm)
       );
     }
+
+    // Sort filtered models to move selected models to the top
+    filtered.sort((a, b) => {
+      const aSelected = (a.id === state.reasoningModel || a.id === state.codingModel || a.id === state.valueModel) ? 1 : 0;
+      const bSelected = (b.id === state.reasoningModel || b.id === state.codingModel || b.id === state.valueModel) ? 1 : 0;
+      return bSelected - aSelected;
+    });
 
     if (filtered.length === 0) {
       container.innerHTML = '<div class="empty-state">No models match your search</div>';
@@ -2080,9 +2206,11 @@
       const isCoding = model.id === state.codingModel;
       const isValue = model.id === state.valueModel;
       const isFree = model.pricing?.prompt === '0' && model.pricing?.completion === '0';
+      const warnings = getOpenRouterModelWarnings(model.id);
+      const warningHtml = warnings.length > 0 ? `<div class="model-warning">${escapeHtml(warnings[0])}</div>` : '';
       
       let itemClass = 'model-item';
-      if (isReasoning) itemClass += ' selected-reasoning';
+      if (isReasoning) itemClass += ' selected-reasoning selected-primary';
       if (isCoding) itemClass += ' selected-coding';
       if (isValue) itemClass += ' selected-value';
 
@@ -2094,6 +2222,7 @@
               ${model.context_length ? `${formatNumber(model.context_length)} tokens` : ''}
               ${isFree ? ' • Free' : ''}
             </div>
+            ${warningHtml}
           </div>
           <div class="model-actions">
             <button class="model-btn ${isReasoning ? 'reasoning-selected' : ''}" 
@@ -2119,6 +2248,34 @@
     }).join('');
     
     // Phase 5: No individual button listeners needed - using event delegation above
+  }
+
+  /**
+   * Update the model list title to include the current provider name.
+   * 
+   * Updates the "Filter Models" heading to show "Filter Models (Provider Name)" for better context.
+   * Called when provider changes and during initialization.
+   */
+  function updateModelListTitle() {
+    const titleElement = document.getElementById('modelListTitle');
+    if (!titleElement) return;
+
+    // Get provider display name
+    let providerDisplayName = state.provider;
+    
+    // Check if it's a built-in provider
+    if (providers[state.provider]) {
+      providerDisplayName = providers[state.provider].name;
+    } else {
+      // Check if it's a custom provider
+      const customProvider = state.customProviders.find(p => p.id === state.provider);
+      if (customProvider) {
+        providerDisplayName = customProvider.name;
+      }
+    }
+    
+    // Update title with provider name
+    titleElement.textContent = `Filter Models (${providerDisplayName})`;
   }
 
   /**
@@ -2226,9 +2383,9 @@
   }
 
   /**
-   * Apply a model combo and enable two-model mode for the current provider.
+   * Apply a model combo and enable three-model mode for the current provider.
    *
-   * Updates selected reasoning, coding (completion), and value models in UI and in-memory state,
+   * Updates selected reasoning, completion, and value models in UI and in-memory state,
    * persists the per-provider model mapping, re-renders the model list, and notifies the extension backend.
    *
    * @param {string} reasoning - Model id to use for reasoning.
@@ -2236,9 +2393,9 @@
    * @param {string} value - Model id to use for value.
    */
   function applyCombo(reasoning, coding, value) {
-    // Enable two-model mode
+    // Enable three-model mode
     state.twoModelMode = true;
-    document.getElementById('twoModelToggle').checked = true;
+    document.getElementById('threeModelToggle').checked = true;
     updateTwoModelUI();
 
     // Set models
@@ -2257,7 +2414,10 @@
     saveState();
     renderModelList();
 
-    // Notify backend that two-model mode is enabled
+    // Notify backend that three-model mode is enabled
+    // Comment 2: Post canonical toggleThreeModelMode message
+    vscode.postMessage({ type: 'toggleThreeModelMode', enabled: true });
+    // Comment 2: Also post legacy toggleTwoModelMode for backward compatibility
     vscode.postMessage({ type: 'toggleTwoModelMode', enabled: true });
 
     // Comment 5: Send 'completion' instead of 'coding' (canonical storage)
@@ -2282,9 +2442,9 @@
   /**
    * Start the local proxy using the current UI configuration.
    *
-   * Validates that required model selections are present (reasoning, and when two-model mode is enabled, coding and value)
+   * Validates that required model selections are present (reasoning, and when three-model mode is enabled, completion and value)
    * and shows an error notification if validation fails. If validation succeeds, notifies the extension host to start
-   * the proxy with the current provider, selected models, two-model flag, and configured port.
+   * the proxy with the current provider, selected models, three-model flag, and configured port.
    */
   function startProxy() {
     // Validate that required models are selected for the current provider
@@ -2295,13 +2455,13 @@
     }
     
     if (state.twoModelMode && (!state.codingModel || state.codingModel.trim() === '')) {
-      const errorMsg = `No coding model selected for ${state.provider} in two-model mode. Please select a model before starting the proxy.`;
+      const errorMsg = `No completion model selected for ${state.provider} in three-model mode. Please select a model before starting the proxy.`;
       showNotification(errorMsg, 'error', 5000);
       return;
     }
     
     if (state.twoModelMode && (!state.valueModel || state.valueModel.trim() === '')) {
-      const errorMsg = `No value model selected for ${state.provider} in two-model mode. Please select a model before starting the proxy.`;
+      const errorMsg = `No value model selected for ${state.provider} in three-model mode. Please select a model before starting the proxy.`;
       showNotification(errorMsg, 'error', 5000);
       return;
     }
@@ -2471,7 +2631,7 @@
    *
    * Processes feature flags, resolves the effective provider (including selected custom provider),
    * updates per-provider model selections (with legacy-key fallback and optional one-time auto-hydration),
-   * updates two-model mode and debug UI, refreshes provider and cache displays, and conditionally
+   * updates three-model mode and debug UI, refreshes provider and cache displays, and conditionally
    * triggers a guarded model reload. May persist hydrated model maps back to the extension via
    * a saveModels message.
    *
@@ -2481,9 +2641,9 @@
    * @param {Object} [config.featureFlags] - Feature flag overrides to merge into local featureFlags.
    * @param {Object<string, Object>} [config.modelSelectionsByProvider] - Map of providerId -> model selection object.
    * @param {string} [config.reasoningModel] - Legacy per-webview reasoning model (used as fallback).
-   * @param {string} [config.completionModel] - Legacy per-webview completion/coding model (used as fallback).
+   * @param {string} [config.completionModel] - Legacy per-webview completion model (used as fallback).
    * @param {string} [config.valueModel] - Legacy per-webview value model (used as fallback).
-   * @param {boolean} [config.twoModelMode] - Explicit two-model mode flag from config.
+   * @param {boolean} [config.twoModelMode] - Explicit three-model mode flag from config (variable name remains twoModelMode for backward compatibility).
    * @param {number|string} [config.port] - Proxy port from config to populate the UI.
    * @param {string} [config.customBaseUrl] - Custom provider base URL to populate the custom URL input.
    * @param {boolean} [config.debug] - Debug flag to set the debug UI checkbox.
@@ -2664,20 +2824,26 @@
       fromConfig: true
     });
 
-    // Check if two-model mode should be enabled
+    // Check if three-model mode should be enabled
     // Only trigger UI update if mode actually changed to prevent redundant renders
     const previousTwoModelMode = state.twoModelMode;
     if (config.twoModelMode !== undefined) {
       state.twoModelMode = config.twoModelMode;
-      document.getElementById('twoModelToggle').checked = config.twoModelMode;
+      document.getElementById('threeModelToggle').checked = config.twoModelMode;
       if (state.twoModelMode !== previousTwoModelMode) {
         console.log(`[handleConfigLoaded] Two-model mode changed from ${previousTwoModelMode} to ${state.twoModelMode}`);
         updateTwoModelUI();
       }
+    }
+    
+    // Sync OpusPlan mode checkbox state
+    if (config.opusPlanMode !== undefined) {
+      state.opusPlanMode = config.opusPlanMode;
+      updateOpusPlanUI();
     } else if (config.reasoningModel && config.completionModel && 
         config.reasoningModel !== config.completionModel) {
       state.twoModelMode = true;
-      document.getElementById('twoModelToggle').checked = true;
+    document.getElementById('threeModelToggle').checked = true;
       if (state.twoModelMode !== previousTwoModelMode) {
         console.log(`[handleConfigLoaded] Two-model mode auto-enabled (was ${previousTwoModelMode})`);
         updateTwoModelUI();

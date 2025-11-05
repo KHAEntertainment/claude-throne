@@ -10,7 +10,7 @@
       "/^glm[-_]?[0-9]+(\\.[0-9]+)?/i"
     ],
     "*": [
-      "inclusionai/ling-1t"
+      "inclusionai/ring-1t"
     ]
   },
   "toolCallUnsupported": {
@@ -18,5 +18,33 @@
       "google/gemini-2.0-pro-exp-02-05:free",
       "google/gemini-2.0-flash-exp-02-05:free"
     ]
+  },
+  "toolStyle": {
+    "openrouter": {
+      "/deepseek[-_]?r1/i": "json",
+      "/anthropic\\/claude-3\\.7-sonnet:thinking/i": "json",
+      "/x-ai\\/grok-code[-\\w]*/i": "json"
+    }
+  },
+  "transformers": {
+    "openrouter": {
+      "inclusionai/ring-1t": ["tooluse", "enhancetool"],
+      "/deepseek[-_]?reasoner/i": ["reasoning", "tooluse"],
+      "/r1[-_]?/i": ["reasoning"],
+      "/qwen[-_]?qwq/i": ["reasoning"],
+      "/.*thinking.*/i": ["reasoning"],
+      "/x-ai\\/grok-code[-\\w]*/i": ["reasoning"]
+    },
+    "deepseek": {
+      "/^deepseek[-_]?reasoner/i": ["reasoning", ["maxtoken", {"max_tokens": 65536}]],
+      "/^deepseek[-_]?v[0-9]/i": ["tooluse"]
+    },
+    "glm": {
+      "/^glm[-_]?[0-9]/i": ["tooluse", "enhancetool"]
+    },
+    "*": {
+      "/.*thinking.*/i": ["reasoning"],
+      "/.*reason.*/i": ["reasoning"]
+    }
   }
 }

@@ -2,7 +2,6 @@ import * as vscode from 'vscode'
 import { SecretsService } from '../services/Secrets'
 import { ProxyManager } from '../services/ProxyManager'
 import { listModels, type ProviderId } from '../services/Models'
-import { isAnthropicEndpoint, type CustomEndpointKind } from '../services/endpoints'
 // Comment 2: Import schema validation for runtime message validation
 import { safeValidateMessage, normalizeMessageType, type ExtensionToWebviewMessage } from '../schemas/messages'
 
@@ -95,7 +94,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
    * @param reasoningModel - Reasoning model to hydrate
    * @param completionModel - Completion model to hydrate
    * @param valueModel - Value model to hydrate
-   * @param twoModelMode - Whether two-model mode is enabled
+   * @param twoModelMode - Whether three-model mode is enabled
    * @returns Success status
    */
   private async hydrateGlobalKeysFromProvider(
@@ -336,8 +335,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
           case 'setModelFromList':
             await this.handleSetModelFromList(msg.modelId, msg.modelType)
             break
-          case 'toggleTwoModelMode':
+          case 'toggleThreeModelMode':
+            // Comment 3: Handle canonical toggleThreeModelMode message
             await this.handleToggleTwoModelMode(msg.enabled)
+            break
+          case 'toggleTwoModelMode':
+            // Comment 3: Handle legacy toggleTwoModelMode message for backward compatibility
+            this.log.appendLine('[Deprecation] toggleTwoModelMode is deprecated, use toggleThreeModelMode')
+            await this.handleToggleTwoModelMode(msg.enabled)
+            break
+          case 'toggleOpusPlan':
+            await this.handleOpusPlanToggle(msg.enabled)
             break
           case 'filterModels':
             await this.handleFilterModels(msg.filter)
@@ -491,6 +499,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const completionModel = config.get('completionModel');
     const valueModel = config.get('valueModel');
     const twoModelMode = config.get('twoModelMode', false);
+    const opusPlanMode = config.get<boolean>('opusPlanMode', false);
     const port = config.get('proxy.port');
     const customBaseUrl = config.get('customBaseUrl', '');
     const debug = config.get('proxy.debug', false);
@@ -524,6 +533,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         provider, 
         selectedCustomProviderId, 
         twoModelMode, 
+        opusPlanMode,
         port, 
         customBaseUrl, 
         debug,
@@ -586,39 +596,44 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(`📋 Loading models for provider: ${provider}, sequence token: ${sequenceToken}${traceInfo}`)
     
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
-    
+    const debugMode = cfg.get<boolean>('proxy.debug', false)
+
+    if (provider === 'deepseek' || provider === 'glm') {
+      // Deepseek and GLM use native Anthropic connections where models are managed by Claude Code.
+      // Custom providers with Anthropic-style APIs should still fetch their own model lists.
+      this.post({
+        type: 'models',
+        payload: {
+          models: [{
+            id: 'claude-3-5-sonnet-20241022',
+            name: 'Claude 3.5 Sonnet (Native)',
+            description: 'Anthropic native endpoint - models managed by Claude',
+            provider
+          }],
+          provider,
+          token: sequenceToken
+        }
+      })
+      return
+    }
+
+    let manualCustomBaseUrl: string | undefined
+
     if (provider === 'custom') {
-      const baseUrl = cfg.get<string>('customBaseUrl', '')
-      if (!baseUrl || !baseUrl.trim()) {
+      manualCustomBaseUrl = cfg.get<string>('customBaseUrl', '')
+      if (!manualCustomBaseUrl || !manualCustomBaseUrl.trim()) {
+        // Note: Manual model entry for custom providers without URLs is handled entirely
+        // in the webview (webview/main.js loadModels()). Backend sends empty list to trigger
+        // manual entry UI; cache persistence happens in the webview after user input.
         // Comment 2: Use sequenceToken instead of requestToken for consistent validation
-        this.post({ 
-          type: 'models', 
-          payload: { models: [], provider, token: sequenceToken } 
+        this.post({
+          type: 'models',
+          payload: { models: [], provider, token: sequenceToken }
         })
         return
       }
-      
-      // Check if this custom provider has an anthropic endpoint
-      const endpointKind = cfg.get<CustomEndpointKind>('customEndpointKind', 'auto');
-      const isAnthropic = isAnthropicEndpoint(baseUrl);
-      
-      if ((endpointKind === 'anthropic' && isAnthropic) || (endpointKind === 'auto' && isAnthropic)) {
-        // Bypass model loading for anthropic endpoints - use native model discovery
-        // Comment 2: Use sequenceToken instead of requestToken for consistent validation
-        this.post({ 
-          type: 'models', 
-          payload: { 
-            models: [{
-              id: 'claude-3-5-sonnet-20241022',
-              name: 'Claude 3.5 Sonnet (Native)',
-              description: 'Anthropic native endpoint - models managed by Claude',
-              provider: provider
-            }],
-            provider,
-            token: sequenceToken
-          }
-        })
-        return;
+      if (debugMode) {
+        this.log.appendLine(`[PanelViewProvider] Custom provider base URL detected: ${manualCustomBaseUrl} (Anthropic-style endpoints will fetch models normally)`)
       }
     }
     
@@ -639,6 +654,8 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       return
     }
     
+    let baseUrl = 'https://openrouter.ai/api'
+
     try {
       // Get API key for the provider
       const apiKey = await this.secrets.getProviderKey(provider) || ''
@@ -649,13 +666,11 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const customProviders = cfg.get<any[]>('customProviders', [])
       const customProvider = customProviders.find(p => p.id === provider)
       
-      let baseUrl = 'https://openrouter.ai/api'
-      
       if (customProvider) {
         // This is a saved custom provider - use the base URL directly
         baseUrl = customProvider.baseUrl
       } else if (provider === 'custom') {
-        baseUrl = cfg.get<string>('customBaseUrl', '')
+        baseUrl = manualCustomBaseUrl || ''
       } else if (provider === 'openai') {
         baseUrl = 'https://api.openai.com/v1'
       } else if (provider === 'together') {
@@ -666,6 +681,9 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         baseUrl = 'https://api.z.ai/api/paas/v4'
       }
       
+      if (debugMode) {
+        this.log.appendLine(`[PanelViewProvider] Attempting to fetch models from base URL: ${baseUrl} (will resolve to models endpoint)`)
+      }
       this.log.appendLine(`🌐 Fetching models from: ${baseUrl}`)
       const modelIds = await listModels(provider as ProviderId, baseUrl, apiKey)
       this.log.appendLine(`✅ Received ${modelIds.length} models from API`)
@@ -715,6 +733,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         if (errorStr.includes('timed out') || errorStr.includes('timeout') || err.name === 'AbortError') {
           errorType = 'timeout'
           errorMessage = 'Model list request timed out. You can enter model IDs manually.'
+        } else if (errorStr.includes('404')) {
+          errorType = 'not_found'
+          const attemptedUrl = err?.attemptedUrl || err?.modelsEndpointUrl || baseUrl || 'the configured endpoint'
+          errorMessage = `Model list endpoint returned 404 for ${attemptedUrl}. The provider may not support model listing at this URL. Please verify your base URL is correct or enter model IDs manually.`
         } else if (errorStr.includes('429') || errorStr.includes('rate limit')) {
           errorType = 'rate_limited'
           errorMessage = 'Rate limited by API. Please try again in a moment or enter model IDs manually.'
@@ -789,9 +811,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       const pairingsContent = await fs.readFile(pairingsPath.fsPath, 'utf8')
       const pairingsData = JSON.parse(pairingsContent)
       
-      // Load saved combos from config with validation
-      const rawSavedCombos = cfg.get<any[]>('savedCombos', [])
-      const savedCombos = rawSavedCombos.filter(combo => {
+      // Load saved combos from per-provider storage with validation
+      const savedCombosByProvider = cfg.get<Record<string, any[]>>('savedCombosByProvider', {})
+      const providerCombos = savedCombosByProvider[this.currentProvider] || []
+      const savedCombos = providerCombos.filter(combo => {
         // Validate that combo has required string fields
         return combo && 
                typeof combo.name === 'string' && combo.name.trim() &&
@@ -806,10 +829,15 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         };
       })
       
+      // Merge featured pairings with provider-specific combos
+      const featuredPairings = pairingsData.featured_pairings || []
+      const providerSpecificCombos = (pairingsData.provider_combos && pairingsData.provider_combos[this.currentProvider]) || []
+      const allFeaturedPairings = [...featuredPairings, ...providerSpecificCombos]
+      
       this.post({ 
         type: 'popularModels', 
         payload: {
-          pairings: pairingsData.featured_pairings,
+          pairings: allFeaturedPairings,
           savedCombos: savedCombos,
           currentReasoning: reasoningModel,
           currentCompletion: completionModel
@@ -926,11 +954,12 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       const config = vscode.workspace.getConfiguration('claudeThrone')
-      const savedCombos = config.get<any[]>('savedCombos', [])
+      const savedCombosByProvider = config.get<Record<string, any[]>>('savedCombosByProvider', {})
+      const providerCombos = savedCombosByProvider[this.currentProvider] || []
       
-      // Check if we've reached the 4-combo limit
-      if (savedCombos.length >= 4) {
-        vscode.window.showErrorMessage('Maximum of 4 saved combos reached. Delete an existing combo first.')
+      // Check if we've reached the 4-combo limit per provider
+      if (providerCombos.length >= 4) {
+        vscode.window.showErrorMessage(`Maximum of 4 saved combos reached for ${this.currentProvider}. Delete an existing combo first.`)
         return
       }
       
@@ -941,15 +970,17 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         value: valueModel
       }
       
-      const updatedCombos = [...savedCombos, newCombo]
-      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
-      await config.update('savedCombos', updatedCombos, target)
+      const updatedProviderCombos = [...providerCombos, newCombo]
+      const updatedCombosByProvider = {...savedCombosByProvider, [this.currentProvider]: updatedProviderCombos}
+      // Comment 1: Always use Global target for savedCombosByProvider (application-scoped setting)
+      const target = vscode.ConfigurationTarget.Global
+      await config.update('savedCombosByProvider', updatedCombosByProvider, target)
       
       this.log.appendLine(`✅ Saved combo "${name}" for provider: ${effectiveProviderId}`)
       vscode.window.showInformationMessage('Model combo saved successfully')
       this.post({ 
         type: 'combosLoaded', 
-        payload: { combos: updatedCombos } 
+        payload: { combos: updatedProviderCombos } 
       })
     } catch (err) {
       this.log.appendLine(`❌ Failed to save combo: ${err}`)
@@ -1139,22 +1170,25 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       const config = vscode.workspace.getConfiguration('claudeThrone')
-      const savedCombos = config.get<any[]>('savedCombos', [])
+      const savedCombosByProvider = config.get<Record<string, any[]>>('savedCombosByProvider', {})
+      const providerCombos = savedCombosByProvider[this.currentProvider] || []
       
       // Check if index is within bounds
-      if (index >= savedCombos.length) {
-        this.log.appendLine(`❌ Combo index ${index} out of bounds for array of length ${savedCombos.length}`)
+      if (index >= providerCombos.length) {
+        this.log.appendLine(`❌ Combo index ${index} out of bounds for array of length ${providerCombos.length}`)
         vscode.window.showErrorMessage('Combo not found')
         return
       }
       
       // Remove combo at specified index
-      const updatedCombos = [...savedCombos]
-      updatedCombos.splice(index, 1)
+      const updatedProviderCombos = [...providerCombos]
+      updatedProviderCombos.splice(index, 1)
       
       // Update config
-      const target = this.getConfigurationTarget(config.get<string>('applyScope', 'workspace'))
-      await config.update('savedCombos', updatedCombos, target)
+      const updatedCombosByProvider = {...savedCombosByProvider, [this.currentProvider]: updatedProviderCombos}
+      // Comment 1: Always use Global target for savedCombosByProvider (application-scoped setting)
+      const target = vscode.ConfigurationTarget.Global
+      await config.update('savedCombosByProvider', updatedCombosByProvider, target)
       
       this.log.appendLine(`✅ Deleted combo at index ${index}`)
       vscode.window.showInformationMessage('Model combo deleted successfully')
@@ -1162,7 +1196,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       // Send updated combo list back to webview
       this.post({ 
         type: 'combosLoaded', 
-        payload: { combos: updatedCombos, deletedId: String(index) } 
+        payload: { combos: updatedProviderCombos, deletedId: String(index) } 
       })
     } catch (err) {
       this.log.appendLine(`❌ Failed to delete combo: ${err}`)
@@ -1358,7 +1392,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const fallbackCompletion = cfg.get<string>('completionModel', '')
         if (fallbackCompletion) {
           const useFallback = await vscode.window.showWarningMessage(
-            `No completion model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackCompletion}" which may be from a different provider. Continue anyway?`,
+            `No completion model selected for provider "${this.runtimeProvider}" in three-model mode. Using global model "${fallbackCompletion}" which may be from a different provider. Continue anyway?`,
             'Continue',
             'Cancel'
           )
@@ -1377,7 +1411,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         const fallbackValue = cfg.get<string>('valueModel', '')
         if (fallbackValue) {
           const useFallback = await vscode.window.showWarningMessage(
-            `No value model selected for provider "${this.runtimeProvider}" in two-model mode. Using global model "${fallbackValue}" which may be from a different provider. Continue anyway?`,
+            `No value model selected for provider "${this.runtimeProvider}" in three-model mode. Using global model "${fallbackValue}" which may be from a different provider. Continue anyway?`,
             'Continue',
             'Cancel'
           )
@@ -1427,7 +1461,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
       
       if (twoModelMode && (!completionModel || completionModel.trim() === '')) {
-        const errorMsg = `No completion model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
+        const errorMsg = `No completion model selected for provider "${this.runtimeProvider}" in three-model mode. Please select a model before starting the proxy.`
         this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
         vscode.window.showWarningMessage(errorMsg)
         this.post({ 
@@ -1442,7 +1476,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
       }
 
       if (twoModelMode && (!valueModel || valueModel.trim() === '')) {
-        const errorMsg = `No value model selected for provider "${this.runtimeProvider}" in two-model mode. Please select a model before starting the proxy.`
+        const errorMsg = `No value model selected for provider "${this.runtimeProvider}" in three-model mode. Please select a model before starting the proxy.`
         this.log.appendLine(`[handleStartProxy] ERROR: ${errorMsg}`)
         vscode.window.showWarningMessage(errorMsg)
         this.post({ 
@@ -1868,7 +1902,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleToggleTwoModelMode(enabled: boolean) {
-    // Store the two-model mode preference
+    // Store the three-model mode preference
     const cfg = vscode.workspace.getConfiguration('claudeThrone')
     const reasoningModel = cfg.get<string>('reasoningModel')
     const completionModel = cfg.get<string>('completionModel')
@@ -1880,8 +1914,28 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
     const target = this.getConfigurationTarget(applyScope)
     await cfg.update('twoModelMode', enabled, target)
     
+    // Clear OpusPlan mode when three-model mode is disabled to avoid inconsistent config
+    if (!enabled) {
+      const currentOpusPlanMode = cfg.get<boolean>('opusPlanMode', false)
+      if (currentOpusPlanMode) {
+        await cfg.update('opusPlanMode', false, target)
+        this.log.appendLine(`[handleToggleTwoModelMode] Forced clear of opusPlanMode (was enabled, now disabled because three-model mode is off)`)
+      }
+    }
+    
     this.log.appendLine(`[handleToggleTwoModelMode] Config updated successfully`)
     // Post config update to webview to ensure state synchronization
+    this.postConfig()
+  }
+
+  private async handleOpusPlanToggle(enabled: boolean) {
+    this.log.appendLine(`[PanelViewProvider] OpusPlan mode ${enabled ? 'enabled' : 'disabled'}`)
+    
+    const cfg = vscode.workspace.getConfiguration('claudeThrone')
+    const applyScope = cfg.get<string>('applyScope', 'workspace')
+    const target = this.getConfigurationTarget(applyScope)
+    await cfg.update('opusPlanMode', enabled, target)
+    
     this.postConfig()
   }
 
@@ -1983,8 +2037,16 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
             <label class="form-label">Model Selection</label>
             
             <div class="two-model-toggle">
-              <input type="checkbox" id="twoModelToggle">
-              <label for="twoModelToggle">Use separate models for different task types (Reasoning/Coding/Value)</label>
+              <input type="checkbox" id="threeModelToggle">
+              <label for="threeModelToggle">Use three models for different task types (Reasoning/Completion/Value)</label>
+            </div>
+            
+            <div class="two-model-toggle" style="margin-left: 20px; margin-top: 8px;">
+              <input type="checkbox" id="opusPlanCheckbox">
+              <label for="opusPlanCheckbox">Enable OpusPlan Mode</label>
+              <div style="margin-left: 20px; margin-top: 4px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+                Use the 'opusplan' model identifier in Claude Code while respecting your three-model selections. Your reasoning model maps to Opus tier, completion to Sonnet, and value to Haiku.
+              </div>
             </div>
             
             <div id="selectedModelsDisplay" class="selected-models-display" style="margin-top: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);">
@@ -1998,10 +2060,10 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
         <!-- Save Combo Button -->
         <button class="btn-save-combo hidden" id="saveComboBtn" title="Save current model selection" style="margin-bottom: 16px;">+ Save Model Combo</button>
 
-        <!-- Popular Combos Card (OpenRouter only) -->
-        <div id="popularCombosCard" class="card popular-combos-card">
+        <!-- Quick Combos Card -->
+        <div id="quickCombosCard" class="card quick-combos-card">
           <div class="combos-header">
-            <h2 class="card-title">Popular Combos</h2>
+            <h2 class="card-title">Quick Combos</h2>
           </div>
           <div id="combosGrid" class="combos-grid">
             <div class="loading-container">
@@ -2043,7 +2105,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
         <!-- Model List Card -->
         <div class="card model-list-card">
-          <h2 class="card-title">Filter Models</h2>
+          <h2 class="card-title" id="modelListTitle">Filter Models</h2>
           
           <div class="model-list-header">
             <input class="model-search" type="text" id="modelSearch" placeholder="Filter models...">
@@ -2060,7 +2122,7 @@ export class PanelViewProvider implements vscode.WebviewViewProvider {
 
     <footer class="footer">
       <div class="footer-left">
-        <button class="settings-btn" id="settingsBtn" type="button" title="Open Thronekeeper Settings">⚙️</button>
+        <button class="settings-btn" id="settingsBtn" type="button" title="Open Thronekeeper Settings">⚙️</button><span class="version-text" style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-left: 4px;">v${this.ctx.extension.packageJSON.version}</span>
         <a href="https://github.com/KHAEntertainment/thronekeeper" class="repo-link" id="repoLink" title="View on GitHub">GitHub ↗</a>
         <div class="status-text">
           Status: <strong id="statusText" class="status-stopped">Idle</strong>

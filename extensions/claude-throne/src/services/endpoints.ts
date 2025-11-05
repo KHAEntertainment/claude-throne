@@ -67,7 +67,9 @@ export function getModelsEndpointForBase(baseUrl: string): string {
       return baseUrl.replace(/\/$/, '')
     }
 
-    // If it's an Anthropic-style endpoint, transform to use the correct models endpoint
+    // If it's an Anthropic-style endpoint, transform to use the correct models endpoint.
+    // Example: `https://api.moonshot.ai/anthropic/v1/messages` → `https://api.moonshot.ai/v1/models`
+    // Example: `https://api.minimax.io/anthropic` → `https://api.minimax.io/v1/models`
     if (isAnthropicEndpoint(baseUrl)) {
       // Remove /anthropic or /api/anthropic suffix and preserve base path
       let basePath = ''

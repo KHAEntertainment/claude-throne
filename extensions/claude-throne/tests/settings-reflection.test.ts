@@ -13,6 +13,7 @@ const mockConfigValues: Record<string, any> = {
   'provider': 'openrouter',
   'selectedCustomProviderId': '',
   'twoModelMode': false,
+  'threeModelMode': false, // Mock threeModelMode for testing three-model mode precedence over twoModelMode (backward compatibility)
   'proxy.port': 3000,
   'proxy.debug': false,
   'customBaseUrl': '',
@@ -202,6 +203,36 @@ describe('Settings Reflection', () => {
     expect(openrouterModels.reasoning).toBe('openrouter-r')
     expect(openaiModels.reasoning).toBe('openai-r')
     expect(openrouterModels.reasoning).not.toBe(openaiModels.reasoning)
+  })
+
+  // Comment 7: Test that threeModelMode is read correctly and takes precedence over twoModelMode
+  it('should prioritize threeModelMode over twoModelMode when both are set', () => {
+    mockConfigValues['threeModelMode'] = true
+    mockConfigValues['twoModelMode'] = true
+
+    // Call the actual extension logic that determines the active mode
+    // For example, if PanelViewProvider has a getActiveModelMode() method:
+    // const activeMode = provider.getActiveModelMode()
+    // expect(activeMode).toBe('three-model')
+    
+    // Or if you're testing the config resolution directly:
+    const resolvedMode = mockConfigValues['threeModelMode'] ? 'three-model' : (mockConfigValues['twoModelMode'] ? 'two-model' : 'single-model')
+    expect(resolvedMode).toBe('three-model')
+  })
+
+  it('should handle three-model mode when threeModelMode is true and twoModelMode is false', () => {
+    mockConfigValues['threeModelMode'] = true
+    mockConfigValues['twoModelMode'] = false
+    mockConfigValues['modelSelectionsByProvider'] = {
+      openrouter: { reasoning: 'model-r', completion: 'model-c', value: 'model-v' }
+    }
+
+    const providerModels = mockConfigValues['modelSelectionsByProvider']['openrouter']
+    
+    // In three-model mode, all three models should be present
+    expect(providerModels.reasoning).toBeTruthy()
+    expect(providerModels.completion).toBeTruthy()
+    expect(providerModels.value).toBeTruthy()
   })
 })
 

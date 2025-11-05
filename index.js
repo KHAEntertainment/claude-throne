@@ -110,12 +110,17 @@ const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 function matchesPattern(modelName, pattern) {
   if (typeof pattern !== 'string' || !pattern) return false
   const value = modelName.toLowerCase()
-  if (pattern.startsWith('/') && pattern.endsWith('/')) {
-    try {
-      const regex = new RegExp(pattern.slice(1, -1), 'i')
-      return regex.test(modelName)
-    } catch {
-      return false
+  if (pattern.startsWith('/')) {
+    const lastSlash = pattern.lastIndexOf('/')
+    if (lastSlash > 1) {
+      const body = pattern.slice(1, lastSlash)
+      const flags = pattern.slice(lastSlash + 1) || 'i'
+      try {
+        const regex = new RegExp(body, flags)
+        return regex.test(modelName)
+      } catch {
+        return false
+      }
     }
   }
   if (pattern.includes('*')) {
@@ -183,11 +188,31 @@ function modelSupportsToolCalling(modelName, providerId) {
   return true
 }
 
+function getModelToolStyle(modelName, providerId) {
+  if (!modelName || !providerId) return null
+  const config = modelCapabilities?.toolStyle || null
+  if (!config) return null
+
+  const providerConfig = config[providerId] || {}
+  const wildcardConfig = config['*'] || {}
+  const combined = { ...wildcardConfig, ...providerConfig }
+
+  for (const [pattern, style] of Object.entries(combined)) {
+    if (matchesPattern(modelName, pattern)) {
+      return style
+    }
+  }
+
+  return null
+}
+
 /**
  * Parse native OpenAI tool response format (for models that support it)
  */
-function parseNativeToolResponse(openaiMessage) {
+function parseNativeToolResponse(openaiMessage, options = {}) {
   const blocks = []
+  const warnings = Array.isArray(options.warnings) ? options.warnings : null
+  const modelName = options.modelName
   
   // Add text content if present
   if (openaiMessage.content) {
@@ -208,7 +233,16 @@ function parseNativeToolResponse(openaiMessage) {
           input: JSON.parse(tc.function.arguments)
         })
       } catch (err) {
-        console.warn('[Tool Parse] Failed to parse native tool call:', err)
+        console.warn('[Tool Parse] Failed to parse native tool call, using raw string:', err)
+        if (warnings) {
+          warnings.push(`Tool call arguments returned by ${modelName || 'upstream model'} were malformed JSON and were left as raw text.`)
+        }
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.function.name,
+          input: tc.function.arguments
+        })
       }
     })
   }
@@ -343,8 +377,61 @@ function buildUpstreamHeaders({ provider: providerId, endpointKind: upstreamKind
   return headers
 }
 
+async function ensureEndpointKindReady() {
+  if (provider !== 'custom' || endpointKind !== ENDPOINT_KIND.UNKNOWN) {
+    return null
+  }
+
+  if (!negotiationPromise && key) {
+    negotiationPromise = negotiateEndpointKind(baseUrl, key)
+      .then(result => {
+        endpointKind = result.kind
+        detectionSource = 'probe'
+        lastProbedAt = result.lastProbedAt
+        if (process.env.DEBUG) {
+          console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`)
+        }
+        negotiationPromise = null
+        return result
+      })
+      .catch(err => {
+        console.warn(`[Negotiation] Failed:`, err.message)
+        const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
+        endpointKind = heuristicResult
+        detectionSource = 'heuristic'
+        negotiationPromise = null
+        return { kind: endpointKind }
+      })
+  }
+
+  if (negotiationPromise) {
+    await negotiationPromise
+  }
+
+  if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
+    return {
+      statusCode: 503,
+      body: {
+        error: {
+          message: 'Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.',
+          type: 'negotiation_pending',
+          hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
+        }
+      }
+    }
+  }
+
+  return null
+}
+
 fastify.get('/v1/models', async (request, reply) => {
   try {
+    const negotiationError = await ensureEndpointKindReady()
+    if (negotiationError) {
+      reply.code(negotiationError.statusCode)
+      return negotiationError.body
+    }
+
     const headers = buildUpstreamHeaders({ provider, endpointKind, key })
 
     const resp = await fetch(`${baseUrl}/v1/models`, { 
@@ -641,47 +728,10 @@ fastify.post('/v1/messages', async (request, reply) => {
     let ttfbMs = null
     
     // Comment 1: Gate requests until endpoint kind is determined for custom providers
-    if (provider === 'custom' && endpointKind === ENDPOINT_KIND.UNKNOWN) {
-      // Start negotiation if not already in progress
-      if (!negotiationPromise && key) {
-        negotiationPromise = negotiateEndpointKind(baseUrl, key)
-          .then(result => {
-            endpointKind = result.kind
-            detectionSource = 'probe'
-            lastProbedAt = result.lastProbedAt
-            if (process.env.DEBUG) {
-              console.log(`[Negotiation] Endpoint kind determined: ${endpointKind} (probed at ${new Date(result.lastProbedAt).toISOString()})`)
-            }
-            negotiationPromise = null
-            return result
-          })
-          .catch(err => {
-            console.warn(`[Negotiation] Failed:`, err.message)
-            // Fallback to heuristic - use sync inference
-            const heuristicResult = inferEndpointKindSync(provider, baseUrl, endpointKindOverrides)
-            endpointKind = heuristicResult
-            detectionSource = 'heuristic'
-            negotiationPromise = null
-            return { kind: endpointKind }
-          })
-      }
-      
-      // Wait for negotiation to complete
-      if (negotiationPromise) {
-        await negotiationPromise
-      }
-      
-      // If still unknown after negotiation attempt, block request
-      if (endpointKind === ENDPOINT_KIND.UNKNOWN) {
-        reply.code(503)
-        return {
-          error: {
-            message: 'Endpoint kind negotiation in progress. Please wait a moment and retry, or set an explicit override via CUSTOM_ENDPOINT_OVERRIDES environment variable.',
-            type: 'negotiation_pending',
-            hint: 'Set CUSTOM_ENDPOINT_OVERRIDES={"https://your-endpoint.com":"openai"} or {"https://your-endpoint.com":"anthropic"} to skip negotiation.'
-          }
-        }
-      }
+    const negotiationError = await ensureEndpointKindReady()
+    if (negotiationError) {
+      reply.code(negotiationError.statusCode)
+      return negotiationError.body
     }
     
     const isAnthropicNative = endpointKind === ENDPOINT_KIND.ANTHROPIC_NATIVE
@@ -937,8 +987,14 @@ fastify.post('/v1/messages', async (request, reply) => {
         parameters: removeUriFormat(tool.input_schema),
       },
     }))
+    const responseWarnings = []
     const selectedModel = payload.model 
       || (payload.thinking ? models.reasoning : models.completion)
+    const toolStyle = getModelToolStyle(selectedModel, provider)
+    const preferJsonTools = toolStyle === 'json'
+    if (toolStyle) {
+      console.log(`[Tool Style] ${selectedModel} matched toolStyle=${toolStyle}`)
+    }
     
     // Comment 7: Enhanced logging of incoming payload.model and payload.thinking
     console.log(`[Model Selection] Incoming payload.model: ${payload.model || 'none'}, payload.thinking: ${payload.thinking || false}`)
@@ -971,10 +1027,12 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (provider === 'openrouter' && tools.length > 0 && !supportsToolCalling) {
       console.warn(`[Tool Capability] Model ${selectedModel} does not support tool calling. Stripping tools and tool_choice.`)
       shouldDropTools = true
+      responseWarnings.push(`Tool calling is unavailable for ${selectedModel}; the proxy converted available tools into plain instructions.`)
     }
     
     // Conditionally inject XML tool instructions for models that need them
-    const needsXMLTools = !shouldDropTools && tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
+    const enableJsonTools = !shouldDropTools && preferJsonTools && tools.length > 0
+    const needsXMLTools = !shouldDropTools && !enableJsonTools && tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
     const messagesWithXML = needsXMLTools
       ? injectXMLToolInstructions(messages, tools)
       : messages
@@ -991,7 +1049,19 @@ fastify.post('/v1/messages', async (request, reply) => {
     if (!shouldDropTools && !needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools
       if (payload.tool_choice) {
-        openaiPayload.tool_choice = payload.tool_choice
+        // Comment 1: Normalize tool_choice for OpenRouter - use string 'auto' instead of object
+        if (provider === 'openrouter' && typeof payload.tool_choice === 'object' && payload.tool_choice.type === 'auto') {
+          openaiPayload.tool_choice = 'auto'
+        } else {
+          openaiPayload.tool_choice = payload.tool_choice
+        }
+      }
+      if (enableJsonTools) {
+        openaiPayload.parallel_tool_calls = false
+        if (!openaiPayload.tool_choice) {
+          // Comment 1: For OpenRouter, use string 'auto' instead of object format
+          openaiPayload.tool_choice = provider === 'openrouter' ? 'auto' : { type: 'auto' }
+        }
       }
     } else if (shouldDropTools && tools.length > 0) {
       // Comment 4: Inject text-based tool instructions when tools are dropped
@@ -1013,6 +1083,9 @@ fastify.post('/v1/messages', async (request, reply) => {
       if (needsXMLTools) {
         console.log(`[Tool Mode] XML tool calling enabled for ${selectedModel}`)
         console.log(`[Tool Info] ${tools.length} tools available (XML format)`)
+      } else if (enableJsonTools) {
+        console.log(`[Tool Mode] Native tool calling (JSON) for ${selectedModel}`)
+        console.log(`[Tool Info] ${tools.length} tools available (JSON function schema)`)
       } else {
         console.log(`[Tool Mode] Native tool calling for ${selectedModel}`)
         console.log(`[Tool Info] ${tools.length} tools available (native format)`)
@@ -1187,7 +1260,7 @@ fastify.post('/v1/messages', async (request, reply) => {
         } else {
           // Parse native OpenAI tool response format
           debug('Parsing native tool response')
-          contentBlocks = parseNativeToolResponse(openaiMessage)
+          contentBlocks = parseNativeToolResponse(openaiMessage, { warnings: responseWarnings, modelName: selectedModel })
 
         }
       } catch (parseError) {
@@ -1206,6 +1279,23 @@ fastify.post('/v1/messages', async (request, reply) => {
           type: 'text',
           text: openaiMessage.content || ''
         }]
+      }
+
+      const hasTextContent = contentBlocks.some(block => block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0)
+      const hasThinkingContent = contentBlocks.some(block => block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking.trim().length > 0)
+
+      if (!hasTextContent) {
+        contentBlocks = contentBlocks.filter(block => block.type !== 'text' || (typeof block.text === 'string' && block.text.trim().length > 0))
+      }
+
+      if (!hasTextContent && hasThinkingContent) {
+        const fallbackText = 'Model returned only reasoning without a final answer. Consider selecting a different OpenRouter model or disabling tool usage.'
+        contentBlocks.push({ type: 'text', text: fallbackText })
+        responseWarnings.push('Model returned reasoning-only output without a final answer.')
+      } else if (!hasTextContent && !hasThinkingContent) {
+        const fallbackText = 'Model response was empty.'
+        contentBlocks.push({ type: 'text', text: fallbackText })
+        responseWarnings.push('Model response was empty and a placeholder message was inserted.')
       }
 
       // Create a message id; if available, replace prefix, otherwise generate one.
@@ -1232,6 +1322,10 @@ fastify.post('/v1/messages', async (request, reply) => {
           input_tokens: inputTokens,
           output_tokens: outputTokens,
         }
+      }
+
+      if (responseWarnings.length > 0) {
+        anthropicResponse.warnings = responseWarnings
       }
 
       return anthropicResponse
@@ -1336,7 +1430,35 @@ fastify.post('/v1/messages', async (request, reply) => {
                 }
                 chunkBuffer = ''
               }
-            const totalStreamMs = Date.now() - requestStartMs
+              const trimmedContent = accumulatedContent.trim()
+              const trimmedReasoning = accumulatedReasoning.trim()
+              if (!trimmedContent) {
+                const fallbackText = trimmedReasoning
+                  ? 'Model returned only reasoning without a final answer. Consider selecting a different OpenRouter model or disabling tool usage.'
+                  : 'Model response was empty.'
+                if (!textBlockStarted) {
+                  textBlockStarted = true
+                  sendSSE(reply, 'content_block_start', {
+                    type: 'content_block_start',
+                    index: 0,
+                    content_block: {
+                      type: 'text',
+                      text: ''
+                    }
+                  })
+                }
+                sendSSE(reply, 'content_block_delta', {
+                  type: 'content_block_delta',
+                  index: 0,
+                  delta: {
+                    type: 'text_delta',
+                    text: fallbackText
+                  }
+                })
+                accumulatedContent += fallbackText
+              }
+
+              const totalStreamMs = Date.now() - requestStartMs
             debug('Streaming completion timing:', { 
               totalStreamMs, 
               ttfbMs, 
@@ -1526,6 +1648,7 @@ const start = async () => {
     const port = portArg > -1 ? parseInt(process.argv[portArg + 1], 10) : (process.env.PORT || 3000);
     await fastify.listen({ port });
   } catch (err) {
+    console.error('[Startup] fastify.listen failed:', err);
     process.exit(1);
   }
 }
