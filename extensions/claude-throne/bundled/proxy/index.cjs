@@ -34154,7 +34154,7 @@ async function ensureEndpointKindReady() {
   if (provider !== "custom" || endpointKind !== ENDPOINT_KIND.UNKNOWN) {
     return null;
   }
-  if (!negotiationPromise && key) {
+  if (!negotiationPromise) {
     negotiationPromise = negotiateEndpointKind(baseUrl, key).then((result) => {
       endpointKind = result.kind;
       detectionSource = "probe";
