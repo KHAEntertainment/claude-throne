@@ -2,10 +2,10 @@
 
 Thronekeeper is a sophisticated fork and evolution of anthropic-proxy that provides universal AI model routing for Claude Code and other Anthropic-compatible clients. It maintains the Anthropic-style API surface while intelligently routing to OpenAI-compatible providers, with a focus on enhanced authentication, provider ergonomics, and developer experience.
 
-> **🎉 v1.5.55 - Webview schema guardrails restored + endpoint overrides!** ✨  
+> **🎉 v1.5.61 - Webview schema guardrails restored + endpoint overrides!** ✨  
 > Fixes the Thronekeeper panel regression introduced by development guardrails and adds bundled endpoint override validation.
 
-**Version 1.5.55 - Production Ready** ✅
+**Version 1.5.61 - Production Ready** ✅
 
 <p align="center">
   <img src="docs/images/thronekeeper-hero.png" alt="Thronekeeper - Universal AI Model Routing" width="800">
@@ -148,7 +148,7 @@ DEBUG=1 npm start
 
 1. **Install the extension** from the VS Code marketplace or install the `.vsix` file:
    ```bash
-   code --install-extension thronekeeper-1.5.55.vsix
+   code --install-extension thronekeeper-1.5.61.vsix
    ```
 
 2. **Open the Thronekeeper panel**:
@@ -226,7 +226,7 @@ Thank you, Max! 🙏
 
 ## Current Status
 
-- **Version:** 1.5.55 (Production Ready)
+- **Version:** 1.5.61 (Production Ready)
 - **VS Code Extension:** ✅ Fully functional with modern React webview
 - **Python Backend:** ✅ Complete ct_secretsd service with secure storage
 - **Core Proxy:** ✅ Enhanced with smart key resolution and debugging
