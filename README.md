@@ -23,7 +23,7 @@
 2) Install in VS Code
 ```bash
 # Command line
-code --install-extension thronekeeper-1.5.61.vsix
+code --install-extension thronekeeper-1.5.62.vsix
 ```
 
 Or via UI: Extensions (Cmd/Ctrl+Shift+X) → "…" → Install from VSIX…
