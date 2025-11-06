@@ -17,6 +17,7 @@ import { normalizeContent, removeUriFormat } from './transform.js'
 import { injectXMLToolInstructions } from './xml-tool-formatter.js'
 import { parseAssistantMessage } from './xml-tool-parser.js'
 import { redactSecrets } from './utils/redaction.js'
+import { OPENROUTER_PARAMETERS, modelSupportsParameter } from './openrouter-params.js'
 
 let packageVersion = '0.0.0'
 let packageDir = null
@@ -170,7 +171,20 @@ function modelNeedsXMLTools(modelName, providerId) {
  */
 function modelSupportsToolCalling(modelName, providerId) {
   if (!modelName || !providerId) return true // Default to supporting tools
-  
+
+  // Check dynamic capabilities first (OpenRouter only)
+  if (providerId === 'openrouter' && openrouterModelCapabilities) {
+    const capabilities = openrouterModelCapabilities.get(modelName)
+    if (capabilities) {
+      const supportsTools = capabilities.supportsTools
+      if (!supportsTools) {
+        console.log(`[Tool Capability] Model ${modelName} does not support tool calling (from OpenRouter API)`)
+      }
+      return supportsTools
+    }
+  }
+
+  // Fall back to static config
   const config = modelCapabilities?.toolCallUnsupported || null
   if (config) {
     const patterns = [
@@ -184,7 +198,7 @@ function modelSupportsToolCalling(modelName, providerId) {
       }
     }
   }
-  
+
   return true
 }
 
@@ -266,6 +280,63 @@ if (models.reasoning !== models.completion) {
   console.log('[Startup] - Two-model mode detected')
 } else {
   console.log('[Startup] - Single-model mode')
+}
+
+// Model capability cache for OpenRouter dynamic detection
+let openrouterModelCapabilities = null
+let lastCapabilityFetch = null
+const CAPABILITY_CACHE_TTL = 3600000 // 1 hour
+
+/**
+ * Fetch and cache OpenRouter model capabilities dynamically
+ * @returns {Promise<Map|null>} Map of model capabilities or null on error
+ */
+async function fetchOpenRouterCapabilities() {
+  if (provider !== 'openrouter') return null
+
+  const now = Date.now()
+  if (openrouterModelCapabilities && lastCapabilityFetch && (now - lastCapabilityFetch) < CAPABILITY_CACHE_TTL) {
+    return openrouterModelCapabilities
+  }
+
+  try {
+    const response = await fetch(`${normalizedBaseUrl}/v1/models`, {
+      headers: { 'Authorization': `Bearer ${key}` }
+    })
+
+    if (!response.ok) {
+      console.warn('[Capabilities] Failed to fetch OpenRouter models:', response.status)
+      return null
+    }
+
+    const data = await response.json()
+    openrouterModelCapabilities = new Map()
+
+    // Build capability map: modelId -> { supportsTools, supportsParallelTools, supportedParameters }
+    for (const model of data.data || []) {
+      const capabilities = {
+        supportsTools: model.supported_parameters?.includes('tools') ?? false,
+        supportsParallelTools: model.supported_parameters?.includes('parallel_tool_calls') ?? false,
+        supportsReasoning: model.supported_parameters?.includes('reasoning') ?? false,
+        supportedParameters: new Set(model.supported_parameters || [])
+      }
+      openrouterModelCapabilities.set(model.id, capabilities)
+    }
+
+    lastCapabilityFetch = now
+    console.log(`[Capabilities] Loaded ${openrouterModelCapabilities.size} OpenRouter model capabilities`)
+    return openrouterModelCapabilities
+  } catch (err) {
+    console.warn('[Capabilities] Error fetching OpenRouter models:', err.message)
+    return null
+  }
+}
+
+// Fetch capabilities at startup (non-blocking)
+if (provider === 'openrouter' && key) {
+  fetchOpenRouterCapabilities().catch(err => {
+    console.warn('[Startup] Could not prefetch OpenRouter capabilities:', err.message)
+  })
 }
 
 const fastify = Fastify({
@@ -1032,11 +1103,56 @@ fastify.post('/v1/messages', async (request, reply) => {
     
     // Conditionally inject XML tool instructions for models that need them
     const enableJsonTools = !shouldDropTools && preferJsonTools && tools.length > 0
+    /**
+     * Normalize Anthropic tool_choice format to OpenRouter/OpenAI format
+     * @param {*} toolChoice - Anthropic format tool_choice
+     * @param {string} providerId - Provider identifier
+     * @returns {*} Normalized tool_choice for OpenRouter
+     */
+    function normalizeToolChoice(toolChoice, providerId) {
+      if (!toolChoice || providerId !== 'openrouter') {
+        return toolChoice
+      }
+
+      // Handle string formats (pass through)
+      if (typeof toolChoice === 'string') {
+        return toolChoice
+      }
+
+      // Handle object formats
+      if (typeof toolChoice === 'object') {
+        // Anthropic: {type: 'auto'} → OpenRouter: 'auto'
+        if (toolChoice.type === 'auto') {
+          return 'auto'
+        }
+
+        // Anthropic: {type: 'any'} → OpenRouter: 'required'
+        if (toolChoice.type === 'any') {
+          return 'required'
+        }
+
+        // Anthropic: {type: 'tool', name: 'foo'} → OpenRouter: {type: 'function', function: {name: 'foo'}}
+        if (toolChoice.type === 'tool' && toolChoice.name) {
+          return {
+            type: 'function',
+            function: { name: toolChoice.name }
+          }
+        }
+
+        // OpenRouter native format (pass through)
+        if (toolChoice.type === 'function') {
+          return toolChoice
+        }
+      }
+
+      return toolChoice
+    }
+
     const needsXMLTools = !shouldDropTools && !enableJsonTools && tools.length > 0 && modelNeedsXMLTools(selectedModel, provider)
     const messagesWithXML = needsXMLTools
       ? injectXMLToolInstructions(messages, tools)
       : messages
-    
+
     const openaiPayload = {
       model: selectedModel,
       messages: messagesWithXML,
@@ -1044,23 +1160,58 @@ fastify.post('/v1/messages', async (request, reply) => {
       temperature: payload.temperature !== undefined ? payload.temperature : 1,
       stream: payload.stream === true,
     }
+
+    // Add OpenRouter-specific provider options
+    if (provider === 'openrouter') {
+      openaiPayload.provider = {
+        require_parameters: false,  // Let OpenRouter backend filter parameters per model
+        // Optional: add routing preferences from payload
+        ...(payload.provider || {})
+      }
+
+      // Log provider options for debugging
+      if (process.env.DEBUG) {
+        debug('[Provider Options]', openaiPayload.provider)
+      }
+    }
+
+    // Add reasoning parameter for OpenRouter reasoning models
+    if (provider === 'openrouter' && payload.thinking) {
+      // Check if model supports reasoning parameter (dynamic or static)
+      const supportsReasoning = openrouterModelCapabilities?.get(selectedModel)?.supportsReasoning ?? true
+
+      if (supportsReasoning) {
+        // Translate Anthropic 'thinking' to OpenRouter 'reasoning'
+        if (typeof payload.thinking === 'object') {
+          openaiPayload.reasoning = {
+            effort: payload.thinking.effort || 'medium',
+            summary: payload.thinking.summary || 'auto'
+          }
+        } else if (payload.thinking === true) {
+          // Default reasoning config
+          openaiPayload.reasoning = {
+            effort: 'medium',
+            summary: 'auto'
+          }
+        }
+
+        console.log(`[Reasoning] Enabled for ${selectedModel}:`, openaiPayload.reasoning)
+      } else {
+        console.log(`[Reasoning] Skipped for ${selectedModel} (not supported by model)`)
+      }
+    }
     
     // Add native tools parameter for models that support it (only if not dropping tools)
     if (!shouldDropTools && !needsXMLTools && tools.length > 0) {
       openaiPayload.tools = tools
       if (payload.tool_choice) {
-        // Comment 1: Normalize tool_choice for OpenRouter - use string 'auto' instead of object
-        if (provider === 'openrouter' && typeof payload.tool_choice === 'object' && payload.tool_choice.type === 'auto') {
-          openaiPayload.tool_choice = 'auto'
-        } else {
-          openaiPayload.tool_choice = payload.tool_choice
-        }
+        // Normalize tool_choice for OpenRouter (handles all Anthropic formats)
+        openaiPayload.tool_choice = normalizeToolChoice(payload.tool_choice, provider)
       }
       if (enableJsonTools) {
         openaiPayload.parallel_tool_calls = false
         if (!openaiPayload.tool_choice) {
-          // Comment 1: For OpenRouter, use string 'auto' instead of object format
-          openaiPayload.tool_choice = provider === 'openrouter' ? 'auto' : { type: 'auto' }
+          openaiPayload.tool_choice = 'auto'
         }
       }
     } else if (shouldDropTools && tools.length > 0) {
